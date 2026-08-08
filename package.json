@@ -9,9 +9,11 @@
     "dev:client": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
+    "test:api": "bun test src/server/api",
+    "db:generate": "drizzle-kit generate",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "check": "bun run typecheck && bun run lint && bun run test"
+    "check": "bun run typecheck && bun run lint && bun run test && bun run test:api"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
