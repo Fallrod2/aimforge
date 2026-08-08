@@ -64,6 +64,30 @@ l'utilisateur** (jamais la service key pour les lectures métier).
 - Navigation : header + onglets (desktop), bottom bar (mobile). Mobile-first inchangé.
 - Direction visuelle inchangée : thème forge sombre, accent braise parcimonieux, énergie en mono, couleurs de rang officielles du JSON.
 
+## 5 bis. Comptes liés & import automatique (acté 2026-08-09)
+
+**Principe produit : la donnée rentre toute seule.** La saisie manuelle existe
+toujours mais devient un repli discret — l'app guide vers la liaison de comptes
+(onboarding, états vides, dashboard), jamais l'inverse. Lier son compte doit
+paraître naturel et gratifiant, pas une corvée de configuration.
+
+- **Comptes Riot** : liaison par Riot ID (`Nom#TAG`), PLUSIEURS comptes possibles
+  (principal + alts), stockés dans `linked_accounts`. Pas de login Riot (RSO
+  inaccessible sans approbation) : les données publiques suffisent.
+- **Données Valorant** : API HenrikDev (non officielle, mature) appelée UNIQUEMENT
+  côté serveur (clé `HENRIKDEV_API_KEY` en env Vercel), avec cache en base
+  (`imported_matches`) et dégradation propre si l'API casse. MMR, historique de
+  rang, détails des derniers matchs par compte lié.
+- **Compte KovaaK's** : liaison par pseudo KovaaK's ; import des scores de
+  scénarios Voltaic via l'API du Benchmark Tracker kovaaks.com (non officielle,
+  instable : cache, retries, dégradation). Le tracker propose « Importer mes
+  scores » qui pré-remplit les 18 champs ; l'utilisateur vérifie puis
+  sauvegarde. La saisie manuelle reste disponible mais visuellement secondaire.
+- **Pont vers l'IA** : le Coach peut débriefer un match importé (pré-remplissage
+  de son entrée depuis `imported_matches`) ; la Routine lit les vrais benchs.
+- Dépendances externes isolées chacune derrière un module serveur unique,
+  remplaçables (ex. migration future vers l'API officielle Riot) sans toucher l'UI.
+
 ## 6. Sécurité
 
 - RLS activé sur toutes les tables, policies testées (un utilisateur A ne voit jamais les données de B).
@@ -75,13 +99,17 @@ l'utilisateur** (jamais la service key pour les lectures métier).
 
 - **P1 — Socle Supabase** : projet Supabase, schéma + RLS + trigger profiles, client typé, auth complète (Discord, Google, email), landing + garde d'authentification, layout app + dashboard squelette.
 - **P2 — Migration Tracker** : Tracker Phase 3 branché sur Supabase (saisie live inchangée, sauvegarde/historique/graphe), suppression de l'API Hono CRUD et de SQLite.
-- **P3 — Coach IA** : fonction serverless `api/coach` (JWT + quota + Zod), UI debrief + historique.
+- **P3a — Coach IA** (parallèle à P3b) : fonction serverless `api/coach` (JWT + quota + Zod), UI debrief + historique. Entrée v1 = texte collé ; conçue pour être pré-remplie depuis un match importé dès que P3b livre.
+- **P3b — Comptes liés & import** (parallèle à P3a) : schéma `linked_accounts` + `imported_matches` (+ `bench_runs.source`), fonctions serverless HenrikDev et KovaaK's, UI de liaison (profil + onboarding), import de bench pré-rempli, rang/MMR sur le dashboard.
 - **P4 — Routine IA** : fonction `api/routine` (faiblesses dernier bench + axes des 3 derniers debriefs), UI avec cases à cocher.
 - **P5 — Dashboard complet & polish** : synthèse réelle, états vides soignés, responsive final, revue sécurité (RLS, quotas, secrets).
+
+Périmètres P3a/P3b disjoints : P3a possède `api/coach.ts`, `src/shared/coach-contract.ts`, `src/client/coach/**`, `src/client/data/debriefs.ts` ; P3b possède les migrations, `api/valorant|kovaaks/**`, `src/client/data/linked-accounts*`, le profil, le tracker et le dashboard. Conflits arbitrés par l'orchestrateur au merge.
 
 Chaque phase : `bun run check` vert, revue adversariale, commit, push (→ déploiement auto).
 
 ## 8. Hors périmètre v2
 
-Riot OAuth (en attente d'approbation RSO), scraping Tracker.gg, app mobile native,
-partage public de profils, classements entre utilisateurs.
+Riot OAuth (en attente d'approbation RSO — la liaison par Riot ID le remplace),
+scraping Tracker.gg, app mobile native, partage public de profils, classements
+entre utilisateurs.
