@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getTier } from "../../lib/energy";
-import type { BenchRunDetail, BenchRunSummary } from "../api";
+import type { BenchRunDetail, BenchRunSummary } from "../data";
 import { buildSeries, runRankColor } from "./series";
 
 function summary(overrides: Partial<BenchRunSummary> & Pick<BenchRunSummary, "id">) {

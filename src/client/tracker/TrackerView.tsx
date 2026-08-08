@@ -1,17 +1,16 @@
 /**
  * Vue Tracker : saisie des 18 scénarios d'un palier, calcul live, sauvegarde.
  *
- * Le calcul live appelle `computeBenchRun`, la **même** fonction que la route
- * POST : l'aperçu ne peut pas diverger de ce qui sera enregistré, et rien ne
- * part au serveur tant que l'utilisateur n'a pas sauvegardé.
+ * Le calcul live appelle `computeBenchRun`, la **même** fonction que la
+ * sauvegarde : l'aperçu ne peut pas diverger de ce qui sera enregistré, et
+ * rien ne part en base tant que l'utilisateur n'a pas sauvegardé.
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { getTier, listScenarios, TIER_IDS, type TierId } from "../../lib/energy";
-import { computeBenchRun } from "../../server/api/compute";
-import { type BenchRunSummary, createBenchRun } from "../api";
+import { computeBenchRun, getTier, listScenarios, TIER_IDS, type TierId } from "../../lib/energy";
 import { RankBadge } from "../components/RankBadge";
 import { Segmented } from "../components/Segmented";
+import { type BenchRunSummary, saveBenchRun } from "../data";
 import { rankColorFor } from "../energy-view";
 import { formatEnergy } from "../format";
 import { type BenchDraft, clearTier, draftScores, emptyDraft, setScoreInput } from "./draft";
@@ -51,7 +50,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
     setSaving(true);
     setError(null);
     try {
-      const run = await createBenchRun({ tier, scores });
+      const run = await saveBenchRun({ tier, scores });
 
       setSaved(run);
       onSaved(run);

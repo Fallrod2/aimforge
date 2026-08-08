@@ -1,5 +1,5 @@
 /**
- * Cache des détails de passes (`GET /api/bench-runs/:id`).
+ * Cache des détails de passes (`getBenchRunDetail`).
  *
  * Le résumé renvoyé par la liste ne porte ni les 18 scores ni les 9
  * sous-catégories : il faut le détail pour ouvrir une passe **et** pour tracer
@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type BenchRunDetail, getBenchRun } from "../api";
+import { type BenchRunDetail, getBenchRunDetail } from "../data";
 
 export interface RunDetails {
   readonly byId: ReadonlyMap<number, BenchRunDetail>;
@@ -52,7 +52,7 @@ export function useRunDetails(ids: readonly number[]): RunDetails {
 
     setLoading(true);
     setError(null);
-    Promise.all(missing.map(async (id) => [id, await getBenchRun(id)] as const))
+    Promise.all(missing.map(async (id) => [id, await getBenchRunDetail(id)] as const))
       .then((entries) => {
         if (cancelled) return;
         setById((current) => new Map([...current, ...entries]));

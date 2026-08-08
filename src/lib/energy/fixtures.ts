@@ -1,10 +1,11 @@
 /**
- * Helpers partagés par les tests d'intégration de l'API.
+ * Helpers de **test** partagés (jamais importés par le code applicatif).
  * Construit des jeux de scores dérivés de `voltaic-s5-data.json` : jamais de
  * seuil écrit en dur ici (règle du projet : le JSON est la source de vérité).
  */
 
-import { getTier, listScenarios, type TierId } from "../../lib/energy";
+import { getTier, listScenarios } from "./data";
+import type { TierId } from "./types";
 
 /**
  * Les 18 scores d'un palier posés **pile** sur le seuil d'une ancre

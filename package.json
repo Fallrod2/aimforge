@@ -4,22 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "trap 'kill 0' INT TERM EXIT; bun run dev:server & bun run dev:client & wait",
-    "dev:server": "bun --hot src/server/index.ts",
-    "dev:client": "vite",
+    "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
-    "test:api": "bun test src/server/api",
-    "db:generate": "drizzle-kit generate",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "check": "bun run typecheck && bun run lint && bun run test && bun run test:api"
+    "check": "bun run typecheck && bun run lint && bun run test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
     "@supabase/supabase-js": "^2.112.2",
-    "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^3.10.1",
@@ -32,7 +26,6 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^6.0.5",
-    "drizzle-kit": "^0.31.10",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",

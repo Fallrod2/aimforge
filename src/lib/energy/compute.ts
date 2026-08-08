@@ -1,19 +1,15 @@
 /**
  * Orchestration du moteur d'énergie pour une passe de bench.
- * Aucun calcul n'est refait ici : tout vient de `src/lib/energy`.
+ *
+ * Aucun calcul n'est refait ici : tout vient de `./energy`. Ce module vit dans
+ * la lib pure (et non côté client) parce qu'il n'a ni I/O ni dépendance : la
+ * saisie live du tracker et l'écriture en base appellent la **même** fonction,
+ * donc l'aperçu ne peut pas diverger de ce qui est enregistré.
  */
 
-import {
-  isComplete,
-  listScenarios,
-  listSubcategories,
-  overallEnergy,
-  rankFor,
-  type ScoreMap,
-  scenarioEnergy,
-  subcategoryEnergy,
-  type TierId,
-} from "../../lib/energy";
+import { listScenarios, listSubcategories } from "./data";
+import { isComplete, overallEnergy, rankFor, scenarioEnergy, subcategoryEnergy } from "./energy";
+import type { ScoreMap, TierId } from "./types";
 
 export interface ComputedScenarioScore {
   readonly scenario: string;
@@ -41,6 +37,17 @@ export function scenarioNames(tier: TierId): ReadonlySet<string> {
   return new Set(listScenarios(tier).map((scenario) => scenario.name));
 }
 
+/** Les 9 sous-catégories d'un palier et leur énergie pour des scores donnés. */
+export function computeSubcategories(
+  tier: TierId,
+  scores: ScoreMap,
+): readonly ComputedSubcategory[] {
+  return listSubcategories(tier).map((subcategory) => ({
+    name: subcategory.name,
+    energy: subcategoryEnergy(tier, subcategory.name, scores),
+  }));
+}
+
 /** Calcule énergies, overall, rang et badge « Complete » d'une passe. */
 export function computeBenchRun(tier: TierId, scores: ScoreMap): ComputedBenchRun {
   const computedScores: ComputedScenarioScore[] = [];
@@ -56,11 +63,7 @@ export function computeBenchRun(tier: TierId, scores: ScoreMap): ComputedBenchRu
     });
   }
 
-  const subcategories = listSubcategories(tier).map((subcategory) => ({
-    name: subcategory.name,
-    energy: subcategoryEnergy(tier, subcategory.name, scores),
-  }));
-
+  const subcategories = computeSubcategories(tier, scores);
   const overall = overallEnergy(subcategories.map((subcategory) => subcategory.energy));
   const rank = rankFor(tier, overall);
 

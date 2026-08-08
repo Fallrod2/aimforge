@@ -7,14 +7,13 @@
  * attendent leur module (P3, P4) et affichent un état vide qui annonce la
  * couleur plutôt qu'une carte grise sans explication.
  *
- * La source du bench reste l'API locale, comme le tracker : la bascule vers
- * Supabase est le sujet de P2, elle se fera ici et dans `api.ts` d'un bloc.
+ * Le bench vient de Supabase (`../data`), comme le tracker et l'historique.
  */
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { getTier } from "../../lib/energy";
-import { type BenchRunDetail, getBenchRun, listBenchRuns } from "../api";
 import { RankBadge } from "../components/RankBadge";
+import { type BenchRunDetail, getBenchRunDetail, listBenchRuns } from "../data";
 import { rankColorFor } from "../energy-view";
 import { formatEnergy, formatRunDate } from "../format";
 import { type Route, routeHash } from "../route";
@@ -22,7 +21,7 @@ import { latestRun, weakestSubcategories } from "./summary";
 
 type Bench =
   | { readonly status: "loading" }
-  /** Aucune passe, ou API muette : dans les deux cas, rien à montrer. */
+  /** Aucune passe, ou base injoignable : dans les deux cas, rien à montrer. */
   | { readonly status: "empty"; readonly reason: string | null }
   | { readonly status: "ready"; readonly run: BenchRunDetail };
 
@@ -46,7 +45,7 @@ export function DashboardView() {
         setBench({ status: "empty", reason: null });
         return;
       }
-      setBench({ status: "ready", run: await getBenchRun(last.id) });
+      setBench({ status: "ready", run: await getBenchRunDetail(last.id) });
     } catch (cause) {
       // Le dashboard n'est pas le bon endroit pour crier : il annonce
       // l'absence de données et laisse le tracker traiter l'erreur en détail.

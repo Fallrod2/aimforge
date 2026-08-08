@@ -7,9 +7,9 @@
  */
 
 import { getTier, listScenarios } from "../../lib/energy";
-import type { BenchRunDetail, BenchRunSummary } from "../api";
 import { EnergyRail } from "../components/EnergyRail";
 import { RankBadge } from "../components/RankBadge";
+import type { BenchRunDetail, BenchRunSummary } from "../data";
 import { formatEnergy, formatRunDate, formatScore, scenarioLabel } from "../format";
 import { runRankColor } from "./series";
 

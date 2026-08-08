@@ -1,10 +1,10 @@
 /**
  * Construction des séries du graphe de progression. Module pur : il ne fait
- * que réordonner et trouer des valeurs déjà calculées par le serveur.
+ * que réordonner et trouer des valeurs déjà calculées par le moteur d'énergie.
  */
 
 import { getTier } from "../../lib/energy";
-import type { BenchRunDetail, BenchRunSummary } from "../api";
+import type { BenchRunDetail, BenchRunSummary } from "../data";
 import { formatChartDate } from "../format";
 
 /** Couleur officielle du rang d'une passe, ou `null` si aucun rang atteint. */

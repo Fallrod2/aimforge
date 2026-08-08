@@ -6,7 +6,9 @@ dist
 # Secrets
 .env
 .env.*
-!.env.example
 
-# Base SQLite locale (données utilisateur, jamais versionnées)
-data/*.db*
+# Reliquat v1 : la base SQLite locale n'est plus écrite (les données vivent dans
+# Supabase depuis P2). La règle reste, **ancrée à la racine** (sinon elle
+# masquerait aussi `src/client/data/`), pour qu'un fichier oublié sur une
+# machine de dev ne parte jamais dans un commit.
+/data/

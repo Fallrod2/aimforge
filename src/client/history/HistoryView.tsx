@@ -9,9 +9,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getTier, listSubcategories, TIER_IDS, type TierId } from "../../lib/energy";
-import { type BenchRunSummary, deleteBenchRun, listBenchRuns } from "../api";
 import { Notice } from "../components/Notice";
 import { Segmented } from "../components/Segmented";
+import { type BenchRunSummary, deleteBenchRun, listBenchRuns } from "../data";
 import { ProgressChart } from "./ProgressChart";
 import { RunCard } from "./RunCard";
 import { buildSeries } from "./series";

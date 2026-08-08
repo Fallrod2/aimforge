@@ -4,6 +4,14 @@
  */
 
 export {
+  type ComputedBenchRun,
+  type ComputedScenarioScore,
+  type ComputedSubcategory,
+  computeBenchRun,
+  computeSubcategories,
+  scenarioNames,
+} from "./compute";
+export {
   getScenario,
   getSubcategory,
   getTier,

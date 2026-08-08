@@ -17,6 +17,7 @@ import { RecoveryView } from "./auth/RecoveryView";
 import { DashboardView } from "./dashboard/DashboardView";
 import { HistoryView } from "./history/HistoryView";
 import { LandingView } from "./landing/LandingView";
+import { ProfileView } from "./profile/ProfileView";
 import { DEFAULT_ROUTE, parseRoute, type Route, requiresSession, routeHash } from "./route";
 import { TrackerView } from "./tracker/TrackerView";
 
@@ -118,18 +119,7 @@ function View({ route, navigate }: ViewProps) {
         />
       );
     case "profile":
-      return (
-        <ComingSoon
-          title="Profil"
-          phase="Module Profil"
-          summary="Pseudo, rang Valorant actuel et pic, agent principal, objectif de saison, notes de maps — le contexte que le coach et la routine réutilisent."
-          points={[
-            "Informations joueur et objectif de saison",
-            "Préférences d'entraînement",
-            "Gestion du compte",
-          ]}
-        />
-      );
+      return <ProfileView />;
     default:
       return <DashboardView />;
   }

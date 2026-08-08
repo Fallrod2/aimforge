@@ -4,8 +4,7 @@
  * harmonique : c'est la sous-catégorie la plus basse qui le tire vers le bas).
  */
 
-import type { TierId } from "../../lib/energy";
-import type { ComputedBenchRun } from "../../server/api/compute";
+import type { ComputedBenchRun, TierId } from "../../lib/energy";
 import { EnergyRail } from "../components/EnergyRail";
 import { RankBadge } from "../components/RankBadge";
 import { nextRank, rankColorFor } from "../energy-view";
