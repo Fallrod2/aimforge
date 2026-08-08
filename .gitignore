@@ -1,0 +1,11 @@
+node_modules
+dist
+.DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Base SQLite locale (données utilisateur, jamais versionnées)
+data/*.db*

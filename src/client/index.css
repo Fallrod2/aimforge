@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Direction visuelle « forge » : acier profond, accent braise, mono pour les chiffres. */
+@theme {
+  --color-steel-950: #0b0d10;
+  --color-steel-900: #12151a;
+  --color-steel-800: #1b2027;
+  --color-steel-700: #2a313b;
+  --color-ember-500: #f2711c;
+  --color-ember-400: #ff8c3a;
+}
+
+body {
+  background-color: var(--color-steel-950);
+  color: #e6e8ec;
+}
