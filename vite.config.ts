@@ -15,7 +15,11 @@ export default defineConfig({
     port: 5273,
     strictPort: true,
     // Le client parle à l'API Hono en dev sans CORS.
-    proxy: { "/api": `http://localhost:${apiPort}` },
+    //
+    // Clé en expression régulière, pas en préfixe : `"/api"` capturait aussi
+    // le module client `src/client/api.ts`, servi par Vite sous `/api.ts`.
+    // Le proxy le renvoyait à Hono, qui répondait 404 — l'app ne démarrait pas.
+    proxy: { "^/api/": `http://localhost:${apiPort}` },
   },
   build: {
     outDir: fileURLToPath(new URL("./dist/client", import.meta.url)),

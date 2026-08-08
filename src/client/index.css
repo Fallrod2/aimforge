@@ -1,16 +1,75 @@
 @import "tailwindcss";
 
-/* Direction visuelle « forge » : acier profond, accent braise, mono pour les chiffres. */
+/*
+ * Direction visuelle « forge » : acier profond pour les surfaces, braise
+ * réservée aux actions et au chiffre du moment, mono pour toute valeur
+ * chiffrée. Les couleurs de rang ne sont jamais ici : elles viennent de
+ * voltaic-s5-data.json via le moteur d'énergie.
+ */
 @theme {
+  /* Acier — surfaces, du plus profond au plus clair. */
   --color-steel-950: #0b0d10;
   --color-steel-900: #12151a;
+  --color-steel-850: #171b21;
   --color-steel-800: #1b2027;
   --color-steel-700: #2a313b;
+  --color-steel-600: #3b4552;
+  --color-steel-500: #55616f;
+  --color-steel-400: #7c8898;
+  --color-steel-300: #a3adbb;
+  --color-steel-200: #c8cfd9;
+  --color-steel-100: #e6e8ec;
+
+  /* Braise — actions, palier actif, ligne overall du graphe. Rien d'autre. */
+  --color-ember-600: #c9550f;
   --color-ember-500: #f2711c;
   --color-ember-400: #ff8c3a;
+
+  /*
+   * Bleu de revenu (acier trempé) — réservé à la seconde série du graphe.
+   * Le couple braise/revenu utilisé pour les courbes est
+   * (--color-ember-600, --color-quench-500) : c'est le seul couple testé qui
+   * passe les six contrôles de palette catégorielle sur le fond steel-900
+   * (bande de clarté, chroma, séparation deutan/protan/tritan, contraste).
+   * L'accent d'interface reste ember-500, plus vif, jamais utilisé en série.
+   */
+  --color-quench-500: #4595c9;
+
+  /* Aucune police n'est chargée depuis le réseau : l'app tourne en LAN. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono:
+    "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 body {
   background-color: var(--color-steel-950);
-  color: #e6e8ec;
+  color: var(--color-steel-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: color-mix(in srgb, var(--color-ember-500) 35%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ember-500);
+  outline-offset: 2px;
+}
+
+/*
+ * Neutralisation des animations : `!important` est ici la seule façon de
+ * couvrir des durées posées par des classes utilitaires, quelle que soit leur
+ * spécificité. C'est l'exception prévue par la règle, pas un contournement.
+ */
+@media (prefers-reduced-motion: reduce) {
+  /* biome-ignore-start lint/complexity/noImportantStyles: surcharge volontaire des utilitaires d'animation */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+  /* biome-ignore-end lint/complexity/noImportantStyles: surcharge volontaire des utilitaires d'animation */
 }
