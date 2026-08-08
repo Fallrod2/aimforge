@@ -143,8 +143,10 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
       </div>
 
       {/* Sur téléphone, les 18 champs défilent : l'overall et l'action restent
-          accessibles en bas d'écran plutôt qu'en haut de page. */}
-      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-steel-800 bg-steel-950/95 px-4 py-3 backdrop-blur lg:hidden">
+          accessibles en bas d'écran plutôt qu'en haut de page.
+          `bottom-16` = la hauteur de la barre de navigation du pouce
+          (`BOTTOM_BAR_HEIGHT` dans `AppLayout`) : les deux s'empilent. */}
+      <div className="fixed inset-x-0 bottom-16 z-10 border-t border-steel-800 bg-steel-950/95 px-4 py-3 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="font-mono text-xl leading-none font-semibold tabular-nums">

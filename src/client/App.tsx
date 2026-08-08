@@ -1,14 +1,23 @@
 /**
- * Coque de l'application : en-tête, navigation à deux vues, routage par hash.
+ * Racine de l'application : routage par hash, garde d'authentification, choix
+ * de la vue.
  *
- * Mobile d'abord : l'en-tête reste collé en haut (la navigation doit rester
- * atteignable au pouce pendant la saisie des 18 scores), le contenu tient dans
- * une colonne unique et ne s'élargit qu'à partir de `lg`.
+ * La garde est ici et nulle part ailleurs — une vue n'a jamais à vérifier
+ * elle-même qu'il y a une session. Sans session, tout ce qui n'est pas la page
+ * de connexion affiche la landing **sans changer le hash** : l'adresse
+ * demandée survit à la connexion, et l'utilisateur atterrit là où il allait.
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { AppLayout } from "./app/AppLayout";
+import { ComingSoon } from "./app/ComingSoon";
+import { AuthProvider, useAuth } from "./auth/AuthProvider";
+import { AuthView } from "./auth/AuthView";
+import { RecoveryView } from "./auth/RecoveryView";
+import { DashboardView } from "./dashboard/DashboardView";
 import { HistoryView } from "./history/HistoryView";
-import { NAV_ITEMS, parseRoute, type Route, routeHash, type ViewId } from "./route";
+import { LandingView } from "./landing/LandingView";
+import { DEFAULT_ROUTE, parseRoute, type Route, requiresSession, routeHash } from "./route";
 import { TrackerView } from "./tracker/TrackerView";
 
 function currentRoute(): Route {
@@ -16,6 +25,15 @@ function currentRoute(): Route {
 }
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <Routed />
+    </AuthProvider>
+  );
+}
+
+function Routed() {
+  const { status, recovering } = useAuth();
   const [route, setRoute] = useState<Route>(currentRoute);
 
   useEffect(() => {
@@ -34,66 +52,90 @@ export default function App() {
     else window.location.hash = hash;
   }, []);
 
-  const focusRun = useCallback(
-    (runId: number | null) => navigate({ view: "history", runId }),
-    [navigate],
-  );
+  const authenticated = status === "authenticated";
+  const guarded = requiresSession(route.view);
+
+  useEffect(() => {
+    // Connecté sur une vue publique (la page de connexion) : elle n'a plus
+    // rien à demander, on renvoie sur l'accueil de l'application.
+    if (authenticated && !guarded) navigate(DEFAULT_ROUTE);
+  }, [authenticated, guarded, navigate]);
+
+  // La session stockée n'est pas encore relue : afficher quoi que ce soit
+  // ferait clignoter la landing sous un utilisateur déjà connecté.
+  if (status === "loading") return <Booting />;
+
+  // Un lien « mot de passe oublié » ouvre une session : elle ne doit servir
+  // qu'à choisir le nouveau mot de passe, jamais à parcourir l'application.
+  if (recovering) return <RecoveryView />;
+
+  if (!authenticated) return guarded ? <LandingView /> : <AuthView />;
 
   return (
-    <div className="min-h-dvh">
-      <header className="sticky top-0 z-20 border-b border-steel-800 bg-steel-950/90 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3 sm:px-6">
-          <a
-            href={routeHash({ view: "tracker", runId: null })}
-            className="flex shrink-0 items-baseline gap-2"
-          >
-            <span className="font-mono text-lg font-semibold tracking-tight text-ember-500">
-              AimForge
-            </span>
-            <span className="hidden text-[11px] tracking-[0.18em] text-steel-500 uppercase sm:inline">
-              Voltaic S5
-            </span>
-          </a>
-
-          <nav aria-label="Sections" className="ml-auto flex gap-1">
-            {NAV_ITEMS.map((item) => (
-              <NavLink key={item.view} view={item.view} label={item.label} active={route.view} />
-            ))}
-          </nav>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-        {route.view === "tracker" ? (
-          <TrackerView onSaved={(run) => focusRun(run.id)} />
-        ) : (
-          <HistoryView focusRunId={route.runId} onFocusRun={focusRun} />
-        )}
-      </main>
-    </div>
+    <AppLayout route={route}>
+      <View route={route} navigate={navigate} />
+    </AppLayout>
   );
 }
 
-interface NavLinkProps {
-  readonly view: ViewId;
-  readonly label: string;
-  readonly active: ViewId;
+interface ViewProps {
+  readonly route: Route;
+  readonly navigate: (route: Route) => void;
 }
 
-function NavLink({ view, label, active }: NavLinkProps) {
-  const current = view === active;
+function View({ route, navigate }: ViewProps) {
+  const focusRun = (runId: number | null) => navigate({ view: "history", runId });
 
-  return (
-    <a
-      href={routeHash({ view, runId: null })}
-      aria-current={current ? "page" : undefined}
-      className={`rounded-lg px-3 py-2 text-xs font-semibold tracking-wide uppercase transition-colors ${
-        current
-          ? "bg-ember-500/15 text-ember-400 shadow-[inset_0_0_0_1px_var(--color-ember-500)]"
-          : "text-steel-400 hover:bg-steel-800 hover:text-steel-200"
-      }`}
-    >
-      {label}
-    </a>
-  );
+  switch (route.view) {
+    case "tracker":
+      return <TrackerView onSaved={(run) => focusRun(run.id)} />;
+    case "history":
+      return <HistoryView focusRunId={route.runId} onFocusRun={focusRun} />;
+    case "coach":
+      return (
+        <ComingSoon
+          title="Coach post-game"
+          phase="Module Coach"
+          summary="Colle le tableau de stats d'une partie ; le coach en tire un debrief structuré, relu et rangé avec les précédents."
+          points={[
+            "Ce qui a marché dans la partie, en clair",
+            "Deux ou trois axes de travail concrets, pas des généralités",
+            "Un focus à reporter dans la routine du lendemain",
+          ]}
+        />
+      );
+    case "routine":
+      return (
+        <ComingSoon
+          title="Routine du jour"
+          phase="Module Routine"
+          summary="Une séance générée sur mesure à partir du temps dont tu disposes, des sous-catégories basses du dernier bench et des axes des derniers debriefs."
+          points={[
+            "Durée choisie, focus optionnel",
+            "Scénarios à cocher au fil de la séance",
+            "Historique des routines faites",
+          ]}
+        />
+      );
+    case "profile":
+      return (
+        <ComingSoon
+          title="Profil"
+          phase="Module Profil"
+          summary="Pseudo, rang Valorant actuel et pic, agent principal, objectif de saison, notes de maps — le contexte que le coach et la routine réutilisent."
+          points={[
+            "Informations joueur et objectif de saison",
+            "Préférences d'entraînement",
+            "Gestion du compte",
+          ]}
+        />
+      );
+    default:
+      return <DashboardView />;
+  }
+}
+
+/** Écran d'attente muet : quelques dizaines de millisecondes, sans contenu. */
+function Booting() {
+  return <div className="min-h-dvh" aria-busy="true" />;
 }

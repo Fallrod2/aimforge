@@ -7,7 +7,14 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!**/dist", "!**/node_modules", "!**/voltaic-s5-data.json", "!drizzle/meta"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/voltaic-s5-data.json",
+      "!drizzle/meta",
+      "!src/client/supabase/database-types.ts"
+    ]
   },
   "formatter": {
     "enabled": true,
