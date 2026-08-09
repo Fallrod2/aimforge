@@ -12,7 +12,7 @@
  * debriefs réellement produits — et ça décourage le martèlement.
  */
 
-import { COACH_DAILY_QUOTA } from "../../shared/coach-contract";
+import { COACH_DAILY_QUOTA } from "../../shared/coach-contract.js";
 
 export interface QuotaVerdict {
   /** L'appel au modèle est-il autorisé ? */

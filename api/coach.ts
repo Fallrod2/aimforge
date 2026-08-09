@@ -40,18 +40,18 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
-import type { Database } from "../src/client/supabase/database-types";
-import { TIER_IDS, type TierId } from "../src/lib/energy/index";
-import { summarizeBench } from "../src/server/coach/bench";
-import { type AskModel, generateDebrief, textOf } from "../src/server/coach/generate";
-import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt";
-import { evaluateQuota } from "../src/server/coach/quota";
+import type { Database } from "../src/client/supabase/database-types.js";
+import { TIER_IDS, type TierId } from "../src/lib/energy/index.js";
+import { summarizeBench } from "../src/server/coach/bench.js";
+import { type AskModel, generateDebrief, textOf } from "../src/server/coach/generate.js";
+import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt.js";
+import { evaluateQuota } from "../src/server/coach/quota.js";
 import {
   coachRequestSchema,
   MAX_STATS_LENGTH,
   type StoredDebrief,
-} from "../src/shared/coach-contract";
-import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config";
+} from "../src/shared/coach-contract.js";
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 
 /**
  * Un debrief demande une génération complète, pas un aller-retour de chat :

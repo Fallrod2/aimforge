@@ -12,14 +12,14 @@
  * tentative se paie en latence et en jetons.
  */
 
-import type { CoachDebrief } from "../../shared/coach-contract";
-import { parseDebrief } from "./parse";
+import type { CoachDebrief } from "../../shared/coach-contract.js";
+import { parseDebrief } from "./parse.js";
 import {
   buildCoachMessages,
   buildCorrectionMessages,
   type CoachContext,
   type CoachMessage,
-} from "./prompt";
+} from "./prompt.js";
 
 /** Un bloc de contenu tel que le SDK Anthropic le rend. */
 export interface ModelContentBlock {

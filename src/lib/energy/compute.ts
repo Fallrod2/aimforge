@@ -7,9 +7,9 @@
  * donc l'aperçu ne peut pas diverger de ce qui est enregistré.
  */
 
-import { listScenarios, listSubcategories } from "./data";
-import { isComplete, overallEnergy, rankFor, scenarioEnergy, subcategoryEnergy } from "./energy";
-import type { ScoreMap, TierId } from "./types";
+import { listScenarios, listSubcategories } from "./data.js";
+import { isComplete, overallEnergy, rankFor, scenarioEnergy, subcategoryEnergy } from "./energy.js";
+import type { ScoreMap, TierId } from "./types.js";
 
 export interface ComputedScenarioScore {
   readonly scenario: string;

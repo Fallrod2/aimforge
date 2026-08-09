@@ -1,4 +1,4 @@
-import rawData from "../../../voltaic-s5-data.json";
+import rawData from "../../../voltaic-s5-data.json" with { type: "json" };
 import {
   EnergyError,
   type Scenario,
@@ -6,7 +6,7 @@ import {
   type Tier,
   type TierId,
   type VoltaicData,
-} from "./types";
+} from "./types.js";
 
 // voltaic-s5-data.json est la source de vérité versionnée du repo : on le type
 // ici plutôt que de le valider au runtime (la lib reste sans dépendance, donc

@@ -1,4 +1,4 @@
-import { getScenario, getSubcategory, getTier } from "./data";
+import { getScenario, getSubcategory, getTier } from "./data.js";
 import {
   EnergyError,
   type Rank,
@@ -6,7 +6,7 @@ import {
   type ScoreMap,
   type Tier,
   type TierId,
-} from "./types";
+} from "./types.js";
 
 /** Nombre de sous-catégories d'un bench Voltaic (3 catégories × 3). */
 export const SUBCATEGORY_COUNT = 9;

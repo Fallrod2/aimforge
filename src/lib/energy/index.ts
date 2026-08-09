@@ -10,7 +10,7 @@ export {
   computeBenchRun,
   computeSubcategories,
   scenarioNames,
-} from "./compute";
+} from "./compute.js";
 export {
   getScenario,
   getSubcategory,
@@ -20,7 +20,7 @@ export {
   META,
   TIER_IDS,
   TIERS,
-} from "./data";
+} from "./data.js";
 export {
   findRank,
   isComplete,
@@ -29,7 +29,7 @@ export {
   SUBCATEGORY_COUNT,
   scenarioEnergy,
   subcategoryEnergy,
-} from "./energy";
+} from "./energy.js";
 export {
   type Category,
   EnergyError,
@@ -41,4 +41,4 @@ export {
   type TierId,
   type VoltaicData,
   type VoltaicMeta,
-} from "./types";
+} from "./types.js";

@@ -11,7 +11,7 @@
  * relance corrective a quelque chose à corriger.
  */
 
-import { type CoachDebrief, coachDebriefSchema } from "../../shared/coach-contract";
+import { type CoachDebrief, coachDebriefSchema } from "../../shared/coach-contract.js";
 
 export type DebriefParse =
   | { readonly ok: true; readonly debrief: CoachDebrief }

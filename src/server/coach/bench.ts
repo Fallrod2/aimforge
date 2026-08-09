@@ -7,8 +7,8 @@
  * les plus basses). Le reste ne ferait qu'allonger le prompt.
  */
 
-import { computeSubcategories, getTier, type TierId } from "../../lib/energy/index";
-import type { CoachBenchSummary, CoachWeakness } from "./prompt";
+import { computeSubcategories, getTier, type TierId } from "../../lib/energy/index.js";
+import type { CoachBenchSummary, CoachWeakness } from "./prompt.js";
 
 /** La passe telle que la base la rend, avant résumé. */
 export interface BenchRunForCoach {

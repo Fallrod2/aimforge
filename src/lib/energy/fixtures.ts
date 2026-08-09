@@ -4,8 +4,8 @@
  * seuil écrit en dur ici (règle du projet : le JSON est la source de vérité).
  */
 
-import { getTier, listScenarios } from "./data";
-import type { TierId } from "./types";
+import { getTier, listScenarios } from "./data.js";
+import type { TierId } from "./types.js";
 
 /**
  * Les 18 scores d'un palier posés **pile** sur le seuil d'une ancre
