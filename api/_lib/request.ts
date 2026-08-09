@@ -11,8 +11,12 @@
  * Le point non négociable : le client rendu ici porte le JWT de l'appelant, pas
  * la service key. La RLS s'applique donc à ces fonctions exactement comme au
  * navigateur — une fonction qui se tromperait d'identifiant se ferait refuser
- * par la base, et non par sa propre prudence. Aucune des trois fonctions n'a
- * besoin de la service key, et aucune ne la lit.
+ * par la base, et non par sa propre prudence. C'est le client par défaut : tout
+ * ce qui peut passer par lui passe par lui.
+ *
+ * Les rares écritures qu'aucune policy ne peut autoriser (le compteur
+ * d'imports, les colonnes serveur de `linked_accounts`) passent par
+ * `./service.ts`, qui explique pourquoi et à quelles conditions.
  *
  * Le préfixe `_` sort ce fichier du routage Vercel : il est importé, jamais
  * appelé en HTTP.

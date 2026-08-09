@@ -71,6 +71,15 @@ export class LinkedAccountError extends Error {
   get notFound(): boolean {
     return this.status === 404;
   }
+
+  /**
+   * Le frein quotidien a parlé (migration 0007). Comme « non configuré » :
+   * ni faute, ni panne — il n'y a rien à corriger et rien à réessayer tout de
+   * suite. L'écran le dit posément, sur le même fond neutre.
+   */
+  get rateLimited(): boolean {
+    return this.status === 429;
+  }
 }
 
 const OFFLINE = "Service injoignable : vérifie ta connexion, puis réessaie.";

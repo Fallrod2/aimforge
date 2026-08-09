@@ -12,8 +12,21 @@
  * servira à tous les rafraîchissements, et il faut la clé HenrikDev — donc le
  * serveur — pour l'obtenir.
  *
- * L'écriture passe par le JWT de l'appelant : c'est la RLS qui autorise
- * l'insertion, pas la fonction. La service key n'est ni lue ni nécessaire.
+ * Deux choses ont changé avec la migration 0007, et elles vont ensemble :
+ *
+ * - **un frein quotidien**, compté en base avant l'appel à HenrikDev. Le JWT
+ *   dit qui appelle, pas combien de fois : sans frein, un seul compte suffisait
+ *   à épuiser le quota mensuel de la clé — y compris en échouant, puisqu'un
+ *   Riot ID mal tapé coûte un appel comme un autre ;
+ * - **l'insertion passe par le client de service**. `riot_puuid` et
+ *   `riot_region` ne sont plus écrivables par `authenticated` (privilèges de
+ *   colonne) : c'était le seul moyen d'empêcher le navigateur de fabriquer
+ *   lui-même un compte Riot « lié », en contournant à la fois la vérification
+ *   du Riot ID et le frein ci-dessus.
+ *
+ * Le `user_id` écrit ne vient jamais du corps de requête : il vient de
+ * `getUser()`, donc d'une signature vérifiée par Supabase Auth. Les lectures,
+ * elles, restent sous le JWT de l'appelant — donc sous RLS.
  */
 
 import {
@@ -25,6 +38,7 @@ import {
   LINKED_ACCOUNT_COLUMNS,
   toLinkedAccount,
 } from "../../src/client/data/linked-accounts-mapping.js";
+import { consumeDailyLimit, RIOT_LINK_LIMIT } from "../../src/server/linked/rate-limit.js";
 import {
   DEFAULT_REGION,
   HenrikError,
@@ -33,6 +47,11 @@ import {
   resolveAccount,
 } from "../_lib/henrikdev.js";
 import { authenticate, fail, json, readBody } from "../_lib/request.js";
+import {
+  incrementUsage,
+  serviceClient,
+  NOT_CONFIGURED as USAGE_NOT_CONFIGURED,
+} from "../_lib/service.js";
 
 /** Un aller-retour vers la source, plus deux écritures : 15 s est large. */
 export const maxDuration = 15;
@@ -59,7 +78,20 @@ export async function POST(request: Request): Promise<Response> {
   //    le dit franchement plutôt que d'enregistrer un compte non vérifié.
   if (!isConfigured()) return fail(NOT_CONFIGURED, 503);
 
-  // 4. Résolution du Riot ID.
+  const service = serviceClient();
+
+  if (service === null) {
+    console.error("[valorant] SUPABASE_SERVICE_ROLE_KEY absente : liaison refusée");
+    return fail(USAGE_NOT_CONFIGURED, 503);
+  }
+
+  // 4. Frein quotidien, **avant** l'appel à HenrikDev : une tentative ratée
+  //    coûte le même appel qu'une réussie, elle doit donc compter pareil.
+  const quota = await consumeDailyLimit(incrementUsage(service, auth.userId), RIOT_LINK_LIMIT);
+
+  if (!quota.ok) return fail(quota.message, quota.status);
+
+  // 5. Résolution du Riot ID.
   let account: Awaited<ReturnType<typeof resolveAccount>>;
 
   try {
@@ -76,8 +108,8 @@ export async function POST(request: Request): Promise<Response> {
   const externalId = formatRiotId({ name: account.name ?? name, tag: account.tag ?? tag });
   const resolvedRegion = account.region ?? region ?? DEFAULT_REGION;
 
-  // 5. État actuel des comptes Riot de l'utilisateur : il décide à la fois du
-  //    doublon et du compte principal.
+  // 6. État actuel des comptes Riot de l'utilisateur : il décide à la fois du
+  //    doublon et du compte principal. Lecture sous RLS, comme partout.
   const existing = await auth.client
     .from("linked_accounts")
     .select("id, external_id, is_primary")
@@ -115,7 +147,11 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  const inserted = await auth.client
+  // 7. L'insertion, et elle seule, passe par le client de service : elle écrit
+  //    `riot_puuid` et `riot_region`, réservés au serveur depuis 0007. Le
+  //    `user_id` posé ici est celui que `getUser()` a vérifié — la RLS
+  //    contournée n'ouvre donc rien qu'elle n'aurait laissé passer.
+  const inserted = await service
     .from("linked_accounts")
     .insert({
       user_id: auth.userId,
@@ -131,7 +167,7 @@ export async function POST(request: Request): Promise<Response> {
 
   if (inserted.error !== null || inserted.data === null) {
     // 23505 : la contrainte d'unicité a parlé plus vite que la lecture du
-    // point 5 (deux liaisons simultanées du même compte).
+    // point 6 (deux liaisons simultanées du même compte).
     if (inserted.error?.code === "23505") {
       return fail(`« ${externalId} » est déjà lié à ton compte.`, 409);
     }

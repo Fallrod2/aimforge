@@ -6,21 +6,36 @@
  * elle-même qu'il y a une session. Sans session, tout ce qui n'est pas la page
  * de connexion affiche la landing **sans changer le hash** : l'adresse
  * demandée survit à la connexion, et l'utilisateur atterrit là où il allait.
+ *
+ * Une seule vue est chargée à la demande : l'historique. Sa courbe de
+ * progression tire Recharts, et Recharts tire d3 et un store Redux — environ un
+ * tiers du bundle pour un écran que personne ne voit au premier chargement
+ * (l'application ouvre sur le tableau de bord). Les cinq autres vues restent en
+ * import statique : elles ne pèsent que leur propre code, et les découper
+ * coûterait un aller-retour réseau à chaque onglet pour rien.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AppLayout } from "./app/AppLayout";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { AuthView } from "./auth/AuthView";
 import { RecoveryView } from "./auth/RecoveryView";
 import { CoachView } from "./coach/CoachView";
 import { DashboardView } from "./dashboard/DashboardView";
-import { HistoryView } from "./history/HistoryView";
 import { LandingView } from "./landing/LandingView";
 import { ProfileView } from "./profile/ProfileView";
 import { DEFAULT_ROUTE, parseRoute, type Route, requiresSession, routeHash } from "./route";
 import { RoutineView } from "./routine/RoutineView";
 import { TrackerView } from "./tracker/TrackerView";
+
+/**
+ * `HistoryView` est un export nommé, `lazy` attend un export par défaut : on
+ * fait la conversion ici plutôt que d'ajouter un `export default` au module,
+ * qui n'aurait de sens que pour ce chargeur.
+ */
+const HistoryView = lazy(async () => ({
+  default: (await import("./history/HistoryView")).HistoryView,
+}));
 
 function currentRoute(): Route {
   return parseRoute(window.location.hash);
@@ -75,7 +90,12 @@ function Routed() {
 
   return (
     <AppLayout route={route}>
-      <View route={route} navigate={navigate} />
+      {/* Le repli ne s'affiche que le temps de télécharger l'historique, une
+          fois par session : un cadre muet, pas un écran de chargement, pour ne
+          pas faire clignoter la mise en page sous l'utilisateur. */}
+      <Suspense fallback={<ViewLoading />}>
+        <View route={route} navigate={navigate} />
+      </Suspense>
     </AppLayout>
   );
 }
@@ -107,4 +127,9 @@ function View({ route, navigate }: ViewProps) {
 /** Écran d'attente muet : quelques dizaines de millisecondes, sans contenu. */
 function Booting() {
   return <div className="min-h-dvh" aria-busy="true" />;
+}
+
+/** Même principe, mais dans la mise en page : le temps d'un chargement différé. */
+function ViewLoading() {
+  return <div className="min-h-[60dvh]" aria-busy="true" />;
 }

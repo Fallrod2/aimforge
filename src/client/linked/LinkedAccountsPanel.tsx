@@ -37,8 +37,15 @@ const CONTROL_CLASSES =
 const PRIMARY_BUTTON =
   "rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500";
 
+/**
+ * « Délier » et « Définir principal » sont des actions rares mais destructrices
+ * ou structurantes : elles doivent rester attrapables au pouce. `min-h-8`
+ * (32 px) est le plancher — en dessous, la cible passait à ~25 px de haut, et
+ * un doigt qui vise « Délier » sur un téléphone n'a pas droit à l'erreur.
+ * `inline-flex` recentre le libellé dans la hauteur ainsi imposée.
+ */
 const GHOST_BUTTON =
-  "rounded-lg border border-steel-700 px-3 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600";
+  "inline-flex min-h-8 items-center rounded-lg border border-steel-700 px-3 py-2 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600";
 
 function message(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
@@ -49,11 +56,15 @@ type LinkStatus =
   | { readonly kind: "idle" }
   | { readonly kind: "checking" }
   | { readonly kind: "error"; readonly message: string }
-  /** La fonctionnalité n'est pas configurée côté serveur : ni faute, ni panne. */
+  /**
+   * Ni faute, ni panne : la fonctionnalité n'est pas configurée côté serveur,
+   * ou le frein quotidien est atteint. Dans les deux cas il n'y a rien à
+   * corriger, et réessayer tout de suite échouerait pareil.
+   */
   | { readonly kind: "unavailable"; readonly message: string };
 
 function statusOf(cause: unknown, fallback: string): LinkStatus {
-  if (cause instanceof LinkedAccountError && cause.notConfigured) {
+  if (cause instanceof LinkedAccountError && (cause.notConfigured || cause.rateLimited)) {
     return { kind: "unavailable", message: cause.message };
   }
   return { kind: "error", message: message(cause, fallback) };

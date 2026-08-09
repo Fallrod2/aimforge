@@ -21,6 +21,42 @@ export const PROVIDERS = ["riot", "kovaaks"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 /* ------------------------------------------------------------------ */
+/* Freins quotidiens                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Les deux compteurs de `public.import_usage` (migration 0007), miroir du
+ * `check` de `increment_import_usage`.
+ *
+ * Ils existent parce que les deux fonctions concernées appellent des **sources
+ * tierces** : le Benchmark Tracker de kovaaks.com (non officiel, sans contrat)
+ * et HenrikDev (quota mensuel). L'authentification dit qui appelle, elle ne dit
+ * pas combien de fois — et un seul compte qui martèle suffit à faire bannir
+ * l'IP de la plateforme ou à épuiser le quota de tout le monde.
+ */
+export const IMPORT_USAGE_KINDS = ["kovaaks_import", "riot_link"] as const;
+
+export type ImportUsageKind = (typeof IMPORT_USAGE_KINDS)[number];
+
+/**
+ * Imports KovaaK's autorisés par utilisateur et par jour UTC.
+ *
+ * Large exprès : un import légitime se compte en unités par session (un par
+ * palier, plus les reprises après un score manquant), pas en dizaines. La
+ * limite ne se voit donc jamais en usage normal, et coupe court au martèlement.
+ */
+export const KOVAAKS_IMPORT_DAILY_LIMIT = 20;
+
+/**
+ * Liaisons Riot autorisées par utilisateur et par jour UTC.
+ *
+ * Plus basse : lier un compte est un geste rare (un principal, quelques alts),
+ * et chaque tentative — même ratée sur un Riot ID mal tapé — coûte un appel au
+ * quota HenrikDev.
+ */
+export const RIOT_LINK_DAILY_LIMIT = 10;
+
+/* ------------------------------------------------------------------ */
 /* Rang courant                                                        */
 /* ------------------------------------------------------------------ */
 

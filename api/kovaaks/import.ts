@@ -9,10 +9,16 @@
  * la donnée d'une source non officielle une vérité, sans que personne l'ait
  * regardée.
  *
- * Elle n'a donc pas non plus besoin de secret : le Benchmark Tracker est
- * public. Le JWT, lui, reste exigé — la fonction ne s'ouvre pas plus que le
- * reste de l'application, et rien ne justifie de laisser un tiers s'en servir
- * comme d'un proxy anonyme vers kovaaks.com.
+ * Le Benchmark Tracker est public : aucun secret n'est nécessaire pour le
+ * lire. Le JWT, lui, reste exigé — la fonction ne s'ouvre pas plus que le reste
+ * de l'application, et rien ne justifie de laisser un tiers s'en servir comme
+ * d'un proxy anonyme vers kovaaks.com.
+ *
+ * Le jeton dit **qui** appelle, pas **combien de fois**. Un seul compte
+ * authentifié pouvait donc marteler kovaaks.com jusqu'au bannissement de l'IP
+ * de la plateforme — une source non officielle n'a aucune raison de nous
+ * ménager. D'où le frein quotidien, compté en base avant chaque appel sortant
+ * (`src/server/linked/rate-limit.ts`, migration 0007).
  *
  * Tout ce qui mérite d'être testé (correspondance des noms, échelle des
  * scores, inventaire des manquants) vit dans `src/server/kovaaks/benchmark.ts`,
@@ -24,6 +30,7 @@ import {
   kovaaksImportRequestSchema,
 } from "../../src/client/data/linked-accounts-contract.js";
 import { mapBenchmarkProgress } from "../../src/server/kovaaks/benchmark.js";
+import { consumeDailyLimit, KOVAAKS_IMPORT_LIMIT } from "../../src/server/linked/rate-limit.js";
 import {
   fetchBenchmarkProgress,
   findPlayer,
@@ -31,15 +38,17 @@ import {
   startKovaaksBudget,
 } from "../_lib/kovaaks.js";
 import { authenticate, fail, json, readBody } from "../_lib/request.js";
+import { incrementUsage, NOT_CONFIGURED, serviceClient } from "../_lib/service.js";
 
 /**
  * Deux appels à une source non officielle, avec relance chacun.
  *
  * Le pire cas n'est pas la somme des délais : les deux appels partagent un
  * budget de 14 s (`TOTAL_BUDGET_MS` dans `api/_lib/kovaaks.ts`, où le calcul
- * est détaillé). Les 6 s restantes couvrent la vérification du jeton et la
- * construction de la réponse — c'est cette marge qui garantit que même un
- * KovaaK's muet ressorte d'ici en erreur rédigée plutôt qu'en fonction tuée.
+ * est détaillé). Les 6 s restantes couvrent la vérification du jeton, un
+ * aller-retour vers le compteur d'imports et la construction de la réponse —
+ * c'est cette marge qui garantit que même un KovaaK's muet ressorte d'ici en
+ * erreur rédigée plutôt qu'en fonction tuée.
  */
 export const maxDuration = 20;
 
@@ -62,7 +71,21 @@ export async function POST(request: Request): Promise<Response> {
 
   const { username, tier } = body.value;
 
-  // 3. Le pseudo, puis la progression. Les deux appels peuvent échouer de la
+  // 3. Frein quotidien, **avant** tout appel sortant. L'incrément et la lecture
+  //    sont la même instruction SQL : deux imports simultanés ne peuvent pas
+  //    passer tous les deux sur la dernière unité disponible.
+  const service = serviceClient();
+
+  if (service === null) {
+    console.error("[kovaaks] SUPABASE_SERVICE_ROLE_KEY absente : import refusé");
+    return fail(NOT_CONFIGURED, 503);
+  }
+
+  const quota = await consumeDailyLimit(incrementUsage(service, auth.userId), KOVAAKS_IMPORT_LIMIT);
+
+  if (!quota.ok) return fail(quota.message, quota.status);
+
+  // 4. Le pseudo, puis la progression. Les deux appels peuvent échouer de la
   //    même façon (source muette, réponse hors forme) : `KovaaksError` porte
   //    déjà le statut et la phrase à afficher.
   const budget = startKovaaksBudget();

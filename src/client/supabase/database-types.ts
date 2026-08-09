@@ -104,6 +104,27 @@ export type Database = {
         }
         Relationships: []
       }
+      import_usage: {
+        Row: {
+          day: string
+          kovaaks_count: number
+          riot_link_count: number
+          user_id: string
+        }
+        Insert: {
+          day: string
+          kovaaks_count?: number
+          riot_link_count?: number
+          user_id: string
+        }
+        Update: {
+          day?: string
+          kovaaks_count?: number
+          riot_link_count?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       imported_matches: {
         Row: {
           created_at: string
@@ -288,6 +309,10 @@ export type Database = {
     }
     Functions: {
       increment_ai_usage: {
+        Args: { p_kind: string; p_user_id: string }
+        Returns: number
+      }
+      increment_import_usage: {
         Args: { p_kind: string; p_user_id: string }
         Returns: number
       }

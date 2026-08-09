@@ -17,8 +17,14 @@
  *    `update` : une partie jouée ne change plus, et l'insertion ignore
  *    simplement les doublons. Le rafraîchissement est donc idempotent.
  *
- * Comme partout ici, l'écriture passe par le JWT de l'appelant : c'est la RLS
- * qui autorise, pas la fonction.
+ * Une exception depuis la migration 0007 : la **datation** du rafraîchissement
+ * (`last_refreshed_at`, `riot_mmr`) passe par le client de service. Ces deux
+ * colonnes ne sont plus écrivables par `authenticated`, et c'est le point même
+ * du durcissement : tant que le navigateur pouvait écrire `last_refreshed_at`,
+ * le cache décrit au point 1 n'était pas un cache mais une suggestion — il
+ * suffisait de remettre la colonne à `null` en boucle pour rappeler la source
+ * autant de fois qu'on voulait. Tout le reste (lectures, matchs importés)
+ * continue de passer par le JWT de l'appelant, donc sous RLS.
  */
 
 import {
@@ -41,6 +47,7 @@ import {
   NOT_CONFIGURED,
 } from "../_lib/henrikdev.js";
 import { authenticate, fail, json, readBody, type UserClient } from "../_lib/request.js";
+import { serviceClient } from "../_lib/service.js";
 
 /** Deux appels à une source non officielle, puis deux écritures. */
 export const maxDuration = 30;
@@ -188,13 +195,29 @@ export async function POST(request: Request): Promise<Response> {
 
   // 5. Datation du rafraîchissement et rang du moment. C'est cette écriture
   //    qui arme le cache : elle vient en dernier, une fois tout le reste sûr.
-  const stamped = await auth.client
-    .from("linked_accounts")
-    .update({ last_refreshed_at: new Date().toISOString(), riot_mmr: mmr })
-    .eq("id", account.id);
+  //
+  //    Le client de service, parce que ces colonnes sont réservées au serveur.
+  //    Le `.eq("user_id")` est redondant avec le `.eq("id")` — la ligne vient
+  //    d'être lue sous RLS, elle est donc à l'appelant — mais il borne le rayon
+  //    d'action de la RLS contournée à un seul utilisateur, celui que
+  //    `getUser()` a vérifié. Une écriture qui se tromperait de ligne ne
+  //    pourrait toucher que les siennes.
+  const service = serviceClient();
 
-  if (stamped.error !== null) {
-    console.error("[valorant] datation du rafraîchissement en échec", stamped.error);
+  if (service === null) {
+    // Le cache n'est pas armé : le prochain appel rappellera la source. C'est
+    // une dégradation, pas une panne — la réponse, elle, est complète.
+    console.error("[valorant] SUPABASE_SERVICE_ROLE_KEY absente : rafraîchissement non daté");
+  } else {
+    const stamped = await service
+      .from("linked_accounts")
+      .update({ last_refreshed_at: new Date().toISOString(), riot_mmr: mmr })
+      .eq("id", account.id)
+      .eq("user_id", auth.userId);
+
+    if (stamped.error !== null) {
+      console.error("[valorant] datation du rafraîchissement en échec", stamped.error);
+    }
   }
 
   const response: RefreshResponse = { cached: false, mmr, matches: [...matches] };

@@ -14,7 +14,20 @@
   --color-steel-800: #1b2027;
   --color-steel-700: #2a313b;
   --color-steel-600: #3b4552;
-  --color-steel-500: #55616f;
+  /*
+   * Éclairci le 09/08/2026 : #55616f ne donnait que 3,08:1 sur steel-950, et
+   * 2,97:1 sur le fond réel des cartes (steel-900/60 composé sur le body, soit
+   * #0f1216) — sous le seuil AA de 4,5:1, pour une teinte portée par une
+   * quarantaine de textes de 11 à 12 px : légendes, métadonnées, unités.
+   *
+   * #737f8e tient 4,78:1 sur steel-950 et 4,61:1 dans le pire cas réellement
+   * rencontré (l'intérieur d'une carte). C'est le premier ton qui passe partout
+   * en gardant un écart visible avec steel-400 (#7c8898, 1,13:1 entre les
+   * deux) : au-delà, les deux niveaux de gris se confondent et la hiérarchie
+   * « valeur / légende » disparaît. Même teinte (~213°) et même chroma que
+   * l'ancien : c'est une clarté qui change, pas la gamme.
+   */
+  --color-steel-500: #737f8e;
   --color-steel-400: #7c8898;
   --color-steel-300: #a3adbb;
   --color-steel-200: #c8cfd9;

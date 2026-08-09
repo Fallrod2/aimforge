@@ -88,6 +88,29 @@ paraître naturel et gratifiant, pas une corvée de configuration.
 - Dépendances externes isolées chacune derrière un module serveur unique,
   remplaçables (ex. migration future vers l'API officielle Riot) sans toucher l'UI.
 
+## 5 ter. Réglages IA par utilisateur (acté 2026-08-09)
+
+Chaque utilisateur peut configurer SON provider IA dans les réglages (page
+Profil ou section dédiée), sur le modèle d'un sélecteur provider + modèle +
+clé, avec « Tester la connexion » :
+
+- **Par défaut** (aucune config) : la clé Anthropic de la plateforme, quota
+  5 debriefs + 5 routines/jour (inchangé). Configurer son propre provider
+  **lève le quota** (l'utilisateur paie ses propres jetons).
+- **Providers v1** : Anthropic, OpenRouter, OpenAI-compatible (URL de base +
+  clé — couvre OpenAI, Ollama distant, vLLM…), Mistral, ChatGPT (subscription)
+  — ce dernier marqué Expérimental avec avertissement (dépend de la tolérance
+  d'OpenAI, peut cesser de fonctionner).
+- **Stockage des clés** : côté serveur uniquement, jamais réaffichées après
+  enregistrement (write-only pour le client — le même verrou de privilèges de
+  colonne que `linked_accounts`), lisibles seulement par les fonctions
+  serverless (service role). Suppression possible à tout moment.
+- **Abstraction** : les fonctions coach/routine passent par un port unique
+  (le `AskModel` existant) ; chaque provider est un adaptateur derrière ce
+  port. La sortie reste du JSON strict validé Zod quel que soit le provider.
+- Le « Tester la connexion » consomme un mini-appel et rend un verdict clair
+  sans jamais renvoyer la clé.
+
 ## 6. Sécurité
 
 - RLS activé sur toutes les tables, policies testées (un utilisateur A ne voit jamais les données de B).

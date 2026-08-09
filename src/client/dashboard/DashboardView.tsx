@@ -3,8 +3,14 @@
  * lecture (où j'en suis · ce qui coince · quoi faire aujourd'hui · ce que
  * disait la dernière partie).
  *
- * Le bench et la routine viennent de Supabase (`../data`), comme le tracker et
- * l'historique. Le dernier debrief attend encore son branchement.
+ * Les quatre viennent de Supabase (`../data`), comme le tracker et
+ * l'historique.
+ *
+ * Sur un compte neuf, l'emplacement « dernier bench » ne montre pas un vide
+ * mais **le chemin le plus court vers une passe** : lier son pseudo KovaaK's,
+ * qui remplit les 18 scores tout seuls (SPEC §5 bis). La saisie manuelle vient
+ * juste derrière — elle marche toujours, et redevient le seul chemin dès qu'un
+ * compte est lié.
  *
  * La routine affichée est celle **du jour et pas encore faite**
  * (`../routine/today.ts`) : le dashboard répond à « qu'est-ce que je fais
@@ -15,11 +21,20 @@
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { getTier } from "../../lib/energy";
+import type { StoredDebrief } from "../../shared/coach-contract";
 import type { StoredRoutine } from "../../shared/routine-contract";
 import { RankBadge } from "../components/RankBadge";
-import { type BenchRunDetail, getBenchRunDetail, listBenchRuns, listRoutines } from "../data";
+import {
+  accountsOf,
+  type BenchRunDetail,
+  getBenchRunDetail,
+  listBenchRuns,
+  listDebriefs,
+  listRoutines,
+} from "../data";
 import { rankColorFor } from "../energy-view";
 import { formatEnergy, formatRunDate } from "../format";
+import { LinkInvite } from "../linked/LinkInvite";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
 import { ValorantPanel } from "../linked/ValorantPanel";
 import { type Route, routeHash } from "../route";
@@ -43,9 +58,21 @@ type Today =
   | { readonly status: "empty"; readonly reason: string | null }
   | { readonly status: "ready"; readonly routine: StoredRoutine };
 
+/** Le dernier debrief du coach. Mêmes trois états, pour les mêmes raisons. */
+type Latest =
+  | { readonly status: "loading" }
+  | { readonly status: "empty"; readonly reason: string | null }
+  | { readonly status: "ready"; readonly debrief: StoredDebrief };
+
 const TRACKER_HASH = routeHash({ view: "tracker", runId: null });
 
 const ROUTINE_HASH = routeHash({ view: "routine", runId: null });
+
+const COACH_HASH = routeHash({ view: "coach", runId: null });
+
+/** Le geste principal d'un emplacement vide. Un seul par carte, jamais deux. */
+const PRIMARY_ACTION =
+  "rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500";
 
 function historyHash(runId: number | null): string {
   const route: Route = { view: "history", runId };
@@ -56,7 +83,39 @@ function historyHash(runId: number | null): string {
 export function DashboardView() {
   const [bench, setBench] = useState<Bench>({ status: "loading" });
   const [today, setToday] = useState<Today>({ status: "loading" });
+  const [latest, setLatest] = useState<Latest>({ status: "loading" });
   const linked = useLinkedAccounts();
+  /**
+   * Un compte KovaaK's est-il lié ? `null` tant qu'on ne sait pas : proposer
+   * une liaison à quelqu'un qui en a déjà une serait pire qu'attendre deux
+   * cents millisecondes.
+   */
+  const kovaaksLinked =
+    linked.state.status === "ready"
+      ? accountsOf(linked.state.accounts, "kovaaks").length > 0
+      : null;
+
+  const loadLatest = useCallback(async () => {
+    setLatest({ status: "loading" });
+    try {
+      // Un seul debrief : c'est un emplacement de synthèse, pas l'historique
+      // du coach. La page Coach porte le reste.
+      const [debrief] = await listDebriefs(1);
+
+      setLatest(
+        debrief === undefined ? { status: "empty", reason: null } : { status: "ready", debrief },
+      );
+    } catch (cause) {
+      setLatest({
+        status: "empty",
+        reason: cause instanceof Error ? cause.message : "Debriefs indisponibles.",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLatest();
+  }, [loadLatest]);
 
   const loadRoutine = useCallback(async () => {
     setToday({ status: "loading" });
@@ -113,7 +172,7 @@ export function DashboardView() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Dernier bench" action={{ href: historyHash(null), label: "Historique" }}>
-          <LastBench bench={bench} onRetry={() => void load()} />
+          <LastBench bench={bench} kovaaksLinked={kovaaksLinked} onRetry={() => void load()} />
         </Card>
 
         {/* Le rang Valorant tient sur toute la largeur : c'est le seul
@@ -132,11 +191,8 @@ export function DashboardView() {
           <TodayRoutine today={today} />
         </Card>
 
-        <Card title="Dernier debrief">
-          <Placeholder
-            headline="Aucun debrief."
-            detail="Le coach post-game arrive au module suivant : tu colleras tes stats de partie, il rendra points forts, axes de travail et focus."
-          />
+        <Card title="Dernier debrief" action={{ href: COACH_HASH, label: "Coach" }}>
+          <LastDebrief latest={latest} />
         </Card>
       </div>
     </div>
@@ -170,24 +226,27 @@ function Card({ title, action, children }: CardProps) {
   );
 }
 
-function LastBench({ bench, onRetry }: { readonly bench: Bench; readonly onRetry: () => void }) {
+interface LastBenchProps {
+  readonly bench: Bench;
+  /** Un compte KovaaK's est-il lié ? `null` tant qu'on ne sait pas. */
+  readonly kovaaksLinked: boolean | null;
+  readonly onRetry: () => void;
+}
+
+function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
   if (bench.status === "loading") return <Skeleton />;
 
   if (bench.status === "empty") {
-    return (
-      <div className="flex flex-col items-start gap-3">
-        <Placeholder
-          headline="Aucune passe enregistrée."
-          detail={bench.reason ?? "Saisis tes 18 scores dans le tracker : le rang suivra."}
-        />
-        <div className="flex gap-2">
-          <a
-            href={TRACKER_HASH}
-            className="rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500"
-          >
-            Ouvrir le tracker
-          </a>
-          {bench.reason === null ? null : (
+    // Une lecture en échec n'est pas un compte neuf : on dit ce qui s'est
+    // passé et on propose de réessayer, sans inviter à lier quoi que ce soit.
+    if (bench.reason !== null) {
+      return (
+        <div className="flex flex-col items-start gap-3">
+          <Placeholder headline="Aucune passe enregistrée." detail={bench.reason} />
+          <div className="flex gap-2">
+            <a href={TRACKER_HASH} className={PRIMARY_ACTION}>
+              Ouvrir le tracker
+            </a>
             <button
               type="button"
               onClick={onRetry}
@@ -195,8 +254,41 @@ function LastBench({ bench, onRetry }: { readonly bench: Bench; readonly onRetry
             >
               Réessayer
             </button>
-          )}
+          </div>
         </div>
+      );
+    }
+
+    // Compte neuf, aucun pseudo KovaaK's lié : le chemin premier est la
+    // liaison, qui remplit les 18 scores d'un coup. Le tracker reste offert
+    // juste dessous, en second — c'est le seul chemin quand rien n'est lié à
+    // aller chercher, et il ne doit jamais disparaître.
+    if (kovaaksLinked === false) {
+      return (
+        <div className="flex flex-col gap-3">
+          <LinkInvite title="Tes 18 scores peuvent arriver tout seuls" action="Lier KovaaK's">
+            Lie ton pseudo kovaaks.com une fois : le tracker ira chercher tes scores du benchmark
+            Voltaic, tu vérifies, tu enregistres.
+          </LinkInvite>
+          <a
+            href={TRACKER_HASH}
+            className="self-start text-xs text-steel-400 underline-offset-2 transition-colors hover:text-steel-200 hover:underline"
+          >
+            Ou saisis tes 18 scores à la main →
+          </a>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col items-start gap-3">
+        <Placeholder
+          headline="Aucune passe enregistrée."
+          detail="Ouvre le tracker : tes scores KovaaK's s'y importent en un clic, et la saisie manuelle reste là pour les corriger."
+        />
+        <a href={TRACKER_HASH} className={PRIMARY_ACTION}>
+          Ouvrir le tracker
+        </a>
       </div>
     );
   }
@@ -245,10 +337,7 @@ function TodayRoutine({ today }: { readonly today: Today }) {
             "Dis combien de temps tu as : la séance partira des sous-catégories basses de ton dernier bench et des axes de tes derniers debriefs."
           }
         />
-        <a
-          href={ROUTINE_HASH}
-          className="rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500"
-        >
+        <a href={ROUTINE_HASH} className={PRIMARY_ACTION}>
           Générer une routine
         </a>
       </div>
@@ -279,6 +368,48 @@ function TodayRoutine({ today }: { readonly today: Today }) {
           </li>
         ))}
       </ul>
+    </a>
+  );
+}
+
+/**
+ * Le dernier debrief : sa date, son résumé, et le focus qu'il a laissé.
+ *
+ * Le focus est repris en entier, jamais tronqué : c'est la seule phrase du
+ * debrief qui dit quoi faire, et un dashboard qui la coupe au milieu ne sert
+ * plus à rien. Le résumé, lui, se contente de trois lignes — le détail vit sur
+ * la page Coach, où le lien de la carte mène.
+ */
+function LastDebrief({ latest }: { readonly latest: Latest }) {
+  if (latest.status === "loading") return <Skeleton />;
+
+  if (latest.status === "empty") {
+    return (
+      <div className="flex flex-col items-start gap-3">
+        <Placeholder
+          headline="Aucun debrief."
+          detail={
+            latest.reason ??
+            "Colle les stats de ta prochaine partie : le coach en tire tes points forts, tes axes de travail et un focus."
+          }
+        />
+        <a href={COACH_HASH} className={PRIMARY_ACTION}>
+          Ouvrir le coach
+        </a>
+      </div>
+    );
+  }
+
+  const { debrief } = latest;
+
+  return (
+    <a href={COACH_HASH} className="flex flex-col gap-2">
+      <p className="text-xs text-steel-500">{formatRunDate(debrief.date)}</p>
+      <p className="line-clamp-3 text-sm leading-relaxed text-steel-200">{debrief.resume}</p>
+      <p className="rounded-lg bg-steel-950/60 px-3 py-2 text-xs leading-relaxed text-steel-300">
+        <span className="font-medium text-ember-400">Focus · </span>
+        {debrief.focus}
+      </p>
     </a>
   );
 }
