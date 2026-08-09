@@ -16,6 +16,8 @@ import { RankBadge } from "../components/RankBadge";
 import { type BenchRunDetail, getBenchRunDetail, listBenchRuns } from "../data";
 import { rankColorFor } from "../energy-view";
 import { formatEnergy, formatRunDate } from "../format";
+import { useLinkedAccounts } from "../linked/useLinkedAccounts";
+import { ValorantPanel } from "../linked/ValorantPanel";
 import { type Route, routeHash } from "../route";
 import { latestRun, weakestSubcategories } from "./summary";
 
@@ -35,6 +37,7 @@ function historyHash(runId: number | null): string {
 
 export function DashboardView() {
   const [bench, setBench] = useState<Bench>({ status: "loading" });
+  const linked = useLinkedAccounts();
 
   const load = useCallback(async () => {
     setBench({ status: "loading" });
@@ -73,6 +76,14 @@ export function DashboardView() {
         <Card title="Dernier bench" action={{ href: historyHash(null), label: "Historique" }}>
           <LastBench bench={bench} onRetry={() => void load()} />
         </Card>
+
+        {/* Le rang Valorant tient sur toute la largeur : c'est le seul
+            emplacement qui porte une liste (les dernières parties). */}
+        <div className="lg:col-span-2 lg:order-last">
+          <Card title="Valorant">
+            <ValorantPanel state={linked.state} />
+          </Card>
+        </div>
 
         <Card title="Sous-catégories les plus faibles">
           <Weaknesses bench={bench} />

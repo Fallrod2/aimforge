@@ -1,331 +1,425 @@
-export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[]
 
 export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15";
-  };
+    PostgrestVersion: "14.15"
+  }
   public: {
     Tables: {
       ai_usage: {
         Row: {
-          coach_count: number;
-          day: string;
-          routine_count: number;
-          user_id: string;
-        };
+          coach_count: number
+          day: string
+          routine_count: number
+          user_id: string
+        }
         Insert: {
-          coach_count?: number;
-          day: string;
-          routine_count?: number;
-          user_id: string;
-        };
+          coach_count?: number
+          day: string
+          routine_count?: number
+          user_id: string
+        }
         Update: {
-          coach_count?: number;
-          day?: string;
-          routine_count?: number;
-          user_id?: string;
-        };
-        Relationships: [];
-      };
+          coach_count?: number
+          day?: string
+          routine_count?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       bench_runs: {
         Row: {
-          complete: boolean;
-          created_at: string;
-          date: string;
-          id: number;
-          overall: number;
-          rank: string | null;
-          tier: string;
-          user_id: string;
-        };
+          complete: boolean
+          created_at: string
+          date: string
+          id: number
+          overall: number
+          rank: string | null
+          source: string
+          tier: string
+          user_id: string
+        }
         Insert: {
-          complete?: boolean;
-          created_at?: string;
-          date?: string;
-          id?: never;
-          overall: number;
-          rank?: string | null;
-          tier: string;
-          user_id: string;
-        };
+          complete?: boolean
+          created_at?: string
+          date?: string
+          id?: never
+          overall: number
+          rank?: string | null
+          source?: string
+          tier: string
+          user_id: string
+        }
         Update: {
-          complete?: boolean;
-          created_at?: string;
-          date?: string;
-          id?: never;
-          overall?: number;
-          rank?: string | null;
-          tier?: string;
-          user_id?: string;
-        };
-        Relationships: [];
-      };
+          complete?: boolean
+          created_at?: string
+          date?: string
+          id?: never
+          overall?: number
+          rank?: string | null
+          source?: string
+          tier?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       debriefs: {
         Row: {
-          axes: Json;
-          date: string;
-          focus: string | null;
-          id: number;
-          input_raw: string;
-          points_forts: Json;
-          resume: string;
-          user_id: string;
-        };
+          axes: Json
+          date: string
+          focus: string | null
+          id: number
+          input_raw: string
+          points_forts: Json
+          resume: string
+          user_id: string
+        }
         Insert: {
-          axes?: Json;
-          date?: string;
-          focus?: string | null;
-          id?: never;
-          input_raw: string;
-          points_forts?: Json;
-          resume: string;
-          user_id: string;
-        };
+          axes?: Json
+          date?: string
+          focus?: string | null
+          id?: never
+          input_raw: string
+          points_forts?: Json
+          resume: string
+          user_id: string
+        }
         Update: {
-          axes?: Json;
-          date?: string;
-          focus?: string | null;
-          id?: never;
-          input_raw?: string;
-          points_forts?: Json;
-          resume?: string;
-          user_id?: string;
-        };
-        Relationships: [];
-      };
-      profiles: {
+          axes?: Json
+          date?: string
+          focus?: string | null
+          id?: never
+          input_raw?: string
+          points_forts?: Json
+          resume?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      imported_matches: {
         Row: {
-          created_at: string;
-          main_agent: string | null;
-          notes_maps: string | null;
-          objectif: string | null;
-          peak: string | null;
-          pseudo: string | null;
-          rang_valorant: string | null;
-          updated_at: string;
-          user_id: string;
-        };
+          created_at: string
+          id: number
+          linked_account_id: number
+          match_id: string
+          payload: Json
+          played_at: string | null
+          user_id: string
+        }
         Insert: {
-          created_at?: string;
-          main_agent?: string | null;
-          notes_maps?: string | null;
-          objectif?: string | null;
-          peak?: string | null;
-          pseudo?: string | null;
-          rang_valorant?: string | null;
-          updated_at?: string;
-          user_id: string;
-        };
+          created_at?: string
+          id?: never
+          linked_account_id: number
+          match_id: string
+          payload?: Json
+          played_at?: string | null
+          user_id: string
+        }
         Update: {
-          created_at?: string;
-          main_agent?: string | null;
-          notes_maps?: string | null;
-          objectif?: string | null;
-          peak?: string | null;
-          pseudo?: string | null;
-          rang_valorant?: string | null;
-          updated_at?: string;
-          user_id?: string;
-        };
-        Relationships: [];
-      };
-      routines: {
-        Row: {
-          contenu: Json;
-          date: string;
-          done: boolean;
-          duree_minutes: number;
-          focus: string | null;
-          id: number;
-          user_id: string;
-        };
-        Insert: {
-          contenu: Json;
-          date?: string;
-          done?: boolean;
-          duree_minutes: number;
-          focus?: string | null;
-          id?: never;
-          user_id: string;
-        };
-        Update: {
-          contenu?: Json;
-          date?: string;
-          done?: boolean;
-          duree_minutes?: number;
-          focus?: string | null;
-          id?: never;
-          user_id?: string;
-        };
-        Relationships: [];
-      };
-      scenario_scores: {
-        Row: {
-          energy: number;
-          id: number;
-          run_id: number;
-          scenario: string;
-          score: number;
-        };
-        Insert: {
-          energy: number;
-          id?: never;
-          run_id: number;
-          scenario: string;
-          score: number;
-        };
-        Update: {
-          energy?: number;
-          id?: never;
-          run_id?: number;
-          scenario?: string;
-          score?: number;
-        };
+          created_at?: string
+          id?: never
+          linked_account_id?: number
+          match_id?: string
+          payload?: Json
+          played_at?: string | null
+          user_id?: string
+        }
         Relationships: [
           {
-            foreignKeyName: "scenario_scores_run_id_fkey";
-            columns: ["run_id"];
-            isOneToOne: false;
-            referencedRelation: "bench_runs";
-            referencedColumns: ["id"];
+            foreignKeyName: "imported_matches_linked_account_id_fkey"
+            columns: ["linked_account_id"]
+            isOneToOne: false
+            referencedRelation: "linked_accounts"
+            referencedColumns: ["id"]
           },
-        ];
-      };
-    };
+        ]
+      }
+      linked_accounts: {
+        Row: {
+          created_at: string
+          external_id: string
+          id: number
+          is_primary: boolean
+          label: string | null
+          last_refreshed_at: string | null
+          provider: string
+          riot_mmr: Json | null
+          riot_puuid: string | null
+          riot_region: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          external_id: string
+          id?: never
+          is_primary?: boolean
+          label?: string | null
+          last_refreshed_at?: string | null
+          provider: string
+          riot_mmr?: Json | null
+          riot_puuid?: string | null
+          riot_region?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          external_id?: string
+          id?: never
+          is_primary?: boolean
+          label?: string | null
+          last_refreshed_at?: string | null
+          provider?: string
+          riot_mmr?: Json | null
+          riot_puuid?: string | null
+          riot_region?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          main_agent: string | null
+          notes_maps: string | null
+          objectif: string | null
+          peak: string | null
+          pseudo: string | null
+          rang_valorant: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          main_agent?: string | null
+          notes_maps?: string | null
+          objectif?: string | null
+          peak?: string | null
+          pseudo?: string | null
+          rang_valorant?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          main_agent?: string | null
+          notes_maps?: string | null
+          objectif?: string | null
+          peak?: string | null
+          pseudo?: string | null
+          rang_valorant?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      routines: {
+        Row: {
+          contenu: Json
+          date: string
+          done: boolean
+          duree_minutes: number
+          focus: string | null
+          id: number
+          user_id: string
+        }
+        Insert: {
+          contenu: Json
+          date?: string
+          done?: boolean
+          duree_minutes: number
+          focus?: string | null
+          id?: never
+          user_id: string
+        }
+        Update: {
+          contenu?: Json
+          date?: string
+          done?: boolean
+          duree_minutes?: number
+          focus?: string | null
+          id?: never
+          user_id?: string
+        }
+        Relationships: []
+      }
+      scenario_scores: {
+        Row: {
+          energy: number
+          id: number
+          run_id: number
+          scenario: string
+          score: number
+        }
+        Insert: {
+          energy: number
+          id?: never
+          run_id: number
+          scenario: string
+          score: number
+        }
+        Update: {
+          energy?: number
+          id?: never
+          run_id?: number
+          scenario?: string
+          score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scenario_scores_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "bench_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+    }
     Views: {
-      [_ in never]: never;
-    };
+      [_ in never]: never
+    }
     Functions: {
-      [_ in never]: never;
-    };
+      increment_ai_usage: {
+        Args: { p_kind: string; p_user_id: string }
+        Returns: number
+      }
+    }
     Enums: {
-      [_ in never]: never;
-    };
+      [_ in never]: never
+    }
     CompositeTypes: {
-      [_ in never]: never;
-    };
-  };
-};
+      [_ in never]: never
+    }
+  }
+}
 
-type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">;
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">];
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals;
+    schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
     : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
+  schema: keyof DatabaseWithoutInternals
 }
   ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
       DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
-      Row: infer R;
+      Row: infer R
     }
     ? R
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] & DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
-        Row: infer R;
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
       }
       ? R
       : never
-    : never;
+    : never
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals;
+    schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
+  schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I;
+      Insert: infer I
     }
     ? I
     : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
     ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I;
+        Insert: infer I
       }
       ? I
       : never
-    : never;
+    : never
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals;
+    schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
+  schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U;
+      Update: infer U
     }
     ? U
     : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
     ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U;
+        Update: infer U
       }
       ? U
       : never
-    : never;
+    : never
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
   EnumName extends DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals;
+    schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
     : never = never,
 > = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
+  schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
   : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
     ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never;
+    : never
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
   CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals;
+    schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
     : never = never,
 > = PublicCompositeTypeNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
+  schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
     ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
-    : never;
+    : never
 
 export const Constants = {
   public: {
     Enums: {},
   },
-} as const;
+} as const

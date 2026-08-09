@@ -26,9 +26,9 @@ import {
   toBenchRunSummaries,
 } from "./mapping";
 import { currentUserId } from "./session";
-import type { BenchRunDetail, BenchRunSummary, SaveBenchRunInput } from "./types";
+import type { BenchRunDetail, BenchRunSummary, BenchSource, SaveBenchRunInput } from "./types";
 
-const RUN_COLUMNS = "id, date, tier, overall, rank, complete";
+const RUN_COLUMNS = "id, date, tier, overall, rank, complete, source";
 const SCORE_COLUMNS = "scenario, score, energy";
 
 const RUN_NOT_FOUND = "Passe introuvable : elle a peut-être été supprimée.";
@@ -47,6 +47,7 @@ export interface BenchRunStore {
     readonly overall: number;
     readonly rank: string | null;
     readonly complete: boolean;
+    readonly source: BenchSource;
   }): Promise<BenchRunRow>;
   /** Insère les scores d'une passe, en un seul lot. */
   insertScores(runId: number, scores: readonly ScenarioScoreRow[]): Promise<void>;
@@ -85,6 +86,9 @@ export async function saveBenchRunTo(
     overall: computed.overall,
     rank: computed.rank,
     complete: computed.complete,
+    // Une passe dont personne n'a dit d'où elle vient a été tapée à la main :
+    // c'est le seul défaut qui ne surestime pas ce qu'on sait de la donnée.
+    source: input.source ?? "manual",
   });
 
   try {
@@ -124,6 +128,7 @@ function supabaseStore(userId: string): BenchRunStore {
           overall: run.overall,
           rank: run.rank,
           complete: run.complete,
+          source: run.source,
         })
         .select(RUN_COLUMNS)
         .single();

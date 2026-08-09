@@ -10,6 +10,16 @@
 
 import type { ComputedScenarioScore, ComputedSubcategory, TierId } from "../../lib/energy";
 
+/**
+ * D'où viennent les scores d'une passe (miroir du `check` de la colonne
+ * `bench_runs.source`). Ce n'est pas une décoration : une passe importée n'a
+ * pas été relevée à la main, et l'historique doit pouvoir le dire — c'est la
+ * seule façon de savoir, plus tard, ce qui a été mesuré et ce qui a été recopié.
+ */
+export const BENCH_SOURCES = ["manual", "kovaaks"] as const;
+
+export type BenchSource = (typeof BENCH_SOURCES)[number];
+
 /** Une passe telle que l'affiche la liste de l'historique. */
 export interface BenchRunSummary {
   readonly id: number;
@@ -22,6 +32,7 @@ export interface BenchRunSummary {
   readonly rank: string | null;
   /** Badge « Complete » : les 18 scénarios atteignent le seuil de `rank`. */
   readonly complete: boolean;
+  readonly source: BenchSource;
 }
 
 /** Le score d'un scénario, avec l'énergie figée en base au moment du calcul. */
@@ -42,6 +53,8 @@ export interface SaveBenchRunInput {
   readonly scores: Readonly<Record<string, number>>;
   /** Date de la passe ; par défaut « maintenant ». */
   readonly date?: string;
+  /** Provenance des scores ; « saisis à la main » par défaut. */
+  readonly source?: BenchSource;
 }
 
 /** Le profil joueur, tel que l'édite la page Profil. */

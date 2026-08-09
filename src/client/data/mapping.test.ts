@@ -23,6 +23,7 @@ const row: BenchRunRow = {
   overall: 400,
   rank: "Gold",
   complete: true,
+  source: "manual",
 };
 
 describe("toBenchRunSummary", () => {
@@ -34,6 +35,7 @@ describe("toBenchRunSummary", () => {
       overall: 400,
       rank: "Gold",
       complete: true,
+      source: "manual",
     });
   });
 
@@ -58,6 +60,15 @@ describe("toBenchRunSummary", () => {
 
   it("refuse une date illisible plutôt que de rendre « Invalid Date » à l'écran", () => {
     expect(() => toBenchRunSummary({ ...row, date: "pas une date" })).toThrow(DataError);
+  });
+
+  it("reconnaît une passe importée depuis KovaaK's", () => {
+    expect(toBenchRunSummary({ ...row, source: "kovaaks" }).source).toBe("kovaaks");
+  });
+
+  it("refuse une provenance hors des deux : c'est une dérive de schéma", () => {
+    expect(() => toBenchRunSummary({ ...row, source: "aimlab" })).toThrow(DataError);
+    expect(() => toBenchRunSummary({ ...row, source: "aimlab" })).toThrow(/aimlab/);
   });
 });
 

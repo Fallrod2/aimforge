@@ -20,6 +20,8 @@ interface Recorder {
   readonly store: BenchRunStore;
   readonly calls: string[];
   readonly inserted: ScenarioScoreRow[];
+  /** La provenance telle qu'elle est arrivée au magasin. */
+  readonly sources: string[];
 }
 
 interface FakeOptions {
@@ -30,11 +32,13 @@ interface FakeOptions {
 function fakeStore({ failScores = false, failCompensation = false }: FakeOptions = {}): Recorder {
   const calls: string[] = [];
   const inserted: ScenarioScoreRow[] = [];
+  const sources: string[] = [];
   let nextId = 41;
 
   const store: BenchRunStore = {
     async insertRun(run) {
       calls.push("insertRun");
+      sources.push(run.source);
       nextId += 1;
 
       const row: BenchRunRow = {
@@ -44,6 +48,7 @@ function fakeStore({ failScores = false, failCompensation = false }: FakeOptions
         overall: run.overall,
         rank: run.rank,
         complete: run.complete,
+        source: run.source,
       };
 
       return row;
@@ -59,7 +64,7 @@ function fakeStore({ failScores = false, failCompensation = false }: FakeOptions
     },
   };
 
-  return { store, calls, inserted };
+  return { store, calls, inserted, sources };
 }
 
 const novice = scoresAtAnchor("novice", "Gold");
@@ -120,6 +125,7 @@ describe("saveBenchRunTo — chemin nominal", () => {
           overall: run.overall,
           rank: run.rank,
           complete: run.complete,
+          source: run.source,
         };
       },
       async insertScores() {},
@@ -128,6 +134,26 @@ describe("saveBenchRunTo — chemin nominal", () => {
 
     await saveBenchRunTo(store, { tier: "novice", scores: novice });
     expect(received).toBeUndefined();
+  });
+
+  it("marque « saisie manuelle » par défaut", async () => {
+    const { store, sources } = fakeStore();
+    const detail = await saveBenchRunTo(store, { tier: "novice", scores: novice });
+
+    expect(sources).toEqual(["manual"]);
+    expect(detail.source).toBe("manual");
+  });
+
+  it("porte la provenance jusqu'à l'écriture quand la passe vient d'un import", async () => {
+    const { store, sources } = fakeStore();
+    const detail = await saveBenchRunTo(store, {
+      tier: "novice",
+      scores: novice,
+      source: "kovaaks",
+    });
+
+    expect(sources).toEqual(["kovaaks"]);
+    expect(detail.source).toBe("kovaaks");
   });
 });
 
@@ -187,6 +213,7 @@ describe("saveBenchRunTo — compensation", () => {
           overall: run.overall,
           rank: run.rank,
           complete: run.complete,
+          source: run.source,
         };
       },
       async insertScores() {

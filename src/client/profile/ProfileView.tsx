@@ -16,6 +16,8 @@ import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } fr
 import { useAuth } from "../auth/AuthProvider";
 import { Notice } from "../components/Notice";
 import { getProfile, type Profile, updateProfile } from "../data";
+import { LinkedAccountsPanel } from "../linked/LinkedAccountsPanel";
+import { useLinkedAccounts } from "../linked/useLinkedAccounts";
 
 /** Le formulaire manipule des chaînes ; `null` et `""` n'y sont pas distincts. */
 type ProfileForm = Readonly<Record<Field, string>>;
@@ -120,6 +122,9 @@ function failureMessage(cause: unknown, fallback: string): string {
 
 export function ProfileView() {
   const { user } = useAuth();
+  // Les comptes liés se chargent en parallèle du profil : l'un ne doit pas
+  // retarder l'autre, et une base injoignable ne doit pas vider les deux.
+  const linked = useLinkedAccounts();
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [form, setForm] = useState<ProfileForm>(EMPTY_FORM);
   /** La dernière version connue de la base : sert à détecter les modifications. */
@@ -180,70 +185,85 @@ export function ProfileView() {
     }
   }
 
-  if (load.status === "loading") {
-    return <Notice tone="loading" title="Chargement du profil…" />;
-  }
-  if (load.status === "error") {
+  // Le profil et les comptes liés sont deux blocs indépendants de la même page :
+  // un profil qui ne charge pas ne doit pas emporter la gestion des comptes,
+  // qui est justement ce qu'on vient faire ici la première fois.
+  if (load.status !== "ready") {
     return (
-      <Notice tone="error" title="Le profil n'a pas pu être chargé." onRetry={() => void reload()}>
-        {load.message}
-      </Notice>
+      <div className="flex max-w-2xl flex-col gap-8">
+        {load.status === "loading" ? (
+          <Notice tone="loading" title="Chargement du profil…" />
+        ) : (
+          <Notice
+            tone="error"
+            title="Le profil n'a pas pu être chargé."
+            onRetry={() => void reload()}
+          >
+            {load.message}
+          </Notice>
+        )}
+        <LinkedAccountsPanel state={linked.state} reload={linked.reload} />
+      </div>
     );
   }
 
   return (
-    <section className="flex max-w-2xl flex-col gap-6">
-      <div>
-        <h2 className="text-lg font-semibold text-steel-100">Profil</h2>
-        <p className="mt-1 text-xs text-steel-500">
-          {user?.email ?? "Compte connecté"} · ce contexte alimentera le coach et la routine.
-        </p>
-      </div>
-
-      <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-5">
-        <div className="grid gap-5 sm:grid-cols-2">
-          {FIELDS.map((field) => (
-            <Field
-              key={field.name}
-              spec={field}
-              value={form[field.name]}
-              disabled={saving}
-              onChange={change(field.name)}
-            />
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 border-t border-steel-800 pt-4">
-          <button
-            type="submit"
-            disabled={saving || !dirty}
-            className="rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
-          >
-            {saving ? "Enregistrement…" : "Enregistrer"}
-          </button>
-          <button
-            type="button"
-            disabled={saving || !dirty}
-            onClick={() => {
-              setForm(stored);
-              setSaved(false);
-              setSaveError(null);
-            }}
-            className="rounded-lg border border-steel-700 px-4 py-2.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
-          >
-            Annuler les modifications
-          </button>
-
-          <p aria-live="polite" className="text-xs">
-            {saveError !== null ? (
-              <span className="text-ember-400">{saveError}</span>
-            ) : saved ? (
-              <span className="text-steel-400">Profil enregistré.</span>
-            ) : null}
+    <div className="flex max-w-2xl flex-col gap-8">
+      <section className="flex flex-col gap-6">
+        <div>
+          <h2 className="text-lg font-semibold text-steel-100">Profil</h2>
+          <p className="mt-1 text-xs text-steel-500">
+            {user?.email ?? "Compte connecté"} · ce contexte alimentera le coach et la routine.
           </p>
         </div>
-      </form>
-    </section>
+
+        <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-5">
+          <div className="grid gap-5 sm:grid-cols-2">
+            {FIELDS.map((field) => (
+              <Field
+                key={field.name}
+                spec={field}
+                value={form[field.name]}
+                disabled={saving}
+                onChange={change(field.name)}
+              />
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 border-t border-steel-800 pt-4">
+            <button
+              type="submit"
+              disabled={saving || !dirty}
+              className="rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
+            >
+              {saving ? "Enregistrement…" : "Enregistrer"}
+            </button>
+            <button
+              type="button"
+              disabled={saving || !dirty}
+              onClick={() => {
+                setForm(stored);
+                setSaved(false);
+                setSaveError(null);
+              }}
+              className="rounded-lg border border-steel-700 px-4 py-2.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
+            >
+              Annuler les modifications
+            </button>
+
+            <p aria-live="polite" className="text-xs">
+              {saveError !== null ? (
+                <span className="text-ember-400">{saveError}</span>
+              ) : saved ? (
+                <span className="text-steel-400">Profil enregistré.</span>
+              ) : null}
+            </p>
+          </div>
+        </form>
+      </section>
+
+      <LinkedAccountsPanel state={linked.state} reload={linked.reload} />
+    </div>
   );
 }
 

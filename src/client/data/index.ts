@@ -13,10 +13,35 @@ export {
 } from "./bench-runs";
 export { deleteDebrief, listDebriefs } from "./debriefs";
 export { DataError } from "./errors";
+export {
+  accountsOf,
+  displayName,
+  importKovaaksScores,
+  LinkedAccountError,
+  linkKovaaksAccount,
+  linkRiotAccount,
+  listImportedMatches,
+  listLinkedAccounts,
+  primaryAccount,
+  refreshRiotAccount,
+  setPrimaryAccount,
+  unlinkAccount,
+} from "./linked-accounts";
+export type {
+  KovaaksImportResponse,
+  LinkedAccount,
+  MatchSummary,
+  MissingScenario,
+  MmrSummary,
+  Provider,
+  RefreshResponse,
+} from "./linked-accounts-contract";
+export { formatRiotId, parseRiotId, type RiotId } from "./linked-accounts-mapping";
 export { getProfile, updateProfile } from "./profile";
 export type {
   BenchRunDetail,
   BenchRunSummary,
+  BenchSource,
   Profile,
   SaveBenchRunInput,
   ScenarioScore,

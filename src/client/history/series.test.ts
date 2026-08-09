@@ -10,6 +10,7 @@ function summary(overrides: Partial<BenchRunSummary> & Pick<BenchRunSummary, "id
     overall: 447.36,
     rank: "Gold",
     complete: false,
+    source: "manual",
     ...overrides,
   } satisfies BenchRunSummary;
 }

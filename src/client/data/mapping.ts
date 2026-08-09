@@ -16,7 +16,13 @@
 
 import { computeSubcategories, listScenarios, TIER_IDS, type TierId } from "../../lib/energy";
 import { DataError } from "./errors";
-import type { BenchRunDetail, BenchRunSummary, ScenarioScore } from "./types";
+import {
+  BENCH_SOURCES,
+  type BenchRunDetail,
+  type BenchRunSummary,
+  type BenchSource,
+  type ScenarioScore,
+} from "./types";
 
 /** Les colonnes de `bench_runs` que la liste et le détail lisent. */
 export interface BenchRunRow {
@@ -26,6 +32,7 @@ export interface BenchRunRow {
   readonly overall: number;
   readonly rank: string | null;
   readonly complete: boolean;
+  readonly source: string;
 }
 
 /** Les colonnes de `scenario_scores` lues avec une passe. */
@@ -42,6 +49,15 @@ function toTierId(value: string): TierId {
     throw new DataError(`Palier inconnu en base : « ${value} ».`);
   }
   return tier;
+}
+
+function toBenchSource(value: string): BenchSource {
+  const source = BENCH_SOURCES.find((id) => id === value);
+
+  if (source === undefined) {
+    throw new DataError(`Provenance inconnue en base : « ${value} ».`);
+  }
+  return source;
 }
 
 function toIsoDate(value: string): string {
@@ -62,6 +78,7 @@ export function toBenchRunSummary(row: BenchRunRow): BenchRunSummary {
     overall: row.overall,
     rank: row.rank,
     complete: row.complete,
+    source: toBenchSource(row.source),
   };
 }
 
