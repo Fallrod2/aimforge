@@ -11,7 +11,7 @@
  *   le format est contraint et la tâche courte ;
  * - la **clé de l'utilisateur**, avec un identifiant de modèle qu'il a tapé.
  *   Là, on ne sait pas : `output_config.effort` est refusé (400) par plusieurs
- *   modèles Claude parfaitement valides. On ne l'envoie donc pas. Un réglage
+ *   modèles `claude-*` parfaitement valides. On ne l'envoie donc pas. Un réglage
  *   d'optimisation qui fait échouer l'appel n'optimise rien.
  */
 

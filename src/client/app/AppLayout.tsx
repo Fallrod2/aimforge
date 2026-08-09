@@ -8,6 +8,7 @@
  */
 
 import type { ReactNode } from "react";
+import { useIsAdmin } from "../admin/useIsAdmin";
 import { useAuth } from "../auth/AuthProvider";
 import { NAV_ITEMS, type Route, routeHash, type ViewId } from "../route";
 
@@ -30,6 +31,8 @@ const ICONS: Readonly<Record<ViewId, string>> = {
   coach: "M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-5 4z",
   routine: "M9 6h11M9 12h11M9 18h11M4 6l1.4 1.4L8 4.8M4 12l1.4 1.4L8 10.8M4 18l1.4 1.4L8 16.8",
   profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM5 20a7 7 0 0 1 14 0",
+  // Un bouclier : la seule entrée qui n'existe pas pour tout le monde.
+  admin: "M12 3l7 3v5c0 4.4-2.9 8.3-7 9.5C7.9 19.3 5 15.4 5 11V6z",
   auth: "M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l4-4-4-4M14 12H4",
 };
 
@@ -52,7 +55,9 @@ function Icon({ view }: { readonly view: ViewId }) {
 
 export function AppLayout({ route, children }: AppLayoutProps) {
   const { user, signOut } = useAuth();
+  const isAdmin = useIsAdmin();
   const profileActive = route.view === "profile";
+  const adminActive = route.view === "admin";
 
   return (
     <div className="min-h-dvh">
@@ -76,6 +81,29 @@ export function AppLayout({ route, children }: AppLayoutProps) {
                 <TabLink key={item.view} view={item.view} label={item.label} active={route.view} />
               ))}
             </nav>
+
+            {/* L'entrée d'administration ne s'affiche que pour un administrateur
+                — un confort, pas une protection : `api/admin/*` revérifie et
+                répond 404 à tout le reste (SPEC §5 quater). Elle vit dans
+                l'en-tête, à côté du profil, plutôt que dans la barre du pouce :
+                celle-ci est déjà à cinq entrées, et une sixième descendrait les
+                cibles tactiles sous la largeur utilisable sur un téléphone de
+                360 px. */}
+            {isAdmin ? (
+              <a
+                href={routeHash({ view: "admin", runId: null })}
+                aria-current={adminActive ? "page" : undefined}
+                title="Administration"
+                className={`rounded-lg p-2 transition-colors ${
+                  adminActive
+                    ? "bg-ember-500/15 text-ember-400"
+                    : "text-steel-400 hover:bg-steel-800 hover:text-steel-200"
+                }`}
+              >
+                <Icon view="admin" />
+                <span className="sr-only">Administration</span>
+              </a>
+            ) : null}
 
             <a
               href={routeHash({ view: "profile", runId: null })}

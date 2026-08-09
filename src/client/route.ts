@@ -12,7 +12,15 @@
  * Module pur : aucun accès à `window`, pour rester testable.
  */
 
-export type ViewId = "dashboard" | "tracker" | "history" | "coach" | "routine" | "profile" | "auth";
+export type ViewId =
+  | "dashboard"
+  | "tracker"
+  | "history"
+  | "coach"
+  | "routine"
+  | "profile"
+  | "admin"
+  | "auth";
 
 export interface Route {
   readonly view: ViewId;
@@ -27,6 +35,7 @@ const PATHS: Readonly<Record<ViewId, string>> = {
   coach: "coach",
   routine: "routine",
   profile: "profil",
+  admin: "administration",
   auth: "connexion",
 };
 
@@ -59,6 +68,16 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { view: "coach", label: "Coach" },
   { view: "routine", label: "Routine" },
 ];
+
+/**
+ * L'administration n'est **pas** dans `NAV_ITEMS` : elle n'existe que pour les
+ * administrateurs, et une liste de navigation constante ne sait pas qui
+ * regarde. `AppLayout` ajoute son entrée à côté du profil quand
+ * `useIsAdmin` répond oui. Sa route, elle, existe pour tout le monde — c'est le
+ * serveur qui refuse (404), pas le routeur, parce qu'un routeur qui refuse
+ * annonce ce qu'il refuse.
+ */
+export const ADMIN_ROUTE: Route = { view: "admin", runId: null };
 
 /**
  * Une vue exige-t-elle une session ? Tout sauf la page de connexion : la

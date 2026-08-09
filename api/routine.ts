@@ -21,6 +21,11 @@
  * rien chez nous, donc le compteur n'est pas appelé et `remaining` sort à
  * `null`.
  *
+ * Depuis SPEC §5 quater, le fournisseur de la plateforme, la limite du jour et
+ * le plafond global viennent de `platform_settings` — une seule lecture les
+ * rapporte tous les trois (`loadPlatformSettings`), avec repli sur les
+ * variables d'environnement et les constantes d'avant.
+ *
  * La signature est **`export async function POST(request: Request)`**, et pas
  * un export par défaut : c'est la seule forme que le runtime Node de Vercel
  * reconnaît comme un gestionnaire web. Tous les imports relatifs portent une
@@ -54,6 +59,7 @@ import {
 } from "../src/server/ai/index.js";
 import { evaluateQuota } from "../src/server/coach/quota.js";
 import { attemptTimeout, startBudget } from "../src/server/kovaaks/budget.js";
+import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import { type RoutineBenchSummary, summarizeBenchForRoutine } from "../src/server/routine/bench.js";
 import { type AskModel, generateRoutine } from "../src/server/routine/generate.js";
 import {
@@ -63,13 +69,11 @@ import {
 } from "../src/server/routine/prompt.js";
 import { scenarioCatalog } from "../src/server/routine/scenarios.js";
 import { coachAxeSchema } from "../src/shared/coach-contract.js";
-import {
-  ROUTINE_DAILY_QUOTA,
-  routineRequestSchema,
-  type StoredRoutine,
-} from "../src/shared/routine-contract.js";
+import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith } from "./_lib/ai-settings.js";
+import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
+import { serviceClient } from "./_lib/service.js";
 
 /**
  * Une routine est plus longue à écrire qu'un debrief (blocs, items, durées) et
@@ -310,29 +314,27 @@ export async function POST(request: Request): Promise<Response> {
 
   // 3. Configuration. La service key est requise dans tous les cas : c'est
   //    elle, et elle seule, qui peut lire la clé du fournisseur personnel de
-  //    l'utilisateur (privilèges de colonne, migration 0008). La clé Anthropic
-  //    de la plateforme, elle, n'est plus obligatoire — un utilisateur qui a
-  //    posé la sienne n'en dépend plus (SPEC §5 ter).
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  //    l'utilisateur (privilèges de colonne, migration 0008) et celle de la
+  //    plateforme (migration 0009). La clé Anthropic d'environnement, elle,
+  //    n'est plus obligatoire — ni pour qui a posé la sienne (SPEC §5 ter), ni
+  //    pour la plateforme si l'administration en a configuré une autre
+  //    (SPEC §5 quater).
+  const service = serviceClient();
 
-  if (serviceKey === "") {
+  if (service === null) {
     return fail("IA non configurée", 503);
   }
 
-  const serviceClient = createClient(SUPABASE_URL, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
+  //    Un seul aller-retour pour toute la configuration de la plateforme : le
+  //    fournisseur servi par défaut, la limite du jour, le plafond global.
+  const platform = await loadPlatformSettings(service);
 
   // 4. Quel fournisseur, et qui paie. C'est la seule bascule de SPEC §5 ter :
   //    configuration personnelle ⇒ le compteur de quota n'est pas appelé.
   let resolution: Awaited<ReturnType<typeof resolveModelFor>>;
 
   try {
-    resolution = await resolveModelFor(
-      loadAiSettingsWith(serviceClient),
-      user.id,
-      process.env.ANTHROPIC_API_KEY ?? "",
-    );
+    resolution = await resolveModelFor(loadAiSettingsWith(service), user.id, platform.ai);
   } catch (cause) {
     // Une lecture de réglages en échec ne bascule pas en douce sur la clé de
     // la plateforme : l'utilisateur a demandé le contraire, et son quota est
@@ -355,10 +357,19 @@ export async function POST(request: Request): Promise<Response> {
   let remaining: number | null = null;
 
   if (config.source === "platform") {
-    // Le RPC n'est pas encore décrit par `database-types.ts` (régénéré depuis la
-    // base, migration 0003 comprise, à la prochaine génération) : le client de
-    // service reste non typé et le retour est validé ici, à la frontière.
-    const usage = await serviceClient.rpc("increment_ai_usage", {
+    // 5a. Le plafond **global** (SPEC §5 quater), avant le compteur personnel :
+    //     quand la plateforme a épuisé son budget du jour, il n'y a pas de
+    //     raison de consommer en plus le quota de celui qui demande. Une somme
+    //     indisponible laisse passer — le plafond protège un budget, et
+    //     `platformAiUsageToday` explique pourquoi on ne referme pas dessus.
+    const usedToday = await platformAiUsageToday(service);
+
+    if (usedToday !== null && globalCapReached(usedToday, platform.aiGlobalDailyLimit)) {
+      return json({ error: GLOBAL_CAP_REACHED, remaining: 0 }, 429);
+    }
+
+    // 5b. Le quota par utilisateur, dont la limite se règle en base.
+    const usage = await service.rpc("increment_ai_usage", {
       p_user_id: user.id,
       p_kind: "routine",
     });
@@ -373,12 +384,13 @@ export async function POST(request: Request): Promise<Response> {
       return fail("Le compteur de quota a renvoyé une valeur inattendue.", 503);
     }
 
-    const quota = evaluateQuota(count.data, ROUTINE_DAILY_QUOTA);
+    const limit = platform.limits.routineDaily;
+    const quota = evaluateQuota(count.data, limit);
 
     if (!quota.allowed) {
       return json(
         {
-          error: `Quota atteint : ${ROUTINE_DAILY_QUOTA} routines par jour. Le compteur repart demain (heure UTC).`,
+          error: `Quota atteint : ${limit} routines par jour. Le compteur repart demain (heure UTC).`,
           remaining: quota.remaining,
         },
         429,

@@ -18,8 +18,10 @@
  *   navigateur — la fonction ne peut pas lire ou écrire chez quelqu'un d'autre,
  *   même si son code se trompait d'identifiant ;
  * - le **client de service** (service key, qui contourne la RLS) ne sert qu'à
- *   une chose : incrémenter le compteur de quota, qu'aucune policy n'autorise
- *   à écrire. C'est le seul endroit du projet où la service key est utilisée.
+ *   ce qu'aucune policy ne peut autoriser : incrémenter le compteur de quota,
+ *   lire la clé du fournisseur personnel de l'utilisateur (migration 0008) et
+ *   celle de la plateforme (migration 0009), et sommer la consommation du jour
+ *   de tout le monde pour le plafond global. Rien d'autre ne passe par lui.
  *
  * L'ordre des vérifications est délibéré : identité d'abord, configuration
  * ensuite. Un appel sans jeton doit être refusé (401) même quand les clés IA
@@ -36,6 +38,14 @@
  * - **les erreurs** désignent leur responsable. Une clé personnelle refusée
  *   n'est pas une panne d'AimForge, et le message doit envoyer l'utilisateur
  *   dans ses réglages plutôt qu'à la salle d'attente.
+ *
+ * Depuis SPEC §5 quater, deux choses de plus ne sont plus figées dans ce
+ * fichier : **quel fournisseur** la plateforme sert (l'administration le
+ * choisit ; `ANTHROPIC_API_KEY` n'est plus qu'un repli) et **combien** de
+ * debriefs par jour elle accorde. Les deux sortent de la même lecture, faite
+ * une fois — `loadPlatformSettings`. S'y ajoute un **plafond global** : au-delà,
+ * plus personne ne consomme la clé de la plateforme, mais les configurations
+ * personnelles continuent, puisqu'elles ne coûtent rien ici.
  *
  * La signature est **`export async function POST(request: Request)`**, et pas
  * un export par défaut : c'est la seule forme que le runtime Node de Vercel
@@ -65,6 +75,7 @@ import { summarizeBench } from "../src/server/coach/bench.js";
 import { type AskModel, generateDebrief } from "../src/server/coach/generate.js";
 import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt.js";
 import { evaluateQuota } from "../src/server/coach/quota.js";
+import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import {
   coachRequestSchema,
   MAX_STATS_LENGTH,
@@ -72,6 +83,8 @@ import {
 } from "../src/shared/coach-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith } from "./_lib/ai-settings.js";
+import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
+import { serviceClient } from "./_lib/service.js";
 
 /**
  * Un debrief demande une génération complète, pas un aller-retour de chat :
@@ -273,29 +286,27 @@ export async function POST(request: Request): Promise<Response> {
 
   // 3. Configuration. La service key est requise dans tous les cas : c'est
   //    elle, et elle seule, qui peut lire la clé du fournisseur personnel de
-  //    l'utilisateur (privilèges de colonne, migration 0008). La clé Anthropic
-  //    de la plateforme, elle, n'est plus obligatoire — un utilisateur qui a
-  //    posé la sienne n'en dépend plus (SPEC §5 ter).
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  //    l'utilisateur (privilèges de colonne, migration 0008) et celle de la
+  //    plateforme (migration 0009). La clé Anthropic d'environnement, elle,
+  //    n'est plus obligatoire — ni pour qui a posé la sienne (SPEC §5 ter), ni
+  //    pour la plateforme si l'administration en a configuré une autre
+  //    (SPEC §5 quater).
+  const service = serviceClient();
 
-  if (serviceKey === "") {
+  if (service === null) {
     return fail("IA non configurée", 503);
   }
 
-  const serviceClient = createClient(SUPABASE_URL, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
+  //    Un seul aller-retour pour toute la configuration de la plateforme : le
+  //    fournisseur servi par défaut, la limite du jour, le plafond global.
+  const platform = await loadPlatformSettings(service);
 
   // 4. Quel fournisseur, et qui paie. C'est la seule bascule de SPEC §5 ter :
   //    configuration personnelle ⇒ le compteur de quota n'est pas appelé.
   let resolution: Awaited<ReturnType<typeof resolveModelFor>>;
 
   try {
-    resolution = await resolveModelFor(
-      loadAiSettingsWith(serviceClient),
-      user.id,
-      process.env.ANTHROPIC_API_KEY ?? "",
-    );
+    resolution = await resolveModelFor(loadAiSettingsWith(service), user.id, platform.ai);
   } catch (cause) {
     // Une lecture de réglages en échec ne bascule pas en douce sur la clé de
     // la plateforme : l'utilisateur a demandé le contraire, et son quota est
@@ -318,10 +329,19 @@ export async function POST(request: Request): Promise<Response> {
   let remaining: number | null = null;
 
   if (config.source === "platform") {
-    // Le RPC n'est pas encore décrit par `database-types.ts` (régénéré depuis la
-    // base, migration 0003 comprise, à la prochaine génération) : le client de
-    // service reste non typé et le retour est validé ici, à la frontière.
-    const usage = await serviceClient.rpc("increment_ai_usage", {
+    // 5a. Le plafond **global** (SPEC §5 quater), avant le compteur personnel :
+    //     quand la plateforme a épuisé son budget du jour, il n'y a pas de
+    //     raison de consommer en plus le quota de celui qui demande. Une somme
+    //     indisponible laisse passer — le plafond protège un budget, et
+    //     `platformAiUsageToday` explique pourquoi on ne referme pas dessus.
+    const usedToday = await platformAiUsageToday(service);
+
+    if (usedToday !== null && globalCapReached(usedToday, platform.aiGlobalDailyLimit)) {
+      return json({ error: GLOBAL_CAP_REACHED, remaining: 0 }, 429);
+    }
+
+    // 5b. Le quota par utilisateur, dont la limite se règle en base.
+    const usage = await service.rpc("increment_ai_usage", {
       p_user_id: user.id,
       p_kind: "coach",
     });
@@ -336,12 +356,13 @@ export async function POST(request: Request): Promise<Response> {
       return fail("Le compteur de quota a renvoyé une valeur inattendue.", 503);
     }
 
-    const quota = evaluateQuota(count.data);
+    const limit = platform.limits.coachDaily;
+    const quota = evaluateQuota(count.data, limit);
 
     if (!quota.allowed) {
       return json(
         {
-          error: "Quota atteint : 5 debriefs par jour. Le compteur repart demain (heure UTC).",
+          error: `Quota atteint : ${limit} debriefs par jour. Le compteur repart demain (heure UTC).`,
           remaining: quota.remaining,
         },
         429,

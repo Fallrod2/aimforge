@@ -7,12 +7,19 @@
  * de connexion affiche la landing **sans changer le hash** : l'adresse
  * demandée survit à la connexion, et l'utilisateur atterrit là où il allait.
  *
- * Une seule vue est chargée à la demande : l'historique. Sa courbe de
- * progression tire Recharts, et Recharts tire d3 et un store Redux — environ un
- * tiers du bundle pour un écran que personne ne voit au premier chargement
- * (l'application ouvre sur le tableau de bord). Les cinq autres vues restent en
- * import statique : elles ne pèsent que leur propre code, et les découper
- * coûterait un aller-retour réseau à chaque onglet pour rien.
+ * Deux vues sont chargées à la demande, pour deux raisons différentes :
+ *
+ * - **l'historique**, parce que sa courbe de progression tire Recharts, et
+ *   Recharts tire d3 et un store Redux — environ un tiers du bundle pour un
+ *   écran que personne ne voit au premier chargement (l'application ouvre sur
+ *   le tableau de bord) ;
+ * - **l'administration**, parce que presque personne ne l'ouvrira jamais : elle
+ *   n'existe que pour les administrateurs (SPEC §5 quater), et il n'y a aucune
+ *   raison de la faire télécharger à tous les autres.
+ *
+ * Les cinq autres vues restent en import statique : elles ne pèsent que leur
+ * propre code, et les découper coûterait un aller-retour réseau à chaque onglet
+ * pour rien.
  */
 
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
@@ -35,6 +42,10 @@ import { TrackerView } from "./tracker/TrackerView";
  */
 const HistoryView = lazy(async () => ({
   default: (await import("./history/HistoryView")).HistoryView,
+}));
+
+const AdminView = lazy(async () => ({
+  default: (await import("./admin/AdminView")).AdminView,
 }));
 
 function currentRoute(): Route {
@@ -119,6 +130,11 @@ function View({ route, navigate }: ViewProps) {
       return <RoutineView />;
     case "profile":
       return <ProfileView />;
+    case "admin":
+      // La route existe pour tout le monde ; c'est le serveur qui refuse, et la
+      // vue affiche alors « rien à voir ici » (SPEC §5 quater). Un routeur qui
+      // refuserait ici annoncerait ce qu'il refuse.
+      return <AdminView />;
     default:
       return <DashboardView />;
   }

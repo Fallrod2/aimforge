@@ -39,6 +39,7 @@ export {
 export {
   AiSettingsUnavailableError,
   type LoadAiSettings,
+  type PlatformAiConfig,
   type Resolution,
   resolveModelFor,
   type StoredAiSettings,

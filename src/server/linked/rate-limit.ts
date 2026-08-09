@@ -30,17 +30,33 @@ export interface DailyLimit {
   readonly reached: string;
 }
 
-export const KOVAAKS_IMPORT_LIMIT: DailyLimit = {
-  kind: "kovaaks_import",
-  limit: KOVAAKS_IMPORT_DAILY_LIMIT,
-  reached: `Limite atteinte : ${KOVAAKS_IMPORT_DAILY_LIMIT} imports KovaaK's par jour. Le compteur repart demain (heure UTC) ; d'ici là, la saisie manuelle des scores reste ouverte.`,
-};
+/**
+ * Les deux freins sont désormais **construits**, pas figés : depuis SPEC
+ * §5 quater, la limite se règle en base (`platform_settings`) et n'est plus
+ * connue à la compilation. Les constantes du contrat partagé restent la valeur
+ * par défaut — ce qui veut dire qu'un appelant qui ne passe rien obtient
+ * exactement le comportement d'avant.
+ *
+ * Le message est fabriqué avec la limite qu'il annonce, et c'est la raison
+ * d'être de ces fonctions : une phrase qui dirait « 20 imports par jour » alors
+ * que l'administration a descendu la limite à 5 ne serait pas une imprécision,
+ * ce serait une contradiction visible à l'écran.
+ */
+export function kovaaksImportLimit(limit: number = KOVAAKS_IMPORT_DAILY_LIMIT): DailyLimit {
+  return {
+    kind: "kovaaks_import",
+    limit,
+    reached: `Limite atteinte : ${limit} imports KovaaK's par jour. Le compteur repart demain (heure UTC) ; d'ici là, la saisie manuelle des scores reste ouverte.`,
+  };
+}
 
-export const RIOT_LINK_LIMIT: DailyLimit = {
-  kind: "riot_link",
-  limit: RIOT_LINK_DAILY_LIMIT,
-  reached: `Limite atteinte : ${RIOT_LINK_DAILY_LIMIT} liaisons Riot par jour. Le compteur repart demain (heure UTC) ; les comptes déjà liés continuent de fonctionner.`,
-};
+export function riotLinkLimit(limit: number = RIOT_LINK_DAILY_LIMIT): DailyLimit {
+  return {
+    kind: "riot_link",
+    limit,
+    reached: `Limite atteinte : ${limit} liaisons Riot par jour. Le compteur repart demain (heure UTC) ; les comptes déjà liés continuent de fonctionner.`,
+  };
+}
 
 /** Le compteur n'a pas répondu : on ne devine pas, on referme. */
 const UNAVAILABLE = "Le compteur d'imports est indisponible. Réessaie dans un instant.";

@@ -232,6 +232,66 @@ export type Database = {
         }
         Relationships: []
       }
+      platform_admins: {
+        Row: {
+          created_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      platform_settings: {
+        Row: {
+          ai_api_key: string | null
+          ai_base_url: string | null
+          ai_global_daily_limit: number | null
+          ai_model: string | null
+          ai_provider: string | null
+          coach_daily: number
+          henrikdev_api_key: string | null
+          id: number
+          kovaaks_import_daily: number
+          riot_link_daily: number
+          routine_daily: number
+          updated_at: string
+        }
+        Insert: {
+          ai_api_key?: string | null
+          ai_base_url?: string | null
+          ai_global_daily_limit?: number | null
+          ai_model?: string | null
+          ai_provider?: string | null
+          coach_daily?: number
+          henrikdev_api_key?: string | null
+          id: number
+          kovaaks_import_daily?: number
+          riot_link_daily?: number
+          routine_daily?: number
+          updated_at?: string
+        }
+        Update: {
+          ai_api_key?: string | null
+          ai_base_url?: string | null
+          ai_global_daily_limit?: number | null
+          ai_model?: string | null
+          ai_provider?: string | null
+          coach_daily?: number
+          henrikdev_api_key?: string | null
+          id?: number
+          kovaaks_import_daily?: number
+          riot_link_daily?: number
+          routine_daily?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -343,6 +403,7 @@ export type Database = {
         Args: { p_kind: string; p_user_id: string }
         Returns: number
       }
+      platform_ai_usage_today: { Args: never; Returns: number }
     }
     Enums: {
       [_ in never]: never

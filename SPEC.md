@@ -111,6 +111,29 @@ clé, avec « Tester la connexion » :
 - Le « Tester la connexion » consomme un mini-appel et rend un verdict clair
   sans jamais renvoyer la clé.
 
+## 5 quater. Panneau d'administration (acté 2026-08-09)
+
+Section « Administration » dans l'app, visible et utilisable uniquement par les
+admins (table `platform_admins`, amorcée avec le compte fondateur). Tout ce qui
+se gérait par variables d'environnement devient géré en base — À L'EXCEPTION de
+`SUPABASE_SERVICE_ROLE_KEY`, identifiant d'infrastructure qui reste dans Vercel.
+
+- **Config IA plateforme** : provider + modèle + clé servis aux utilisateurs
+  sans config perso — même machinerie que les réglages perso (§5 ter), portée
+  plateforme. Repli sur `ANTHROPIC_API_KEY` d'environnement si non configurée.
+- **Clé HenrikDev** : gérée en base, repli sur l'env. Rotation sans redéploiement.
+- **Quotas ajustables** : les limites journalières (debriefs, routines, imports
+  KovaaK's, liaisons Riot) deviennent des réglages modifiables en direct ;
+  les constantes actuelles deviennent les valeurs par défaut.
+- **Tableau d'usage + plafond global** : agrégats de consommation (IA et
+  imports, tous utilisateurs, sans données personnelles au-delà du nécessaire)
+  et plafond global journalier d'appels IA plateforme — au-delà, refus propre
+  pour tout le monde (les configs perso ne sont pas concernées : chacun paie
+  ses jetons).
+- Sécurité : vérification d'admin CÔTÉ SERVEUR dans chaque endpoint admin (la
+  visibilité UI n'est qu'un confort) ; secrets write-only (privilèges de
+  colonne, patron §5 ter) ; lecture des secrets réservée au service role.
+
 ## 6. Sécurité
 
 - RLS activé sur toutes les tables, policies testées (un utilisateur A ne voit jamais les données de B).

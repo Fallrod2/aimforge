@@ -43,9 +43,10 @@ import {
   fetchCompetitiveMatches,
   fetchMmr,
   HenrikError,
-  isConfigured,
+  hasKey,
   NOT_CONFIGURED,
 } from "../_lib/henrikdev.js";
+import { loadPlatformSettings } from "../_lib/platform-settings.js";
 import { authenticate, fail, json, readBody, type UserClient } from "../_lib/request.js";
 import { serviceClient } from "../_lib/service.js";
 
@@ -144,7 +145,14 @@ export async function POST(request: Request): Promise<Response> {
     return json(cached, 200);
   }
 
-  if (!isConfigured()) return fail(NOT_CONFIGURED, 503);
+  // La clé peut venir de la base (SPEC §5 quater) : il faut donc le client de
+  // service pour la connaître. Il est monté **ici**, et non plus juste avant la
+  // datation en fin de fonction, parce que les deux usages sont le même client
+  // — un seul `createClient`, une seule lecture de configuration.
+  const service = serviceClient();
+  const platform = await loadPlatformSettings(service);
+
+  if (!hasKey(platform.henrikdevKey)) return fail(NOT_CONFIGURED, 503);
 
   // 3. Rang et historique, menés de front : ni l'un ni l'autre ne dépend de
   //    l'autre, et l'utilisateur attend devant un bouton.
@@ -155,8 +163,8 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const [rawMmr, rawMatches] = await Promise.all([
-      fetchMmr(region, puuid),
-      fetchCompetitiveMatches(region, puuid, MATCH_HISTORY_SIZE),
+      fetchMmr(platform.henrikdevKey, region, puuid),
+      fetchCompetitiveMatches(platform.henrikdevKey, region, puuid, MATCH_HISTORY_SIZE),
     ]);
 
     mmr = summarizeMmr(rawMmr);
@@ -202,8 +210,6 @@ export async function POST(request: Request): Promise<Response> {
   //    d'action de la RLS contournée à un seul utilisateur, celui que
   //    `getUser()` a vérifié. Une écriture qui se tromperait de ligne ne
   //    pourrait toucher que les siennes.
-  const service = serviceClient();
-
   if (service === null) {
     // Le cache n'est pas armé : le prochain appel rappellera la source. C'est
     // une dégradation, pas une panne — la réponse, elle, est complète.

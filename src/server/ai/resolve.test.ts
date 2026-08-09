@@ -15,12 +15,25 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ANTHROPIC_MODEL } from "../../shared/ai-settings-contract";
 import {
   type LoadAiSettings,
+  type PlatformAiConfig,
   resolveModelFor,
   type StoredAiSettings,
   toPublicSettings,
 } from "./resolve";
 
 const PLATFORM_KEY = "sk-ant-plateforme";
+
+/**
+ * La configuration de la plateforme telle que `api/_lib/platform-settings.ts`
+ * la rend : depuis SPEC §5 quater, elle n'est plus forcément Anthropic — c'est
+ * l'administration qui la choisit, et ce module ne fait que la relayer.
+ */
+const PLATFORM: PlatformAiConfig = {
+  provider: "anthropic",
+  model: DEFAULT_ANTHROPIC_MODEL,
+  baseUrl: null,
+  apiKey: PLATFORM_KEY,
+};
 
 const STORED: StoredAiSettings = {
   provider: "mistral",
@@ -44,7 +57,7 @@ function loader(value: StoredAiSettings | null): LoadAiSettings & { calls: strin
 
 describe("resolveModelFor — sans configuration personnelle", () => {
   it("rend la clé de la plateforme et son modèle", async () => {
-    const resolution = await resolveModelFor(loader(null), "user-1", PLATFORM_KEY);
+    const resolution = await resolveModelFor(loader(null), "user-1", PLATFORM);
 
     expect(resolution).toEqual({
       ok: true,
@@ -59,15 +72,38 @@ describe("resolveModelFor — sans configuration personnelle", () => {
   });
 
   it("refuse quand la clé de la plateforme n'est pas posée", async () => {
-    const resolution = await resolveModelFor(loader(null), "user-1", "   ");
+    const resolution = await resolveModelFor(loader(null), "user-1", null);
 
     expect(resolution).toEqual({ ok: false, reason: "IA non configurée", status: 503 });
+  });
+
+  it("sert le fournisseur choisi par l'administration, pas seulement Anthropic", async () => {
+    // SPEC §5 quater : la plateforme peut être configurée sur n'importe quel
+    // fournisseur du contrat. `source` reste `platform` — donc le quota
+    // s'applique toujours, quel que soit le fournisseur qui répond.
+    const resolution = await resolveModelFor(loader(null), "user-1", {
+      provider: "openai_compatible",
+      model: "gpt-4.1",
+      baseUrl: "https://api.exemple.com/v1",
+      apiKey: "cle-plateforme",
+    });
+
+    expect(resolution).toEqual({
+      ok: true,
+      config: {
+        source: "platform",
+        provider: "openai_compatible",
+        model: "gpt-4.1",
+        baseUrl: "https://api.exemple.com/v1",
+        apiKey: "cle-plateforme",
+      },
+    });
   });
 });
 
 describe("resolveModelFor — avec configuration personnelle", () => {
   it("rend le fournisseur de l'utilisateur, marqué `user`", async () => {
-    const resolution = await resolveModelFor(loader(STORED), "user-1", PLATFORM_KEY);
+    const resolution = await resolveModelFor(loader(STORED), "user-1", PLATFORM);
 
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) return;
@@ -81,7 +117,7 @@ describe("resolveModelFor — avec configuration personnelle", () => {
   });
 
   it("ignore la clé de la plateforme, même absente", async () => {
-    const resolution = await resolveModelFor(loader(STORED), "user-1", "");
+    const resolution = await resolveModelFor(loader(STORED), "user-1", null);
 
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) return;
@@ -96,7 +132,7 @@ describe("resolveModelFor — avec configuration personnelle", () => {
       model: "gpt-4.1",
       base_url: "https://api.exemple.com/v1",
     });
-    const resolution = await resolveModelFor(load, "user-1", PLATFORM_KEY);
+    const resolution = await resolveModelFor(load, "user-1", PLATFORM);
 
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) return;
@@ -106,7 +142,7 @@ describe("resolveModelFor — avec configuration personnelle", () => {
   it("interroge la base pour l'utilisateur demandé, et lui seul", async () => {
     const load = loader(STORED);
 
-    await resolveModelFor(load, "user-42", PLATFORM_KEY);
+    await resolveModelFor(load, "user-42", PLATFORM);
     expect(load.calls).toEqual(["user-42"]);
   });
 });
@@ -116,7 +152,7 @@ describe("resolveModelFor — lignes hors contrat", () => {
     const resolution = await resolveModelFor(
       loader({ ...STORED, provider: "gemini" }),
       "user-1",
-      PLATFORM_KEY,
+      PLATFORM,
     );
 
     expect(resolution.ok).toBe(false);
@@ -131,7 +167,7 @@ describe("resolveModelFor — lignes hors contrat", () => {
     const resolution = await resolveModelFor(
       loader({ ...STORED, provider: "openai_compatible", base_url: null }),
       "user-1",
-      PLATFORM_KEY,
+      PLATFORM,
     );
 
     expect(resolution.ok).toBe(false);
@@ -144,7 +180,7 @@ describe("resolveModelFor — lignes hors contrat", () => {
       throw new Error("connexion perdue");
     };
 
-    await expect(resolveModelFor(load, "user-1", PLATFORM_KEY)).rejects.toThrow("connexion perdue");
+    await expect(resolveModelFor(load, "user-1", PLATFORM)).rejects.toThrow("connexion perdue");
   });
 });
 

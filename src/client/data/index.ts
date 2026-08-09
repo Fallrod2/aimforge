@@ -6,6 +6,13 @@
  */
 
 export {
+  AdminError,
+  getAdminSettings,
+  getAdminUsage,
+  isPlatformAdmin,
+  saveAdminSettings,
+} from "./admin";
+export {
   AiSettingsError,
   deleteAiSettings,
   getAiSettings,

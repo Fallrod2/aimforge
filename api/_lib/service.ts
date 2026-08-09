@@ -1,6 +1,12 @@
 /**
- * Le client Supabase **de service** des fonctions de comptes liés, et le seul
- * usage qu'elles en font.
+ * Le client Supabase **de service**, et les usages qu'on en fait.
+ *
+ * Il est né pour les fonctions de comptes liés (l'historique ci-dessous) et
+ * sert désormais partout où une policy ne peut pas suffire : le compteur
+ * d'imports, les colonnes serveur de `linked_accounts`, la lecture des clés
+ * (migrations 0008 et 0009), la vérification d'habilitation et les agrégats du
+ * panneau d'administration. Un seul endroit lit `SUPABASE_SERVICE_ROLE_KEY`,
+ * et c'est celui-ci.
  *
  * Jusqu'à la migration 0007, ces trois fonctions n'écrivaient que sous le JWT
  * de l'appelant : la RLS les encadrait exactement comme le navigateur. Deux

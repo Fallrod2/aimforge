@@ -38,14 +38,15 @@ import {
   LINKED_ACCOUNT_COLUMNS,
   toLinkedAccount,
 } from "../../src/client/data/linked-accounts-mapping.js";
-import { consumeDailyLimit, RIOT_LINK_LIMIT } from "../../src/server/linked/rate-limit.js";
+import { consumeDailyLimit, riotLinkLimit } from "../../src/server/linked/rate-limit.js";
 import {
   DEFAULT_REGION,
   HenrikError,
-  isConfigured,
+  hasKey,
   NOT_CONFIGURED,
   resolveAccount,
 } from "../_lib/henrikdev.js";
+import { loadPlatformSettings } from "../_lib/platform-settings.js";
 import { authenticate, fail, json, readBody } from "../_lib/request.js";
 import {
   incrementUsage,
@@ -74,10 +75,11 @@ export async function POST(request: Request): Promise<Response> {
 
   const { name, tag, region, label, isPrimary } = body.value;
 
-  // 3. Configuration. Tant que la clé n'est pas posée dans Vercel, la fonction
-  //    le dit franchement plutôt que d'enregistrer un compte non vérifié.
-  if (!isConfigured()) return fail(NOT_CONFIGURED, 503);
-
+  // 3. Configuration. L'ordre a changé avec SPEC §5 quater : la clé HenrikDev
+  //    peut désormais venir de la base, donc il faut le client de service pour
+  //    la connaître. Un seul aller-retour rapporte la clé **et** la limite du
+  //    jour ; sans base lisible, on retombe sur `HENRIKDEV_API_KEY` et sur la
+  //    constante d'avant, exactement comme avant le panneau.
   const service = serviceClient();
 
   if (service === null) {
@@ -85,9 +87,18 @@ export async function POST(request: Request): Promise<Response> {
     return fail(USAGE_NOT_CONFIGURED, 503);
   }
 
+  const platform = await loadPlatformSettings(service);
+
+  // Tant qu'aucune clé n'est posée — ni en base, ni dans l'environnement — la
+  // fonction le dit franchement plutôt que d'enregistrer un compte non vérifié.
+  if (!hasKey(platform.henrikdevKey)) return fail(NOT_CONFIGURED, 503);
+
   // 4. Frein quotidien, **avant** l'appel à HenrikDev : une tentative ratée
   //    coûte le même appel qu'une réussie, elle doit donc compter pareil.
-  const quota = await consumeDailyLimit(incrementUsage(service, auth.userId), RIOT_LINK_LIMIT);
+  const quota = await consumeDailyLimit(
+    incrementUsage(service, auth.userId),
+    riotLinkLimit(platform.limits.riotLinkDaily),
+  );
 
   if (!quota.ok) return fail(quota.message, quota.status);
 
@@ -95,7 +106,7 @@ export async function POST(request: Request): Promise<Response> {
   let account: Awaited<ReturnType<typeof resolveAccount>>;
 
   try {
-    account = await resolveAccount(name, tag);
+    account = await resolveAccount(platform.henrikdevKey, name, tag);
   } catch (cause) {
     if (cause instanceof HenrikError) {
       console.error("[valorant] résolution du Riot ID en échec", cause);

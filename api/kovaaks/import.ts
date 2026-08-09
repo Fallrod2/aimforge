@@ -30,13 +30,14 @@ import {
   kovaaksImportRequestSchema,
 } from "../../src/client/data/linked-accounts-contract.js";
 import { mapBenchmarkProgress } from "../../src/server/kovaaks/benchmark.js";
-import { consumeDailyLimit, KOVAAKS_IMPORT_LIMIT } from "../../src/server/linked/rate-limit.js";
+import { consumeDailyLimit, kovaaksImportLimit } from "../../src/server/linked/rate-limit.js";
 import {
   fetchBenchmarkProgress,
   findPlayer,
   KovaaksError,
   startKovaaksBudget,
 } from "../_lib/kovaaks.js";
+import { loadPlatformSettings } from "../_lib/platform-settings.js";
 import { authenticate, fail, json, readBody } from "../_lib/request.js";
 import { incrementUsage, NOT_CONFIGURED, serviceClient } from "../_lib/service.js";
 
@@ -81,7 +82,14 @@ export async function POST(request: Request): Promise<Response> {
     return fail(NOT_CONFIGURED, 503);
   }
 
-  const quota = await consumeDailyLimit(incrementUsage(service, auth.userId), KOVAAKS_IMPORT_LIMIT);
+  // La limite vient de la base depuis SPEC §5 quater : un seul aller-retour
+  // pour toute la configuration de la plateforme, et un repli sur la constante
+  // d'avant si la table est vide ou muette (`api/_lib/platform-settings.ts`).
+  const platform = await loadPlatformSettings(service);
+  const quota = await consumeDailyLimit(
+    incrementUsage(service, auth.userId),
+    kovaaksImportLimit(platform.limits.kovaaksImportDaily),
+  );
 
   if (!quota.ok) return fail(quota.message, quota.status);
 

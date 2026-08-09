@@ -29,17 +29,10 @@ import {
   type ProviderId,
   providerSpec,
 } from "../../shared/ai-settings-contract";
+import { CONTROL_CLASSES, GHOST_BUTTON, PRIMARY_BUTTON } from "../components/controls";
 import { Notice } from "../components/Notice";
+import { ProviderCard } from "../components/ProviderCard";
 import { deleteAiSettings, getAiSettings, saveAiSettings, testAiSettings } from "../data";
-
-const CONTROL_CLASSES =
-  "w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60";
-
-const PRIMARY_BUTTON =
-  "rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500";
-
-const GHOST_BUTTON =
-  "inline-flex min-h-10 items-center rounded-lg border border-steel-700 px-3 py-2 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600";
 
 /** L'état du formulaire : des chaînes, comme tout formulaire. */
 interface Form {
@@ -386,42 +379,5 @@ function Header({ active }: { readonly active: boolean }) {
           : "Par défaut, le coach et la routine utilisent le fournisseur d'AimForge, limité à 5 debriefs et 5 routines par jour. Apporte ta clé pour lever cette limite."}
       </p>
     </div>
-  );
-}
-
-interface ProviderCardProps {
-  readonly id: ProviderId;
-  readonly selected: boolean;
-  readonly disabled: boolean;
-  readonly onSelect: () => void;
-}
-
-function ProviderCard({ id, selected, disabled, onSelect }: ProviderCardProps) {
-  const spec = providerSpec(id);
-
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      disabled={disabled}
-      onClick={onSelect}
-      className={`flex min-h-16 flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed ${
-        selected
-          ? "border-ember-500 bg-ember-500/10"
-          : "border-steel-700 bg-steel-900 hover:border-steel-600"
-      }`}
-    >
-      <span className="flex flex-wrap items-center gap-1.5">
-        <span className={`text-sm font-semibold ${selected ? "text-ember-300" : "text-steel-200"}`}>
-          {spec.label}
-        </span>
-        {spec.experimental !== undefined ? (
-          <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-amber-300 uppercase">
-            Expérimental
-          </span>
-        ) : null}
-      </span>
-      <span className="text-[11px] text-steel-500">{spec.hint}</span>
-    </button>
   );
 }

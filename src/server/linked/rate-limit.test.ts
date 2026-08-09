@@ -7,8 +7,8 @@ import {
 import {
   consumeDailyLimit,
   type DailyLimit,
-  KOVAAKS_IMPORT_LIMIT,
-  RIOT_LINK_LIMIT,
+  kovaaksImportLimit,
+  riotLinkLimit,
 } from "./rate-limit";
 
 /** Un compteur en mémoire : ce que la base ferait, sans la base. */
@@ -68,7 +68,7 @@ describe("consumeDailyLimit", () => {
   it("compte sur le bon kind", async () => {
     const usage = counter();
 
-    await consumeDailyLimit(usage.increment, RIOT_LINK_LIMIT);
+    await consumeDailyLimit(usage.increment, riotLinkLimit());
     expect(usage.kinds).toEqual(["riot_link"]);
   });
 
@@ -94,10 +94,21 @@ describe("consumeDailyLimit", () => {
     },
   );
 
-  it("porte les limites du contrat partagé", () => {
-    expect(KOVAAKS_IMPORT_LIMIT.limit).toBe(KOVAAKS_IMPORT_DAILY_LIMIT);
-    expect(RIOT_LINK_LIMIT.limit).toBe(RIOT_LINK_DAILY_LIMIT);
-    expect(KOVAAKS_IMPORT_LIMIT.reached).toContain(String(KOVAAKS_IMPORT_DAILY_LIMIT));
-    expect(RIOT_LINK_LIMIT.reached).toContain(String(RIOT_LINK_DAILY_LIMIT));
+  it("porte les limites du contrat partagé quand rien n'est réglé en base", () => {
+    expect(kovaaksImportLimit().limit).toBe(KOVAAKS_IMPORT_DAILY_LIMIT);
+    expect(riotLinkLimit().limit).toBe(RIOT_LINK_DAILY_LIMIT);
+    expect(kovaaksImportLimit().reached).toContain(String(KOVAAKS_IMPORT_DAILY_LIMIT));
+    expect(riotLinkLimit().reached).toContain(String(RIOT_LINK_DAILY_LIMIT));
+  });
+
+  it("annonce la limite réellement en vigueur, pas celle du code (SPEC §5 quater)", () => {
+    // Le piège que ce test ferme : un message figé à la compilation
+    // contredirait l'administration dès qu'elle descend la limite.
+    const tightened = kovaaksImportLimit(3);
+
+    expect(tightened.limit).toBe(3);
+    expect(tightened.reached).toContain("3 imports");
+    expect(tightened.reached).not.toContain(String(KOVAAKS_IMPORT_DAILY_LIMIT));
+    expect(riotLinkLimit(0).reached).toContain("0 liaisons");
   });
 });

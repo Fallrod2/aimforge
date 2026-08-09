@@ -19,10 +19,21 @@
 import {
   type AiSettings,
   aiSettingsInputSchema,
-  DEFAULT_ANTHROPIC_MODEL,
   providerSchema,
 } from "../../shared/ai-settings-contract.js";
 import type { ProviderConfig } from "./port.js";
+
+/**
+ * La configuration IA **de la plateforme** : celle qui sert tout le monde sauf
+ * ceux qui ont apporté la leur.
+ *
+ * C'est un `ProviderConfig` sans son `source` — le champ n'appartient pas à la
+ * configuration, il est le verdict de la résolution ci-dessous. Elle n'est plus
+ * forcément Anthropic depuis SPEC §5 quater : l'administration choisit le
+ * fournisseur, le modèle et la clé, et `api/_lib/platform-settings.ts` les lit
+ * (avec repli sur `ANTHROPIC_API_KEY` quand rien n'est configuré).
+ */
+export type PlatformAiConfig = Omit<ProviderConfig, "source">;
 
 /** La ligne `public.ai_settings`, telle que la base la rend. */
 export interface StoredAiSettings {
@@ -70,28 +81,21 @@ const INVALID_SETTINGS =
  *
  * @param load Lecture de `public.ai_settings`, sous **service role** : la clé
  *   n'est lisible par personne d'autre (privilèges de colonne, migration 0008).
- * @param platformKey `ANTHROPIC_API_KEY`, ou une chaîne vide si elle n'est pas
- *   posée dans l'environnement de la fonction.
+ * @param platform La configuration de la plateforme, déjà résolue (base puis
+ *   repli sur l'environnement), ou `null` quand il n'y a de clé nulle part.
+ *   Ce module ne lit ni la base ni `process.env` : on lui dit ce que la
+ *   plateforme a à offrir, il dit qui sert cet appel.
  */
 export async function resolveModelFor(
   load: LoadAiSettings,
   userId: string,
-  platformKey: string,
+  platform: PlatformAiConfig | null,
 ): Promise<Resolution> {
   const stored = await load(userId);
 
   if (stored === null) {
-    if (platformKey.trim() === "") return { ok: false, reason: NOT_CONFIGURED, status: 503 };
-    return {
-      ok: true,
-      config: {
-        source: "platform",
-        provider: "anthropic",
-        model: DEFAULT_ANTHROPIC_MODEL,
-        baseUrl: null,
-        apiKey: platformKey,
-      },
-    };
+    if (platform === null) return { ok: false, reason: NOT_CONFIGURED, status: 503 };
+    return { ok: true, config: { source: "platform", ...platform } };
   }
 
   // Revalidé avec le schéma qui l'a écrit : la contrainte `check` de la base
