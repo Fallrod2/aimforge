@@ -15,7 +15,11 @@
  *
  * L'ordre des vérifications est délibéré : identité d'abord (un appel anonyme
  * n'apprend rien de l'état de configuration du service), entrée ensuite,
- * configuration, quota, puis seulement le modèle.
+ * configuration, **résolution du fournisseur**, quota, puis seulement le
+ * modèle. La résolution passe avant le quota parce qu'elle décide s'il y a un
+ * quota à compter : une configuration personnelle (SPEC §5 ter) ne consomme
+ * rien chez nous, donc le compteur n'est pas appelé et `remaining` sort à
+ * `null`.
  *
  * La signature est **`export async function POST(request: Request)`**, et pas
  * un export par défaut : c'est la seule forme que le runtime Node de Vercel
@@ -33,14 +37,21 @@
  * temps, avec notre propre message.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
 import { TIER_IDS, type TierId } from "../src/lib/energy/index.js";
-import { textOf } from "../src/server/coach/generate.js";
+import {
+  AiSettingsUnavailableError,
+  createAsk,
+  ModelError,
+  modelErrorMessage,
+  modelErrorStatus,
+  type ProviderConfig,
+  resolveModelFor,
+} from "../src/server/ai/index.js";
 import { evaluateQuota } from "../src/server/coach/quota.js";
 import { attemptTimeout, startBudget } from "../src/server/kovaaks/budget.js";
 import { type RoutineBenchSummary, summarizeBenchForRoutine } from "../src/server/routine/bench.js";
@@ -58,6 +69,7 @@ import {
   type StoredRoutine,
 } from "../src/shared/routine-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
+import { loadAiSettingsWith } from "./_lib/ai-settings.js";
 
 /**
  * Une routine est plus longue à écrire qu'un debrief (blocs, items, durées) et
@@ -65,8 +77,6 @@ import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-c
  * bornées par le budget ci-dessous — sans laisser une requête pendre.
  */
 export const maxDuration = 60;
-
-const MODEL = "claude-sonnet-4-6";
 
 /** Assez pour une séance structurée ; le contrat borne déjà les longueurs. */
 const MAX_TOKENS = 3000;
@@ -243,35 +253,26 @@ async function loadDebriefs(
 /* ------------------------------------------------------------------ */
 
 /**
- * Le port du modèle, câblé sur le SDK et sur le budget de temps.
+ * Le port du modèle, câblé sur l'adaptateur du fournisseur résolu (SPEC §5 ter)
+ * et sur le budget de temps.
  *
- * Chaque tentative reçoit ce qu'il reste, plafonné. Quand il ne reste pas de
- * quoi tenter, on lève : `generateRoutine` laisse remonter, et le handler en
- * fait une erreur rédigée plutôt qu'un timeout de plateforme.
+ * Le budget est la raison pour laquelle le port passe le délai en paramètre
+ * plutôt que de le laisser à l'adaptateur : chaque tentative reçoit ce qu'il
+ * reste, plafonné. Quand il ne reste pas de quoi tenter, on lève —
+ * `generateRoutine` laisse remonter, et le handler en fait une erreur rédigée
+ * plutôt qu'un timeout de plateforme. Ce raisonnement vaut pour les cinq
+ * fournisseurs, y compris ceux qu'on ne connaît pas.
  */
-function askWith(client: Anthropic, budget: ReturnType<typeof startBudget>): AskModel {
-  return async (messages) => {
+function askWith(config: ProviderConfig, budget: ReturnType<typeof startBudget>): AskModel {
+  const ask = createAsk(config, { system: ROUTINE_SYSTEM_PROMPT, maxTokens: MAX_TOKENS });
+
+  return (messages) => {
     const timeout = attemptTimeout(budget.remaining(), BUDGET_CALL_CAP_MS, BUDGET_CALL_FLOOR_MS);
 
     if (timeout === null) {
       throw new BudgetExhaustedError("plus assez de temps pour une tentative");
     }
-
-    const message = await client.messages.create(
-      {
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        system: ROUTINE_SYSTEM_PROMPT,
-        // Le format est contraint et la tâche courte : la réflexion étendue
-        // n'apporterait ici que de la latence et des jetons.
-        thinking: { type: "disabled" },
-        output_config: { effort: "medium" },
-        messages: messages.map((entry) => ({ role: entry.role, content: entry.content })),
-      },
-      { timeout },
-    );
-
-    return textOf(message.content);
+    return ask(messages, timeout);
   };
 }
 
@@ -307,73 +308,109 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!body.ok) return body.response;
 
-  // 3. Configuration. Les deux secrets vivent dans l'environnement Vercel ;
-  //    tant qu'ils n'y sont pas, la fonction le dit franchement.
-  const anthropicKey = process.env.ANTHROPIC_API_KEY ?? "";
+  // 3. Configuration. La service key est requise dans tous les cas : c'est
+  //    elle, et elle seule, qui peut lire la clé du fournisseur personnel de
+  //    l'utilisateur (privilèges de colonne, migration 0008). La clé Anthropic
+  //    de la plateforme, elle, n'est plus obligatoire — un utilisateur qui a
+  //    posé la sienne n'en dépend plus (SPEC §5 ter).
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
-  if (anthropicKey === "" || serviceKey === "") {
+  if (serviceKey === "") {
     return fail("IA non configurée", 503);
   }
 
-  // 4. Quota, incrémenté avant l'appel au modèle (SPEC §4). L'incrément et la
-  //    lecture sont la même instruction SQL : deux requêtes simultanées ne
-  //    peuvent pas passer toutes les deux sur la dernière routine disponible.
   const serviceClient = createClient(SUPABASE_URL, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
-  // Le RPC n'est pas encore décrit par `database-types.ts` (régénéré depuis la
-  // base, migration 0003 comprise, à la prochaine génération) : le client de
-  // service reste non typé et le retour est validé ici, à la frontière.
-  const usage = await serviceClient.rpc("increment_ai_usage", {
-    p_user_id: user.id,
-    p_kind: "routine",
-  });
 
-  if (usage.error !== null) {
-    return fail("Le compteur de quota est indisponible. Réessaie dans un instant.", 503);
-  }
+  // 4. Quel fournisseur, et qui paie. C'est la seule bascule de SPEC §5 ter :
+  //    configuration personnelle ⇒ le compteur de quota n'est pas appelé.
+  let resolution: Awaited<ReturnType<typeof resolveModelFor>>;
 
-  const count = usageCountSchema.safeParse(usage.data);
-
-  if (!count.success) {
-    return fail("Le compteur de quota a renvoyé une valeur inattendue.", 503);
-  }
-
-  const quota = evaluateQuota(count.data, ROUTINE_DAILY_QUOTA);
-
-  if (!quota.allowed) {
-    return json(
-      {
-        error: `Quota atteint : ${ROUTINE_DAILY_QUOTA} routines par jour. Le compteur repart demain (heure UTC).`,
-        remaining: quota.remaining,
-      },
-      429,
+  try {
+    resolution = await resolveModelFor(
+      loadAiSettingsWith(serviceClient),
+      user.id,
+      process.env.ANTHROPIC_API_KEY ?? "",
     );
+  } catch (cause) {
+    // Une lecture de réglages en échec ne bascule pas en douce sur la clé de
+    // la plateforme : l'utilisateur a demandé le contraire, et son quota est
+    // levé — le faire consommer sans le dire serait pire que l'attente.
+    console.error("[routine] réglages IA illisibles", cause);
+    if (cause instanceof AiSettingsUnavailableError) {
+      return fail("Tes réglages IA n'ont pas pu être lus. Réessaie dans un instant.", 503);
+    }
+    throw cause;
   }
 
-  // 5. Contexte puis génération.
+  if (!resolution.ok) return fail(resolution.reason, resolution.status);
+
+  const config = resolution.config;
+
+  // 5. Quota, incrémenté avant l'appel au modèle (SPEC §4) — **et seulement
+  //    sur la clé de la plateforme**. L'incrément et la lecture sont la même
+  //    instruction SQL : deux requêtes simultanées ne peuvent pas passer
+  //    toutes les deux sur la dernière routine disponible.
+  let remaining: number | null = null;
+
+  if (config.source === "platform") {
+    // Le RPC n'est pas encore décrit par `database-types.ts` (régénéré depuis la
+    // base, migration 0003 comprise, à la prochaine génération) : le client de
+    // service reste non typé et le retour est validé ici, à la frontière.
+    const usage = await serviceClient.rpc("increment_ai_usage", {
+      p_user_id: user.id,
+      p_kind: "routine",
+    });
+
+    if (usage.error !== null) {
+      return fail("Le compteur de quota est indisponible. Réessaie dans un instant.", 503);
+    }
+
+    const count = usageCountSchema.safeParse(usage.data);
+
+    if (!count.success) {
+      return fail("Le compteur de quota a renvoyé une valeur inattendue.", 503);
+    }
+
+    const quota = evaluateQuota(count.data, ROUTINE_DAILY_QUOTA);
+
+    if (!quota.allowed) {
+      return json(
+        {
+          error: `Quota atteint : ${ROUTINE_DAILY_QUOTA} routines par jour. Le compteur repart demain (heure UTC).`,
+          remaining: quota.remaining,
+        },
+        429,
+      );
+    }
+    remaining = quota.remaining;
+  }
+
+  // 6. Contexte puis génération.
   const context = await loadContext(userClient, user.id, body.dureeMinutes, body.focus);
   const allowed = scenarioCatalog(context.bench?.tier ?? DEFAULT_TIER).names;
-  const anthropic = new Anthropic({ apiKey: anthropicKey, maxRetries: 1 });
   const budget = startBudget(BUDGET_TOTAL_MS);
 
   let generated: Awaited<ReturnType<typeof generateRoutine>>;
 
   try {
-    generated = await generateRoutine(askWith(anthropic, budget), context, allowed);
+    generated = await generateRoutine(askWith(config, budget), context, allowed);
   } catch (cause) {
     // Le détail (clé, en-têtes, corps de requête) ne remonte jamais au client :
     // il part dans les logs de la fonction, où il est utile et confiné.
-    console.error("[routine] appel Anthropic en échec", cause);
+    console.error("[routine] appel au modèle en échec", cause);
     if (cause instanceof BudgetExhaustedError) {
       return fail(
         "La génération a pris trop de temps. Réessaie : c'est en général plus rapide.",
         504,
       );
     }
-    if (cause instanceof Anthropic.RateLimitError) {
-      return fail("La génération est saturée pour le moment. Réessaie dans quelques minutes.", 503);
+    if (cause instanceof ModelError) {
+      // La rédaction dit **à qui appartient le problème** : une clé personnelle
+      // refusée n'est pas une panne d'AimForge, et l'utilisateur est le seul à
+      // pouvoir la corriger.
+      return fail(modelErrorMessage(cause, "routine"), modelErrorStatus(cause));
     }
     return fail("La génération est injoignable pour le moment. Réessaie dans un instant.", 502);
   }
@@ -388,7 +425,7 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  // 6. Persistance, avec le JWT de l'utilisateur : c'est la RLS qui autorise
+  // 7. Persistance, avec le JWT de l'utilisateur : c'est la RLS qui autorise
   //    l'insertion, pas la fonction.
   const { data: row, error: insertError } = await userClient
     .from("routines")
@@ -419,5 +456,5 @@ export async function POST(request: Request): Promise<Response> {
     done: row.done,
   };
 
-  return json({ routine: stored, remaining: quota.remaining }, 200);
+  return json({ routine: stored, remaining }, 200);
 }

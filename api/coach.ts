@@ -26,6 +26,17 @@
  * ne sont pas encore posées dans Vercel — sinon la fonction annoncerait son
  * état de configuration à n'importe qui.
  *
+ * Depuis SPEC §5 ter, le modèle n'est plus forcément le nôtre : `resolveModelFor`
+ * dit quel fournisseur sert cet appel. Deux conséquences, et une seule ligne de
+ * code les porte toutes les deux — `config.source` :
+ *
+ * - **le quota** ne mesure que notre clé. Sur une configuration personnelle, le
+ *   compteur n'est pas remis à zéro : il n'est simplement **pas appelé**, et
+ *   `remaining` sort à `null` ;
+ * - **les erreurs** désignent leur responsable. Une clé personnelle refusée
+ *   n'est pas une panne d'AimForge, et le message doit envoyer l'utilisateur
+ *   dans ses réglages plutôt qu'à la salle d'attente.
+ *
  * La signature est **`export async function POST(request: Request)`**, et pas
  * un export par défaut : c'est la seule forme que le runtime Node de Vercel
  * reconnaît comme un gestionnaire web. Un `export default (request) => …` est
@@ -35,15 +46,23 @@
  * n'ont pas d'export : la plateforme y répond 405 toute seule.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
 import { TIER_IDS, type TierId } from "../src/lib/energy/index.js";
+import {
+  AiSettingsUnavailableError,
+  createAsk,
+  ModelError,
+  modelErrorMessage,
+  modelErrorStatus,
+  type ProviderConfig,
+  resolveModelFor,
+} from "../src/server/ai/index.js";
 import { summarizeBench } from "../src/server/coach/bench.js";
-import { type AskModel, generateDebrief, textOf } from "../src/server/coach/generate.js";
+import { type AskModel, generateDebrief } from "../src/server/coach/generate.js";
 import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt.js";
 import { evaluateQuota } from "../src/server/coach/quota.js";
 import {
@@ -52,6 +71,7 @@ import {
   type StoredDebrief,
 } from "../src/shared/coach-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
+import { loadAiSettingsWith } from "./_lib/ai-settings.js";
 
 /**
  * Un debrief demande une génération complète, pas un aller-retour de chat :
@@ -60,13 +80,11 @@ import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-c
  */
 export const maxDuration = 60;
 
-const MODEL = "claude-sonnet-4-6";
-
 /** Assez pour un debrief structuré ; le contrat borne déjà les longueurs. */
 const MAX_TOKENS = 2000;
 
 /** Marge sous `maxDuration` : mieux vaut un 502 propre qu'un timeout de plateforme. */
-const ANTHROPIC_TIMEOUT_MS = 45_000;
+const MODEL_TIMEOUT_MS = 45_000;
 
 const usageCountSchema = z.number().int().min(0);
 
@@ -207,24 +225,18 @@ async function loadBench(client: UserClient, userId: string): Promise<CoachConte
 /* ------------------------------------------------------------------ */
 
 /**
- * Le port du modèle, câblé sur le SDK. Toute la logique (relance corrective
- * comprise) vit dans `generateDebrief` — ici, uniquement les réglages d'appel.
+ * Le port du modèle, câblé sur l'adaptateur du fournisseur résolu (SPEC §5 ter).
+ *
+ * Le port n'a pas changé — c'est ce qui rend ce branchement minuscule. Ce qui
+ * a changé est en amont : `createAsk` rend l'adaptateur du fournisseur de
+ * l'utilisateur (ou celui de la plateforme), et toute la logique de génération
+ * (relance corrective comprise) reste dans `generateDebrief`, qui ne sait
+ * toujours pas qui répond au bout du fil.
  */
-function askWith(client: Anthropic): AskModel {
-  return async (messages) => {
-    const message = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: COACH_SYSTEM_PROMPT,
-      // Le format est contraint et la tâche courte : la réflexion étendue
-      // n'apporterait ici que de la latence et des jetons.
-      thinking: { type: "disabled" },
-      output_config: { effort: "medium" },
-      messages: messages.map((entry) => ({ role: entry.role, content: entry.content })),
-    });
+function askWith(config: ProviderConfig): AskModel {
+  const ask = createAsk(config, { system: COACH_SYSTEM_PROMPT, maxTokens: MAX_TOKENS });
 
-    return textOf(message.content);
-  };
+  return (messages) => ask(messages, MODEL_TIMEOUT_MS);
 }
 
 /* ------------------------------------------------------------------ */
@@ -259,69 +271,101 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!body.ok) return body.response;
 
-  // 3. Configuration. Les deux secrets vivent dans l'environnement Vercel ;
-  //    tant qu'ils n'y sont pas, la fonction le dit franchement.
-  const anthropicKey = process.env.ANTHROPIC_API_KEY ?? "";
+  // 3. Configuration. La service key est requise dans tous les cas : c'est
+  //    elle, et elle seule, qui peut lire la clé du fournisseur personnel de
+  //    l'utilisateur (privilèges de colonne, migration 0008). La clé Anthropic
+  //    de la plateforme, elle, n'est plus obligatoire — un utilisateur qui a
+  //    posé la sienne n'en dépend plus (SPEC §5 ter).
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
-  if (anthropicKey === "" || serviceKey === "") {
+  if (serviceKey === "") {
     return fail("IA non configurée", 503);
   }
 
-  // 4. Quota, incrémenté avant l'appel au modèle (SPEC §4). L'incrément et la
-  //    lecture sont la même instruction SQL : deux requêtes simultanées ne
-  //    peuvent pas passer toutes les deux sur le dernier debrief disponible.
   const serviceClient = createClient(SUPABASE_URL, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
-  // Le RPC n'est pas encore décrit par `database-types.ts` (régénéré depuis la
-  // base, migration 0003 comprise, à la prochaine génération) : le client de
-  // service reste non typé et le retour est validé ici, à la frontière.
-  const usage = await serviceClient.rpc("increment_ai_usage", {
-    p_user_id: user.id,
-    p_kind: "coach",
-  });
 
-  if (usage.error !== null) {
-    return fail("Le compteur de quota est indisponible. Réessaie dans un instant.", 503);
-  }
+  // 4. Quel fournisseur, et qui paie. C'est la seule bascule de SPEC §5 ter :
+  //    configuration personnelle ⇒ le compteur de quota n'est pas appelé.
+  let resolution: Awaited<ReturnType<typeof resolveModelFor>>;
 
-  const count = usageCountSchema.safeParse(usage.data);
-
-  if (!count.success) {
-    return fail("Le compteur de quota a renvoyé une valeur inattendue.", 503);
-  }
-
-  const quota = evaluateQuota(count.data);
-
-  if (!quota.allowed) {
-    return json(
-      {
-        error: "Quota atteint : 5 debriefs par jour. Le compteur repart demain (heure UTC).",
-        remaining: quota.remaining,
-      },
-      429,
+  try {
+    resolution = await resolveModelFor(
+      loadAiSettingsWith(serviceClient),
+      user.id,
+      process.env.ANTHROPIC_API_KEY ?? "",
     );
+  } catch (cause) {
+    // Une lecture de réglages en échec ne bascule pas en douce sur la clé de
+    // la plateforme : l'utilisateur a demandé le contraire, et son quota est
+    // levé — le faire consommer sans le dire serait pire que l'attente.
+    console.error("[coach] réglages IA illisibles", cause);
+    if (cause instanceof AiSettingsUnavailableError) {
+      return fail("Tes réglages IA n'ont pas pu être lus. Réessaie dans un instant.", 503);
+    }
+    throw cause;
   }
 
-  // 5. Contexte puis génération.
+  if (!resolution.ok) return fail(resolution.reason, resolution.status);
+
+  const config = resolution.config;
+
+  // 5. Quota, incrémenté avant l'appel au modèle (SPEC §4) — **et seulement
+  //    sur la clé de la plateforme**. L'incrément et la lecture sont la même
+  //    instruction SQL : deux requêtes simultanées ne peuvent pas passer
+  //    toutes les deux sur le dernier debrief disponible.
+  let remaining: number | null = null;
+
+  if (config.source === "platform") {
+    // Le RPC n'est pas encore décrit par `database-types.ts` (régénéré depuis la
+    // base, migration 0003 comprise, à la prochaine génération) : le client de
+    // service reste non typé et le retour est validé ici, à la frontière.
+    const usage = await serviceClient.rpc("increment_ai_usage", {
+      p_user_id: user.id,
+      p_kind: "coach",
+    });
+
+    if (usage.error !== null) {
+      return fail("Le compteur de quota est indisponible. Réessaie dans un instant.", 503);
+    }
+
+    const count = usageCountSchema.safeParse(usage.data);
+
+    if (!count.success) {
+      return fail("Le compteur de quota a renvoyé une valeur inattendue.", 503);
+    }
+
+    const quota = evaluateQuota(count.data);
+
+    if (!quota.allowed) {
+      return json(
+        {
+          error: "Quota atteint : 5 debriefs par jour. Le compteur repart demain (heure UTC).",
+          remaining: quota.remaining,
+        },
+        429,
+      );
+    }
+    remaining = quota.remaining;
+  }
+
+  // 6. Contexte puis génération.
   const context = await loadContext(userClient, user.id, body.stats);
-  const anthropic = new Anthropic({
-    apiKey: anthropicKey,
-    timeout: ANTHROPIC_TIMEOUT_MS,
-    maxRetries: 1,
-  });
 
   let generated: Awaited<ReturnType<typeof generateDebrief>>;
 
   try {
-    generated = await generateDebrief(askWith(anthropic), context);
+    generated = await generateDebrief(askWith(config), context);
   } catch (cause) {
     // Le détail (clé, en-têtes, corps de requête) ne remonte jamais au client :
     // il part dans les logs de la fonction, où il est utile et confiné.
-    console.error("[coach] appel Anthropic en échec", cause);
-    if (cause instanceof Anthropic.RateLimitError) {
-      return fail("Le coach est saturé pour le moment. Réessaie dans quelques minutes.", 503);
+    console.error("[coach] appel au modèle en échec", cause);
+    if (cause instanceof ModelError) {
+      // La rédaction dit **à qui appartient le problème** : une clé personnelle
+      // refusée n'est pas une panne d'AimForge, et l'utilisateur est le seul à
+      // pouvoir la corriger.
+      return fail(modelErrorMessage(cause, "coach"), modelErrorStatus(cause));
     }
     return fail("Le coach est injoignable pour le moment. Réessaie dans un instant.", 502);
   }
@@ -336,7 +380,7 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  // 6. Persistance, avec le JWT de l'utilisateur : c'est la RLS qui autorise
+  // 7. Persistance, avec le JWT de l'utilisateur : c'est la RLS qui autorise
   //    l'insertion, pas la fonction.
   const { data: row, error: insertError } = await userClient
     .from("debriefs")
@@ -365,5 +409,5 @@ export async function POST(request: Request): Promise<Response> {
     date: new Date(row.date).toISOString(),
   };
 
-  return json({ debrief: stored, remaining: quota.remaining }, 200);
+  return json({ debrief: stored, remaining }, 200);
 }

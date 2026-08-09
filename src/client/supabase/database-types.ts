@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_settings: {
+        Row: {
+          api_key: string
+          base_url: string | null
+          model: string
+          provider: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          api_key: string
+          base_url?: string | null
+          model: string
+          provider: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          api_key?: string
+          base_url?: string | null
+          model?: string
+          provider?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       ai_usage: {
         Row: {
           coach_count: number

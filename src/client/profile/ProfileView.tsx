@@ -18,6 +18,7 @@ import { Notice } from "../components/Notice";
 import { getProfile, type Profile, updateProfile } from "../data";
 import { LinkedAccountsPanel } from "../linked/LinkedAccountsPanel";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
+import { AiSettingsPanel } from "../settings/AiSettingsPanel";
 
 /** Le formulaire manipule des chaînes ; `null` et `""` n'y sont pas distincts. */
 type ProfileForm = Readonly<Record<Field, string>>;
@@ -203,6 +204,7 @@ export function ProfileView() {
           </Notice>
         )}
         <LinkedAccountsPanel state={linked.state} reload={linked.reload} />
+        <AiSettingsPanel />
       </div>
     );
   }
@@ -263,6 +265,7 @@ export function ProfileView() {
       </section>
 
       <LinkedAccountsPanel state={linked.state} reload={linked.reload} />
+      <AiSettingsPanel />
     </div>
   );
 }

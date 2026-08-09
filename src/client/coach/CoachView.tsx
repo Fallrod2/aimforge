@@ -67,12 +67,25 @@ interface CoachViewProps {
   readonly initialStats?: string;
 }
 
+/**
+ * Ce que l'écran sait du quota du jour.
+ *
+ * Trois états et non un `number | null`, parce que `null` voudrait dire deux
+ * choses opposées : « pas encore demandé » et « il n'y a plus rien à compter »
+ * (SPEC §5 ter — l'utilisateur a configuré son propre fournisseur). Les
+ * confondre afficherait « 5 debriefs par jour » à quelqu'un qui n'a plus de
+ * limite.
+ */
+type Quota =
+  | { readonly status: "unknown" }
+  | { readonly status: "lifted" }
+  | { readonly status: "counted"; readonly remaining: number };
+
 export function CoachView({ initialStats }: CoachViewProps = {}) {
   const [stats, setStats] = useState(initialStats ?? "");
   const [generating, setGenerating] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
-  /** Debriefs restants aujourd'hui ; `null` tant que la fonction ne l'a pas dit. */
-  const [remaining, setRemaining] = useState<number | null>(null);
+  const [quota, setQuota] = useState<Quota>({ status: "unknown" });
   const [history, setHistory] = useState<History>({ status: "loading" });
   const [freshId, setFreshId] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -134,13 +147,15 @@ export function CoachView({ initialStats }: CoachViewProps = {}) {
       );
       setFreshId(debrief.id);
       setExpandedId(debrief.id);
-      setRemaining(left);
+      setQuota(left === null ? { status: "lifted" } : { status: "counted", remaining: left });
       setStats("");
     } catch (cause) {
       const next = failureOf(cause);
 
       setFailure(next);
-      if (cause instanceof CoachError && cause.remaining !== null) setRemaining(cause.remaining);
+      if (cause instanceof CoachError && cause.remaining !== null) {
+        setQuota({ status: "counted", remaining: cause.remaining });
+      }
     } finally {
       setGenerating(false);
     }
@@ -214,9 +229,11 @@ export function CoachView({ initialStats }: CoachViewProps = {}) {
           </p>
 
           <p className="ml-auto text-xs text-steel-500">
-            {remaining === null
+            {quota.status === "unknown"
               ? `${COACH_DAILY_QUOTA} debriefs par jour`
-              : `${remaining} debrief${remaining > 1 ? "s" : ""} restant${remaining > 1 ? "s" : ""} aujourd'hui`}
+              : quota.status === "lifted"
+                ? "Quota levé · ta configuration IA"
+                : `${quota.remaining} debrief${quota.remaining > 1 ? "s" : ""} restant${quota.remaining > 1 ? "s" : ""} aujourd'hui`}
           </p>
         </div>
 

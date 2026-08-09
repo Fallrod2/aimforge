@@ -6,6 +6,13 @@
  */
 
 export {
+  AiSettingsError,
+  deleteAiSettings,
+  getAiSettings,
+  saveAiSettings,
+  testAiSettings,
+} from "./ai-settings";
+export {
   deleteBenchRun,
   getBenchRunDetail,
   listBenchRuns,

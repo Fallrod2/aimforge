@@ -74,8 +74,13 @@ export type StoredDebrief = z.infer<typeof storedDebriefSchema>;
 /** La réponse de `POST /api/coach` en cas de succès. */
 export const coachResponseSchema = z.object({
   debrief: storedDebriefSchema,
-  /** Debriefs restants aujourd'hui, après celui-ci. */
-  remaining: z.number().int().min(0),
+  /**
+   * Debriefs restants aujourd'hui, après celui-ci — ou `null` quand il n'y a
+   * rien à compter : l'utilisateur a configuré son propre fournisseur (SPEC
+   * §5 ter), donc le quota AimForge ne le concerne plus. `null` est un état,
+   * pas une absence de mesure : l'écran l'affiche comme « quota levé ».
+   */
+  remaining: z.number().int().min(0).nullable(),
 });
 
 export type CoachResponse = z.infer<typeof coachResponseSchema>;
