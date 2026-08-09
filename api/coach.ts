@@ -41,7 +41,7 @@ import { z } from "zod";
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types";
-import { TIER_IDS, type TierId } from "../src/lib/energy";
+import { TIER_IDS, type TierId } from "../src/lib/energy/index";
 import { summarizeBench } from "../src/server/coach/bench";
 import { type AskModel, generateDebrief, textOf } from "../src/server/coach/generate";
 import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt";
