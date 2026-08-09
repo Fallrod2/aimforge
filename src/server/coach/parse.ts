@@ -34,8 +34,13 @@ export function extractJsonObject(raw: string): string | null {
   return withoutFences.slice(start, end + 1);
 }
 
-/** Résume les défauts relevés par Zod en une phrase lisible par le modèle. */
-function summarizeIssues(error: {
+/**
+ * Résume les défauts relevés par Zod en une phrase lisible par le modèle.
+ *
+ * Exportée pour la Routine (`../routine/parse.ts`), qui a exactement le même
+ * besoin : une raison de refus rédigée pour un modèle, pas pour un journal.
+ */
+export function summarizeIssues(error: {
   readonly issues: readonly { path: PropertyKey[]; message: string }[];
 }): string {
   return error.issues

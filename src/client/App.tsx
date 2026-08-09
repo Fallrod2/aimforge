@@ -10,7 +10,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AppLayout } from "./app/AppLayout";
-import { ComingSoon } from "./app/ComingSoon";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { AuthView } from "./auth/AuthView";
 import { RecoveryView } from "./auth/RecoveryView";
@@ -20,6 +19,7 @@ import { HistoryView } from "./history/HistoryView";
 import { LandingView } from "./landing/LandingView";
 import { ProfileView } from "./profile/ProfileView";
 import { DEFAULT_ROUTE, parseRoute, type Route, requiresSession, routeHash } from "./route";
+import { RoutineView } from "./routine/RoutineView";
 import { TrackerView } from "./tracker/TrackerView";
 
 function currentRoute(): Route {
@@ -96,18 +96,7 @@ function View({ route, navigate }: ViewProps) {
     case "coach":
       return <CoachView />;
     case "routine":
-      return (
-        <ComingSoon
-          title="Routine du jour"
-          phase="Module Routine"
-          summary="Une séance générée sur mesure à partir du temps dont tu disposes, des sous-catégories basses du dernier bench et des axes des derniers debriefs."
-          points={[
-            "Durée choisie, focus optionnel",
-            "Scénarios à cocher au fil de la séance",
-            "Historique des routines faites",
-          ]}
-        />
-      );
+      return <RoutineView />;
     case "profile":
       return <ProfileView />;
     default:

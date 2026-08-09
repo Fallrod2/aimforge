@@ -38,6 +38,7 @@ export type {
 } from "./linked-accounts-contract";
 export { formatRiotId, parseRiotId, type RiotId } from "./linked-accounts-mapping";
 export { getProfile, updateProfile } from "./profile";
+export { deleteRoutine, listRoutines, setRoutineDone } from "./routines";
 export type {
   BenchRunDetail,
   BenchRunSummary,
