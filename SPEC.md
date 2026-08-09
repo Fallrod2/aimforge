@@ -118,6 +118,26 @@ clé, avec « Tester la connexion » :
 - Le « Tester la connexion » consomme un mini-appel et rend un verdict clair
   sans jamais renvoyer la clé.
 
+## 5 ter bis. Auto-debrief & chat coach (acté 2026-08-09)
+
+Constat produit : coller ses stats est une friction, et un debrief statique
+laisse l'utilisateur seul avec ses axes. Deux ajouts :
+
+- **Debrief en un clic depuis un match importé** : chaque match de la carte
+  Valorant propose « Débriefer » — le serveur formate le résumé du match
+  (map, agent, KDA, ADR, HS%, résultat) et génère sans aucun collage. Le
+  debrief garde la référence du match (badge « débriefé » sur le match,
+  pas de double debrief accidentel). Le collage manuel reste pour les
+  parties non importées. Pas de génération automatique silencieuse : le
+  quota appartient à l'utilisateur, chaque debrief est un geste volontaire.
+- **Chat coach** : sous chaque debrief, une conversation avec le coach qui a
+  TOUT le contexte (le debrief, le bench, le profil) — « explique-moi quoi
+  faire exactement », « montre-moi la routine pour l'axe 2 »… Texte libre
+  (pas de contrat JSON), historique persisté par debrief, messages
+  utilisateur scellés, même résolution de provider que le reste (config
+  perso ou plateforme). Quota dédié aux messages de chat, distinct des
+  debriefs, remboursé sur échec plateforme comme le reste.
+
 ## 5 quater. Panneau d'administration (acté 2026-08-09)
 
 Section « Administration » dans l'app, visible et utilisable uniquement par les

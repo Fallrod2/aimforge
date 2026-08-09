@@ -53,3 +53,34 @@ export function takeCoachPrefill(): string | null {
   pending = null;
   return value;
 }
+
+/* ------------------------------------------------------------------ */
+/* Debrief à ouvrir                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * La seconde boîte, ajoutée avec le debrief en un clic (SPEC §5 ter bis).
+ *
+ * Le chemin « Débriefer » ne pré-remplit rien : la génération est déjà faite
+ * quand la navigation arrive. Ce qu'il faut transporter, c'est **quel** debrief
+ * ouvrir — sans quoi la vue Coach déplierait le plus récent par défaut, ce qui
+ * est le bon debrief neuf fois sur dix et le mauvais la dixième (deux
+ * générations parties de deux onglets, un debrief manuel créé entre-temps).
+ *
+ * Même contrat que la boîte ci-dessus : consommée à la lecture, portée par
+ * l'onglet courant, perdue au rechargement.
+ */
+let pendingDebrief: number | null = null;
+
+/** Désigne le debrief que la vue Coach devra ouvrir à son prochain montage. */
+export function setCoachDebriefFocus(id: number): void {
+  pendingDebrief = Number.isInteger(id) && id > 0 ? id : null;
+}
+
+/** Relit et vide la boîte. `null` s'il n'y avait rien à ouvrir. */
+export function takeCoachDebriefFocus(): number | null {
+  const value = pendingDebrief;
+
+  pendingDebrief = null;
+  return value;
+}

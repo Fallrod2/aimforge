@@ -9,6 +9,7 @@
 
 import type { StoredDebrief } from "../../shared/coach-contract";
 import { formatRunDate } from "../format";
+import { CoachChat } from "./CoachChat";
 
 interface DebriefCardProps {
   readonly debrief: StoredDebrief;
@@ -102,6 +103,11 @@ export function DebriefCard({
               {debrief.focus}
             </p>
           </Section>
+
+          {/* La conversation est montée avec le contenu déplié, et démontée
+              avec lui : une page d'historique à vingt debriefs ne déclenche pas
+              vingt chargements de fil. */}
+          <CoachChat debriefId={debrief.id} />
 
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
             {confirming ? (

@@ -20,20 +20,42 @@ import { z } from "zod";
  */
 export const MAX_STATS_LENGTH = 8000;
 
+/**
+ * Longueur maximale d'une référence de match. Les identifiants Riot sont des
+ * UUID (36 caractères) ; la marge couvre un fournisseur qui nommerait ses
+ * matchs autrement, sans laisser passer un texte déguisé en identifiant.
+ */
+export const MAX_MATCH_ID_LENGTH = 120;
+
 /** Debriefs autorisés par utilisateur et par jour UTC (SPEC §4). */
 export const COACH_DAILY_QUOTA = 5;
 
 /**
- * Ce que le navigateur envoie à `POST /api/coach`.
+ * Ce que le navigateur envoie à `POST /api/coach` — **une entrée ou l'autre**
+ * (SPEC §5 ter bis).
+ *
+ * - `stats` : le texte collé par le joueur, chemin d'origine, seul disponible
+ *   pour une partie non importée ;
+ * - `match_id` : la référence d'un match déjà importé. Le serveur va lire le
+ *   résumé dans `imported_matches` **sous la RLS de l'appelant** et le formate
+ *   lui-même. Le navigateur n'envoie donc pas de stats qu'il aurait
+ *   pré-formatées : sinon il suffirait de mentir sur le contenu du match pour
+ *   faire dire n'importe quoi au coach tout en gardant le badge « débriefé ».
  *
  * Le détourage vient **avant** la longueur minimale : sans lui, un corps
  * `{"stats":"   "}` passerait la validation et partirait au modèle — la
  * fonction ne peut pas compter sur le formulaire pour l'en empêcher, elle est
  * appelable directement.
+ *
+ * Une union et non deux champs facultatifs : « ni l'un ni l'autre » et « les
+ * deux à la fois » sont des corps que le serveur n'a pas à interpréter, et le
+ * schéma est le bon endroit pour le dire. Un corps qui porte les deux entre
+ * par la première branche (`stats`), qui reste le chemin de référence.
  */
-export const coachRequestSchema = z.object({
-  stats: z.string().trim().min(1).max(MAX_STATS_LENGTH),
-});
+export const coachRequestSchema = z.union([
+  z.object({ stats: z.string().trim().min(1).max(MAX_STATS_LENGTH) }),
+  z.object({ match_id: z.string().trim().min(1).max(MAX_MATCH_ID_LENGTH) }),
+]);
 
 export type CoachRequest = z.infer<typeof coachRequestSchema>;
 
@@ -67,6 +89,16 @@ export const storedDebriefSchema = coachDebriefSchema.extend({
   id: z.number().int().positive(),
   /** Horodatage ISO 8601 de l'enregistrement. */
   date: z.string().min(1),
+  /**
+   * Le match importé débriefé, quand le debrief en vient (SPEC §5 ter bis) —
+   * `null` pour un collage manuel, ce que sont tous les debriefs antérieurs à
+   * la migration 0011.
+   *
+   * Valeur par défaut plutôt que champ obligatoire : le schéma relit aussi des
+   * lignes écrites avant que la colonne existe, et un debrief sans référence de
+   * match n'est pas un debrief cassé.
+   */
+  match_id: z.string().min(1).nullable().default(null),
 });
 
 export type StoredDebrief = z.infer<typeof storedDebriefSchema>;
@@ -97,6 +129,12 @@ export type CoachResponse = z.infer<typeof coachResponseSchema>;
 export const coachErrorSchema = z.object({
   error: z.string().min(1),
   remaining: z.number().int().min(0).optional(),
+  /**
+   * Le debrief qui existe déjà pour ce match (409). Il n'est pas là pour
+   * expliquer l'échec mais pour le rendre utile : l'écran peut proposer
+   * « voir le debrief » au lieu de laisser l'utilisateur chercher lequel.
+   */
+  debrief_id: z.number().int().positive().optional(),
 });
 
 export type CoachError = z.infer<typeof coachErrorSchema>;

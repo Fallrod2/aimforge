@@ -43,18 +43,21 @@ export type Database = {
       }
       ai_usage: {
         Row: {
+          chat_count: number
           coach_count: number
           day: string
           routine_count: number
           user_id: string
         }
         Insert: {
+          chat_count?: number
           coach_count?: number
           day: string
           routine_count?: number
           user_id: string
         }
         Update: {
+          chat_count?: number
           coach_count?: number
           day?: string
           routine_count?: number
@@ -98,6 +101,41 @@ export type Database = {
         }
         Relationships: []
       }
+      coach_messages: {
+        Row: {
+          content: string
+          created_at: string
+          debrief_id: number
+          id: number
+          role: string
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          debrief_id: number
+          id?: never
+          role: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          debrief_id?: number
+          id?: never
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coach_messages_debrief_id_fkey"
+            columns: ["debrief_id"]
+            isOneToOne: false
+            referencedRelation: "debriefs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       debriefs: {
         Row: {
           axes: Json
@@ -105,6 +143,7 @@ export type Database = {
           focus: string | null
           id: number
           input_raw: string
+          match_id: string | null
           points_forts: Json
           resume: string
           user_id: string
@@ -115,6 +154,7 @@ export type Database = {
           focus?: string | null
           id?: never
           input_raw: string
+          match_id?: string | null
           points_forts?: Json
           resume: string
           user_id: string
@@ -125,6 +165,7 @@ export type Database = {
           focus?: string | null
           id?: never
           input_raw?: string
+          match_id?: string | null
           points_forts?: Json
           resume?: string
           user_id?: string

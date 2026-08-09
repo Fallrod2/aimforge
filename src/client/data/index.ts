@@ -27,7 +27,8 @@ export {
   listBenchRuns,
   saveBenchRun,
 } from "./bench-runs";
-export { deleteDebrief, listDebriefs } from "./debriefs";
+export { listCoachMessages } from "./coach-messages";
+export { debriefedMatches, deleteDebrief, listDebriefs } from "./debriefs";
 export { DataError } from "./errors";
 export {
   accountsOf,

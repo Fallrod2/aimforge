@@ -4,6 +4,7 @@ import {
   coachErrorSchema,
   coachRequestSchema,
   coachResponseSchema,
+  MAX_MATCH_ID_LENGTH,
   MAX_STATS_LENGTH,
   storedDebriefSchema,
 } from "./coach-contract";
@@ -40,7 +41,7 @@ describe("coachRequestSchema", () => {
   it("détoure les stats acceptées", () => {
     const parsed = coachRequestSchema.safeParse({ stats: "  Ascent 13-11  \n" });
 
-    expect(parsed.success && parsed.data.stats).toBe("Ascent 13-11");
+    expect(parsed.success && "stats" in parsed.data && parsed.data.stats).toBe("Ascent 13-11");
   });
 
   it("refuse une entrée trop longue", () => {
@@ -50,6 +51,31 @@ describe("coachRequestSchema", () => {
     expect(coachRequestSchema.safeParse({ stats: "x".repeat(MAX_STATS_LENGTH + 1) }).success).toBe(
       false,
     );
+  });
+
+  // SPEC §5 ter bis : l'autre entrée, celle du debrief en un clic.
+  it("accepte une référence de match importé", () => {
+    const parsed = coachRequestSchema.safeParse({
+      match_id: "  0f7d3b21-2f2c-4a6e-9a1b-8c2d5e6f7a8b ",
+    });
+
+    expect(parsed.success && "match_id" in parsed.data && parsed.data.match_id).toBe(
+      "0f7d3b21-2f2c-4a6e-9a1b-8c2d5e6f7a8b",
+    );
+  });
+
+  it("refuse une référence de match vide ou démesurée", () => {
+    expect(coachRequestSchema.safeParse({ match_id: "   " }).success).toBe(false);
+    expect(
+      coachRequestSchema.safeParse({ match_id: "x".repeat(MAX_MATCH_ID_LENGTH) }).success,
+    ).toBe(true);
+    expect(
+      coachRequestSchema.safeParse({ match_id: "x".repeat(MAX_MATCH_ID_LENGTH + 1) }).success,
+    ).toBe(false);
+  });
+
+  it("refuse un corps qui ne porte aucune des deux entrées", () => {
+    expect(coachRequestSchema.safeParse({ matchId: "abc" }).success).toBe(false);
   });
 });
 
@@ -104,6 +130,29 @@ describe("storedDebriefSchema", () => {
     ).toBe(true);
     expect(storedDebriefSchema.safeParse(VALID).success).toBe(false);
     expect(storedDebriefSchema.safeParse({ ...VALID, id: 0, date: "x" }).success).toBe(false);
+  });
+
+  // SPEC §5 ter bis : la référence de match. Facultative en entrée parce que le
+  // schéma relit aussi des debriefs écrits avant que la colonne existe.
+  it("rend `match_id` nul quand le debrief ne vient pas d'un match", () => {
+    const parsed = storedDebriefSchema.safeParse({
+      ...VALID,
+      id: 12,
+      date: "2026-08-08T10:00:00Z",
+    });
+
+    expect(parsed.success && parsed.data.match_id).toBeNull();
+  });
+
+  it("porte la référence du match quand il y en a une", () => {
+    const parsed = storedDebriefSchema.safeParse({
+      ...VALID,
+      id: 12,
+      date: "2026-08-08T10:00:00Z",
+      match_id: "0f7d3b21-2f2c",
+    });
+
+    expect(parsed.success && parsed.data.match_id).toBe("0f7d3b21-2f2c");
   });
 });
 

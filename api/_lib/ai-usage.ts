@@ -25,8 +25,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import type { RefundUsage } from "../../src/server/coach/quota.js";
 
-/** Les deux compteurs de `public.ai_usage`, tels que la fonction SQL les nomme. */
-export type AiUsageKind = "coach" | "routine";
+/** Les trois compteurs de `public.ai_usage`, tels que la fonction SQL les nomme. */
+export type AiUsageKind = "coach" | "routine" | "chat";
 
 const countSchema = z.number().int().min(0);
 

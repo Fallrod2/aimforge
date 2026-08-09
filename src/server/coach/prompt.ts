@@ -53,6 +53,15 @@ const TAGS: readonly string[] = [
   "</dernier_bench>",
   "<scenarios_autorises>",
   "</scenarios_autorises>",
+  // Les balises du chat coach (`./chat-prompt.ts`) sont dans la même liste, et
+  // c'est délibéré : `sealStats` est le seul neutraliseur du projet, il doit
+  // connaître toutes les balises que les prompts du coach emploient. Deux
+  // listes dériveraient, et la dérive ne se verrait que le jour où quelqu'un
+  // refermerait la bonne balise au bon endroit.
+  "<debrief>",
+  "</debrief>",
+  "<message_utilisateur>",
+  "</message_utilisateur>",
 ];
 
 const NEUTRALIZED = "[balise neutralisée]";
@@ -168,7 +177,7 @@ export function sealStats(stats: string): string {
   return TAGS.reduce((text, tag) => text.split(tag).join(NEUTRALIZED), stats);
 }
 
-function formatProfile(profile: CoachProfile | null): string {
+export function formatProfile(profile: CoachProfile | null): string {
   if (profile === null) return "Profil non renseigné.";
 
   const lines = [
@@ -192,13 +201,13 @@ function formatEnergy(energy: number): string {
   return energy.toFixed(1);
 }
 
-function formatScenarios(groups: readonly ScenarioGroup[]): string {
+export function formatScenarios(groups: readonly ScenarioGroup[]): string {
   return groups
     .map((group) => `- ${group.subcategory} : ${group.scenarios.join(" | ")}`)
     .join("\n");
 }
 
-function formatBench(bench: CoachBenchSummary | null): string {
+export function formatBench(bench: CoachBenchSummary | null): string {
   if (bench === null) {
     return "Aucune passe de bench enregistrée : ne t'appuie que sur les stats et le profil.";
   }

@@ -30,16 +30,35 @@ export class CoachError extends Error {
   readonly status: number;
   /** Debriefs restants aujourd'hui, quand la fonction l'a dit (quota atteint). */
   readonly remaining: number | null;
+  /**
+   * Le debrief qui existe déjà pour ce match (409, SPEC §5 ter bis).
+   *
+   * Il n'explique pas l'échec, il le rend utile : l'écran peut renvoyer vers le
+   * debrief au lieu d'afficher une erreur dont l'utilisateur ne peut rien faire.
+   */
+  readonly debriefId: number | null;
 
-  constructor(message: string, status: number, remaining: number | null = null, cause?: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    remaining: number | null = null,
+    debriefId: number | null = null,
+    cause?: unknown,
+  ) {
     super(message, { cause });
     this.status = status;
     this.remaining = remaining;
+    this.debriefId = debriefId;
   }
 
   /** Le quota du jour est-il épuisé ? L'UI en fait un message, pas une erreur rouge. */
   get quotaReached(): boolean {
     return this.status === 429;
+  }
+
+  /** Ce match est-il déjà débriefé ? Ce n'est pas une panne, c'est un état. */
+  get alreadyDebriefed(): boolean {
+    return this.status === 409;
   }
 }
 
@@ -50,28 +69,47 @@ const NOT_DEPLOYED =
 
 const UNEXPECTED = "Le coach a renvoyé une réponse inattendue. Réessaie dans un instant.";
 
+interface HttpFailure {
+  readonly message: string;
+  readonly remaining: number | null;
+  readonly debriefId: number | null;
+}
+
 /** Le message d'un échec HTTP : celui de la fonction si elle en a donné un. */
-function errorMessage(status: number, body: string): { message: string; remaining: number | null } {
+function errorMessage(status: number, body: string): HttpFailure {
   try {
     const parsed = coachErrorSchema.safeParse(JSON.parse(body));
 
     if (parsed.success) {
-      return { message: parsed.data.error, remaining: parsed.data.remaining ?? null };
+      return {
+        message: parsed.data.error,
+        remaining: parsed.data.remaining ?? null,
+        debriefId: parsed.data.debrief_id ?? null,
+      };
     }
   } catch {
     // Corps non-JSON : c'est le cas du 404 servi par Vite en développement,
     // ou d'une page d'erreur de plateforme. On le traite juste en dessous.
   }
-  return { message: status === 404 ? NOT_DEPLOYED : UNEXPECTED, remaining: null };
+  // Un 404 **avec** un corps JSON vient de la fonction (match inconnu) et a été
+  // traité au-dessus ; celui-ci vient du serveur de développement.
+  return { message: status === 404 ? NOT_DEPLOYED : UNEXPECTED, remaining: null, debriefId: null };
 }
 
-/** Demande un debrief. Lève un `CoachError` déjà rédigé en cas d'échec. */
-export async function requestDebrief(stats: string): Promise<CoachResponse> {
+/**
+ * Demande un debrief. Lève un `CoachError` déjà rédigé en cas d'échec.
+ *
+ * Le corps est passé tel quel : la fonction accepte **une entrée ou l'autre**
+ * (SPEC §5 ter bis), et les deux appelants publics ci-dessous n'en sont que la
+ * mise en forme. Le reste — jeton, lecture de l'échec, relecture du contrat —
+ * est identique, et il ne doit pas exister en deux exemplaires.
+ */
+async function postCoach(payload: Record<string, unknown>): Promise<CoachResponse> {
   const { data, error } = await supabase.auth.getSession();
   const token = data.session?.access_token;
 
   if (error !== null || token === undefined) {
-    throw new CoachError(NO_SESSION_MESSAGE, 401, null, error);
+    throw new CoachError(NO_SESSION_MESSAGE, 401, null, null, error);
   }
 
   let response: Response;
@@ -80,32 +118,48 @@ export async function requestDebrief(stats: string): Promise<CoachResponse> {
     response = await fetch("/api/coach", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ stats }),
+      body: JSON.stringify(payload),
     });
   } catch (cause) {
-    throw new CoachError(OFFLINE, 0, null, cause);
+    throw new CoachError(OFFLINE, 0, null, null, cause);
   }
 
   const body = await response.text();
 
   if (!response.ok) {
-    const { message, remaining } = errorMessage(response.status, body);
+    const failure = errorMessage(response.status, body);
 
-    throw new CoachError(message, response.status, remaining);
+    throw new CoachError(failure.message, response.status, failure.remaining, failure.debriefId);
   }
 
-  let payload: unknown;
+  let parsedBody: unknown;
 
   try {
-    payload = JSON.parse(body);
+    parsedBody = JSON.parse(body);
   } catch (cause) {
-    throw new CoachError(UNEXPECTED, response.status, null, cause);
+    throw new CoachError(UNEXPECTED, response.status, null, null, cause);
   }
 
-  const parsed = coachResponseSchema.safeParse(payload);
+  const parsed = coachResponseSchema.safeParse(parsedBody);
 
   if (!parsed.success) {
-    throw new CoachError(UNEXPECTED, response.status, null, parsed.error);
+    throw new CoachError(UNEXPECTED, response.status, null, null, parsed.error);
   }
   return parsed.data;
+}
+
+/** Demande un debrief à partir des stats collées par le joueur. */
+export function requestDebrief(stats: string): Promise<CoachResponse> {
+  return postCoach({ stats });
+}
+
+/**
+ * Demande un debrief à partir d'un match importé (SPEC §5 ter bis).
+ *
+ * Seule la **référence** part : c'est le serveur qui lit le résumé du match en
+ * base et le met en texte. Le navigateur n'envoie pas de stats pré-formatées,
+ * sinon il suffirait de mentir sur le contenu du match.
+ */
+export function requestDebriefForMatch(matchId: string): Promise<CoachResponse> {
+  return postCoach({ match_id: matchId });
 }

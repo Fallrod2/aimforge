@@ -18,6 +18,11 @@
  * l'appelant remplit juste avant de naviguer vers `#/coach`. Les deux ne
  * fournissent qu'une valeur *initiale* : une fois la vue montée, le texte
  * appartient au joueur, et rien ne vient le réécrire sous ses doigts.
+ *
+ * Depuis SPEC §5 ter bis, la carte Valorant du dashboard génère le debrief
+ * elle-même (« Débriefer ») puis navigue ici : elle ne pré-remplit alors rien,
+ * elle **désigne** le debrief à ouvrir (`takeCoachDebriefFocus`). Chaque
+ * debrief déplié porte en outre sa conversation avec le coach (`DebriefCard`).
  */
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
@@ -30,7 +35,7 @@ import { Notice } from "../components/Notice";
 import { deleteDebrief, listDebriefs } from "../data";
 import { CoachError, requestDebrief } from "./coach-api";
 import { DebriefCard } from "./DebriefCard";
-import { takeCoachPrefill } from "./prefill";
+import { takeCoachDebriefFocus, takeCoachPrefill } from "./prefill";
 
 type History =
   | { readonly status: "loading" }
@@ -99,8 +104,17 @@ export function CoachView({ initialStats }: CoachViewProps = {}) {
       const debriefs = await listDebriefs();
 
       setHistory({ status: "ready", debriefs });
-      // Le dernier debrief est déplié d'office : c'est ce qu'on vient chercher
-      // en ouvrant la page, et la liste reste lisible même à vingt entrées.
+      // Le debrief désigné par la carte Valorant (« Débriefer », SPEC §5 ter
+      // bis) l'emporte : il vient d'être généré, c'est lui qu'on vient lire.
+      // À défaut, le dernier est déplié d'office — c'est ce qu'on cherche en
+      // ouvrant la page, et la liste reste lisible même à vingt entrées.
+      const focused = takeCoachDebriefFocus();
+
+      if (focused !== null && debriefs.some((entry) => entry.id === focused)) {
+        setExpandedId(focused);
+        setFreshId(focused);
+        return;
+      }
       setExpandedId((current) => current ?? debriefs[0]?.id ?? null);
     } catch (cause) {
       setHistory({

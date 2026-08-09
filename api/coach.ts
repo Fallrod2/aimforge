@@ -47,6 +47,14 @@
  * plus personne ne consomme la clé de la plateforme, mais les configurations
  * personnelles continuent, puisqu'elles ne coûtent rien ici.
  *
+ * Depuis SPEC §5 ter bis, l'entrée n'est plus seulement un texte collé : la
+ * fonction accepte aussi `{"match_id": …}` et va lire elle-même le résumé du
+ * match dans `imported_matches`, sous la RLS de l'appelant. Le navigateur
+ * n'envoie donc jamais de stats pré-formatées pour un match importé — sinon il
+ * suffirait de mentir sur le contenu de la partie tout en gardant le badge
+ * « débriefé ». Le debrief produit garde la référence du match, et l'index
+ * unique de la migration 0011 interdit de le débriefer deux fois.
+ *
  * La signature est **`export async function POST(request: Request)`**, et pas
  * un export par défaut : c'est la seule forme que le runtime Node de Vercel
  * reconnaît comme un gestionnaire web. Un `export default (request) => …` est
@@ -61,7 +69,6 @@ import { z } from "zod";
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
-import { TIER_IDS, type TierId } from "../src/lib/energy/index.js";
 import {
   AiSettingsUnavailableError,
   type AskDeps,
@@ -72,8 +79,8 @@ import {
   type ProviderConfig,
   resolveModelFor,
 } from "../src/server/ai/index.js";
-import { summarizeBench } from "../src/server/coach/bench.js";
 import { type AskModel, generateDebrief } from "../src/server/coach/generate.js";
+import { matchStatsFrom } from "../src/server/coach/match-stats.js";
 import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt.js";
 import {
   createQuotaRefund,
@@ -91,6 +98,7 @@ import {
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
+import { DEFAULT_TIER, loadBench, loadProfile } from "./_lib/coach-context.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -106,9 +114,6 @@ const MAX_TOKENS = 2000;
 
 /** Marge sous `maxDuration` : mieux vaut un 502 propre qu'un timeout de plateforme. */
 const MODEL_TIMEOUT_MS = 45_000;
-
-/** Palier retenu quand le joueur n'a aucune passe : le premier du benchmark. */
-const DEFAULT_TIER: TierId = "novice";
 
 const usageCountSchema = z.number().int().min(0);
 
@@ -144,8 +149,16 @@ function failWithQuota(error: string, status: number, remaining: number | null):
 /* Entrée                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Ce que la requête demande de débriefer : un texte collé, ou un match importé
+ * dont **le serveur** ira chercher le résumé (SPEC §5 ter bis).
+ */
+type Input =
+  | { readonly kind: "stats"; readonly stats: string }
+  | { readonly kind: "match"; readonly matchId: string };
+
 type BodyResult =
-  | { readonly ok: true; readonly stats: string }
+  | { readonly ok: true; readonly input: Input }
   | { readonly ok: false; readonly response: Response };
 
 function readBody(raw: string): BodyResult {
@@ -174,25 +187,153 @@ function readBody(raw: string): BodyResult {
   const parsed = coachRequestSchema.safeParse(value);
 
   if (!parsed.success) {
-    return { ok: false, response: fail("Colle d'abord les stats de ta partie.", 400) };
+    return {
+      ok: false,
+      response: fail("Colle les stats de ta partie, ou choisis un match importé.", 400),
+    };
   }
-  return { ok: true, stats: parsed.data.stats };
+  return {
+    ok: true,
+    input:
+      "stats" in parsed.data
+        ? { kind: "stats", stats: parsed.data.stats }
+        : { kind: "match", matchId: parsed.data.match_id },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Match importé                                                       */
+/* ------------------------------------------------------------------ */
+
+type UserClient = ReturnType<typeof createClient<Database>>;
+
+const ALREADY_DEBRIEFED = "Ce match a déjà été débriefé.";
+
+const MATCH_UNKNOWN =
+  "Ce match n'est pas dans tes parties importées. Rafraîchis ton compte Riot, puis réessaie.";
+
+type MatchResolution =
+  | { readonly ok: true; readonly stats: string }
+  | { readonly ok: false; readonly response: Response };
+
+/**
+ * Le texte de stats d'un match importé, lu **sous la RLS de l'appelant**.
+ *
+ * Le client utilisateur n'est pas une commodité ici, c'est le contrôle d'accès :
+ * un match qui appartient à quelqu'un d'autre n'est pas « refusé », il est
+ * **invisible**, donc indiscernable d'un match qui n'existe pas. C'est
+ * exactement ce qu'on veut répondre — 404 dans les deux cas, sans dire lequel.
+ * Le `.eq("user_id")` est redondant avec la policy : il est là pour emprunter
+ * l'index et pour que la lecture du code dise ce que la base fait.
+ *
+ * Deux refus de plus, dans l'ordre où ils comptent :
+ *
+ * - **déjà débriefé** (409) — la contrainte d'unicité de la migration 0011 le
+ *   garantit de toute façon à l'insertion ; cette vérification-ci existe pour
+ *   ne pas consommer un quota et un appel au modèle avant d'y arriver. Elle
+ *   rend l'identifiant du debrief existant, pour que l'écran propose de
+ *   l'ouvrir plutôt que d'annoncer un échec ;
+ * - **résumé illisible** (422) — le `payload` est un `jsonb`, Postgres n'en
+ *   garantit que la syntaxe. Un match à moitié lu ne part pas au modèle.
+ */
+async function resolveMatch(
+  client: UserClient,
+  userId: string,
+  matchId: string,
+): Promise<MatchResolution> {
+  // Plusieurs comptes liés peuvent avoir importé la même partie (l'unicité est
+  // par compte lié) : on lit la plus récente plutôt que d'exiger une ligne.
+  const { data: matches, error } = await client
+    .from("imported_matches")
+    .select("payload")
+    .eq("user_id", userId)
+    .eq("match_id", matchId)
+    .order("id", { ascending: false })
+    .limit(1);
+
+  if (error !== null) {
+    console.error("[coach] lecture du match importé en échec", error);
+    return {
+      ok: false,
+      response: fail("Tes matchs importés n'ont pas pu être lus. Réessaie dans un instant.", 503),
+    };
+  }
+
+  const match = matches?.[0] ?? null;
+
+  if (match === null) return { ok: false, response: fail(MATCH_UNKNOWN, 404) };
+
+  const { data: existing, error: existingError } = await client
+    .from("debriefs")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("match_id", matchId)
+    .limit(1);
+
+  if (existingError !== null) {
+    console.error("[coach] lecture du debrief existant en échec", existingError);
+    return {
+      ok: false,
+      response: fail("Tes debriefs n'ont pas pu être lus. Réessaie dans un instant.", 503),
+    };
+  }
+
+  const already = existing?.[0] ?? null;
+
+  if (already !== null) {
+    return {
+      ok: false,
+      response: json({ error: ALREADY_DEBRIEFED, debrief_id: already.id }, 409),
+    };
+  }
+
+  const stats = matchStatsFrom(match.payload);
+
+  if (stats === null) {
+    console.error("[coach] résumé de match hors contrat", { matchId });
+    return {
+      ok: false,
+      response: fail(
+        "Le résumé de ce match n'est plus lisible. Rafraîchis ton compte Riot, ou colle les stats à la main.",
+        422,
+      ),
+    };
+  }
+  return { ok: true, stats };
+}
+
+/**
+ * L'identifiant du debrief déjà posé sur ce match, quand l'insertion a été
+ * refusée par la contrainte d'unicité (course entre deux clics).
+ *
+ * Rend `null` si la relecture échoue : on préfère un 409 sans identifiant à un
+ * message d'erreur qui parlerait d'autre chose que du vrai problème.
+ */
+async function existingDebriefId(
+  client: UserClient,
+  userId: string,
+  matchId: string,
+): Promise<number | null> {
+  const { data, error } = await client
+    .from("debriefs")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("match_id", matchId)
+    .limit(1);
+
+  if (error !== null) return null;
+  return data?.[0]?.id ?? null;
 }
 
 /* ------------------------------------------------------------------ */
 /* Contexte : profil et dernier bench, lus sous RLS                    */
 /* ------------------------------------------------------------------ */
 
-type UserClient = ReturnType<typeof createClient<Database>>;
-
-function toTierId(value: string): TierId | null {
-  return TIER_IDS.find((id) => id === value) ?? null;
-}
-
 /**
- * Le profil et le dernier bench sont du **contexte**, pas des prérequis : une
- * lecture qui échoue dégrade le debrief, elle ne doit pas l'annuler après
- * qu'un incrément de quota a déjà été consommé. D'où le `null` en cas d'échec.
+ * Le profil et le dernier bench sont du **contexte**, pas des prérequis : la
+ * lecture vit dans `./_lib/coach-context.ts`, qui explique pourquoi un échec y
+ * rend `null` plutôt que d'annuler la requête — et pourquoi les deux fonctions
+ * du coach la partagent.
  *
  * Le catalogue de scénarios, lui, est toujours présent : sans bench (donc sans
  * palier mesuré), c'est celui du palier Novice, exactement comme la routine.
@@ -211,57 +352,6 @@ async function loadContext(
   const catalog = scenarioCatalog(bench?.tier ?? DEFAULT_TIER);
 
   return { stats, profile, bench, scenarios: catalog.groups };
-}
-
-async function loadProfile(client: UserClient, userId: string): Promise<CoachContext["profile"]> {
-  const { data, error } = await client
-    .from("profiles")
-    .select("pseudo, rang_valorant, peak, main_agent, objectif, notes_maps")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error !== null || data === null) return null;
-  return {
-    pseudo: data.pseudo,
-    rangValorant: data.rang_valorant,
-    peak: data.peak,
-    mainAgent: data.main_agent,
-    objectif: data.objectif,
-    notesMaps: data.notes_maps,
-  };
-}
-
-async function loadBench(client: UserClient, userId: string): Promise<CoachContext["bench"]> {
-  const { data: run, error } = await client
-    .from("bench_runs")
-    .select("id, date, tier, overall, rank, complete")
-    .eq("user_id", userId)
-    .order("date", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error !== null || run === null) return null;
-
-  const tier = toTierId(run.tier);
-
-  if (tier === null) return null;
-
-  const { data: scores } = await client
-    .from("scenario_scores")
-    .select("scenario, score")
-    .eq("run_id", run.id);
-
-  return summarizeBench(
-    {
-      tier,
-      date: run.date,
-      overall: run.overall,
-      rank: run.rank,
-      complete: run.complete,
-    },
-    scores ?? [],
-  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -314,6 +404,23 @@ export async function POST(request: Request): Promise<Response> {
   const body = readBody(await request.text());
 
   if (!body.ok) return body.response;
+
+  // 2 bis. Débrief d'un match importé (SPEC §5 ter bis) : le texte de stats est
+  //        construit ici, à partir de la base, et jamais reçu du navigateur.
+  //        La lecture passe **avant** la configuration IA et avant le quota :
+  //        un match inconnu ou déjà débriefé ne doit rien coûter à personne.
+  let matchId: string | null = null;
+  let stats: string;
+
+  if (body.input.kind === "stats") {
+    stats = body.input.stats;
+  } else {
+    const resolved = await resolveMatch(userClient, user.id, body.input.matchId);
+
+    if (!resolved.ok) return resolved.response;
+    stats = resolved.stats;
+    matchId = body.input.matchId;
+  }
 
   // 3. Configuration. La service key est requise dans tous les cas : c'est
   //    elle, et elle seule, qui peut lire la clé du fournisseur personnel de
@@ -415,7 +522,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // 6. Contexte puis génération.
-  const context = await loadContext(userClient, user.id, body.stats);
+  const context = await loadContext(userClient, user.id, stats);
 
   let generated: Awaited<ReturnType<typeof generateDebrief>>;
 
@@ -466,14 +573,31 @@ export async function POST(request: Request): Promise<Response> {
     .from("debriefs")
     .insert({
       user_id: user.id,
-      input_raw: body.stats,
+      input_raw: stats,
+      match_id: matchId,
       resume: generated.debrief.resume,
       points_forts: generated.debrief.points_forts,
       axes: generated.debrief.axes,
       focus: generated.debrief.focus,
     })
-    .select("id, date")
+    .select("id, date, match_id")
     .single();
+
+  // Deux clics rapides sur « Débriefer » partent en parallèle : le second se
+  // fait refuser par l'index unique de la migration 0011 (23505). Ce n'est pas
+  // une panne — le debrief demandé existe — donc 409 et l'identifiant de
+  // l'existant, comme au contrôle d'entrée. Le quota, lui, est rendu : cette
+  // requête-ci n'a rien produit.
+  if (insertError?.code === "23505" && matchId !== null) {
+    remaining = await refundQuota(refund, remaining);
+
+    const existing = await existingDebriefId(userClient, user.id, matchId);
+    const body409: Record<string, unknown> = { error: ALREADY_DEBRIEFED };
+
+    if (existing !== null) body409.debrief_id = existing;
+    if (remaining !== null) body409.remaining = remaining;
+    return json(body409, 409);
+  }
 
   if (insertError !== null || row === null) {
     console.error("[coach] enregistrement du debrief en échec", insertError);
@@ -493,6 +617,7 @@ export async function POST(request: Request): Promise<Response> {
     ...generated.debrief,
     id: row.id,
     date: new Date(row.date).toISOString(),
+    match_id: row.match_id,
   };
 
   return json({ debrief: stored, remaining }, 200);

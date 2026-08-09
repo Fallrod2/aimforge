@@ -1,0 +1,114 @@
+/**
+ * Appel de la fonction serverless `POST /api/coach-chat` (SPEC §5 ter bis).
+ *
+ * Jumeau de `./coach-api.ts`, pour la même unique raison : la clé du
+ * fournisseur ne peut pas exister dans un navigateur. La lecture de la
+ * conversation, elle, ne passe pas par ici — elle va directement à Postgres
+ * (`../data/coach-messages.ts`), parce qu'elle n'a besoin d'aucun secret.
+ *
+ * Le JWT de la session est joint à la main (`Authorization: Bearer`) : la
+ * fonction n'est pas Supabase, elle ne reçoit rien automatiquement.
+ */
+
+import {
+  type ChatResponse,
+  chatErrorSchema,
+  chatResponseSchema,
+} from "../../shared/coach-chat-contract";
+import { NO_SESSION_MESSAGE } from "../data/errors";
+import { supabase } from "../supabase/client";
+
+/** Échec d'un message au coach, porteur d'un message destiné à l'écran. */
+export class ChatError extends Error {
+  override readonly name = "ChatError";
+  /** Statut HTTP, ou `0` si la requête n'a jamais abouti. */
+  readonly status: number;
+  /** Messages restants aujourd'hui, quand la fonction l'a dit. */
+  readonly remaining: number | null;
+
+  constructor(message: string, status: number, remaining: number | null = null, cause?: unknown) {
+    super(message, { cause });
+    this.status = status;
+    this.remaining = remaining;
+  }
+
+  /** Le quota du jour est-il épuisé ? L'UI en fait un message, pas une alerte. */
+  get quotaReached(): boolean {
+    return this.status === 429;
+  }
+}
+
+const OFFLINE = "Le coach est injoignable : vérifie ta connexion, puis réessaie.";
+
+const NOT_DEPLOYED =
+  "Le chat n'est pas disponible ici : la fonction `/api/coach-chat` n'est pas servie. En local, lance `bunx vercel dev` plutôt que `bun dev`.";
+
+const UNEXPECTED = "Le coach a renvoyé une réponse inattendue. Réessaie dans un instant.";
+
+/** Le message d'un échec HTTP : celui de la fonction si elle en a donné un. */
+function errorMessage(status: number, body: string): { message: string; remaining: number | null } {
+  try {
+    const parsed = chatErrorSchema.safeParse(JSON.parse(body));
+
+    if (parsed.success) {
+      return { message: parsed.data.error, remaining: parsed.data.remaining ?? null };
+    }
+  } catch {
+    // Corps non-JSON : le 404 servi par Vite en développement, ou une page
+    // d'erreur de plateforme.
+  }
+  return { message: status === 404 ? NOT_DEPLOYED : UNEXPECTED, remaining: null };
+}
+
+/**
+ * Envoie un message au coach sous un debrief. Lève un `ChatError` déjà rédigé
+ * en cas d'échec.
+ *
+ * La réponse porte **les deux** messages enregistrés, pas seulement celle du
+ * coach : rien n'est persisté quand la génération échoue, donc l'écran ne peut
+ * pas ajouter localement ce qu'il vient d'envoyer — il aurait un message
+ * fantôme après chaque panne.
+ */
+export async function requestCoachChat(debriefId: number, message: string): Promise<ChatResponse> {
+  const { data, error } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+
+  if (error !== null || token === undefined) {
+    throw new ChatError(NO_SESSION_MESSAGE, 401, null, error);
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch("/api/coach-chat", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ debrief_id: debriefId, message }),
+    });
+  } catch (cause) {
+    throw new ChatError(OFFLINE, 0, null, cause);
+  }
+
+  const body = await response.text();
+
+  if (!response.ok) {
+    const failure = errorMessage(response.status, body);
+
+    throw new ChatError(failure.message, response.status, failure.remaining);
+  }
+
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(body);
+  } catch (cause) {
+    throw new ChatError(UNEXPECTED, response.status, null, cause);
+  }
+
+  const parsed = chatResponseSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    throw new ChatError(UNEXPECTED, response.status, null, parsed.error);
+  }
+  return parsed.data;
+}

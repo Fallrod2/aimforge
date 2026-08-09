@@ -18,7 +18,7 @@ import { supabase } from "../supabase/client";
 import { DataError, queryError } from "./errors";
 import { currentUserId } from "./session";
 
-const COLUMNS = "id, date, resume, points_forts, axes, focus";
+const COLUMNS = "id, date, resume, points_forts, axes, focus, match_id";
 
 const NOT_FOUND = "Debrief introuvable : il a peut-être déjà été supprimé.";
 
@@ -30,6 +30,8 @@ interface DebriefRow {
   readonly points_forts: unknown;
   readonly axes: unknown;
   readonly focus: string | null;
+  /** Le match importé débriefé, quand le debrief en vient (SPEC §5 ter bis). */
+  readonly match_id: string | null;
 }
 
 function toDebrief(row: DebriefRow): StoredDebrief {
@@ -41,6 +43,7 @@ function toDebrief(row: DebriefRow): StoredDebrief {
     points_forts: row.points_forts,
     axes: row.axes,
     focus: row.focus,
+    match_id: row.match_id,
   });
 
   if (!parsed.success) {
@@ -72,6 +75,40 @@ export async function listDebriefs(limit = 30): Promise<readonly StoredDebrief[]
     throw queryError(error, "Les debriefs n'ont pas pu être chargés.");
   }
   return data.map(toDebrief);
+}
+
+/**
+ * Les matchs importés déjà débriefés : référence du match → identifiant du
+ * debrief (SPEC §5 ter bis).
+ *
+ * Une requête dédiée plutôt qu'un filtrage de `listDebriefs` : la carte Valorant
+ * a besoin de savoir quels matchs porter un badge, pas de leur contenu — et
+ * relire quinze debriefs entiers pour n'en garder que deux colonnes ferait payer
+ * au dashboard une validation qu'il n'utilise pas.
+ *
+ * `limit` couvre largement les quelques parties affichées : le badge ne
+ * concerne que des matchs récents.
+ */
+export async function debriefedMatches(limit = 60): Promise<ReadonlyMap<string, number>> {
+  const userId = await currentUserId();
+  const { data, error } = await supabase
+    .from("debriefs")
+    .select("id, match_id")
+    .eq("user_id", userId)
+    .not("match_id", "is", null)
+    .order("date", { ascending: false })
+    .limit(limit);
+
+  if (error !== null || data === null) {
+    throw queryError(error, "Les debriefs n'ont pas pu être chargés.");
+  }
+
+  const byMatch = new Map<string, number>();
+
+  for (const row of data) {
+    if (row.match_id !== null && !byMatch.has(row.match_id)) byMatch.set(row.match_id, row.id);
+  }
+  return byMatch;
 }
 
 /** Supprime un debrief. Zéro ligne touchée = il n'existe plus (ou n'est pas à nous). */
