@@ -134,6 +134,13 @@ export function modelErrorMessage(error: ModelError, feature: "coach" | "routine
 
   const prefix = "Ta configuration IA personnelle";
 
+  // ChatGPT (abonnement) ne se répare pas en corrigeant une clé : il n'y en a
+  // pas. Un refus d'autorisation veut dire une seule chose, et le message doit
+  // demander exactement ce geste — relier le compte.
+  if (error.kind === "auth" && error.provider === "chatgpt_subscription") {
+    return `Liaison expirée : relie ton compte ChatGPT dans Réglages IA. ${what} n'a pas pu passer par ton abonnement.`;
+  }
+
   switch (error.kind) {
     case "auth":
       return `${prefix} a été refusée : la clé est invalide, expirée, ou n'a pas accès à ce modèle. Corrige-la dans Réglages IA (le quota AimForge reste levé tant qu'une configuration est enregistrée).`;
@@ -161,6 +168,12 @@ export function modelErrorMessage(error: ModelError, feature: "coach" | "routine
  * aucun sens — il y est. Ce qu'il lui faut, c'est le champ à corriger.
  */
 export function modelTestMessage(error: ModelError): string {
+  // Même nuance qu'au-dessus : sur une liaison de compte, il n'y a pas de champ
+  // à corriger — il y a un compte à relier.
+  if (error.kind === "auth" && error.provider === "chatgpt_subscription") {
+    return "Liaison expirée : relie ton compte ChatGPT.";
+  }
+
   switch (error.kind) {
     case "auth":
       return "Refusé : la clé est invalide, expirée, ou n'a pas accès à ce modèle.";

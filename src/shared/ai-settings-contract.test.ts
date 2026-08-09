@@ -7,13 +7,19 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  aiLinkPollResponseSchema,
+  aiLinkStartResponseSchema,
   aiSettingsInputSchema,
   aiSettingsRequestSchema,
   aiSettingsSchema,
   DEFAULT_ANTHROPIC_MODEL,
+  isLinkProvider,
+  KEY_PROVIDERS,
+  MAX_API_KEY_LENGTH,
   PROVIDER_IDS,
   PROVIDERS,
   providerSpec,
+  storedAiSettingsSchema,
 } from "./ai-settings-contract";
 
 const VALID = {
@@ -96,8 +102,58 @@ describe("aiSettingsInputSchema — l'entrée", () => {
   });
 });
 
+describe("aiSettingsInputSchema — la liaison de compte", () => {
+  const LINKED = { provider: "chatgpt_subscription", model: "gpt-5" };
+
+  it("accepte ChatGPT (abonnement) **sans** clé : il n'y en a pas à poser", () => {
+    expect(aiSettingsInputSchema.safeParse(LINKED).success).toBe(true);
+  });
+
+  it("refuse une clé sur ce fournisseur : le navigateur n'a rien à envoyer", () => {
+    // Le cas à ne pas rater : un client qui posterait une clé écraserait la
+    // liaison enregistrée par un secret inutilisable.
+    expect(
+      aiSettingsInputSchema.safeParse({ ...LINKED, api_key: "sk-quelque-chose" }).success,
+    ).toBe(false);
+  });
+
+  it("continue d'exiger la clé partout ailleurs", () => {
+    expect(aiSettingsInputSchema.safeParse({ provider: "mistral", model: "m" }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("storedAiSettingsSchema — la ligne relue par le serveur", () => {
+  it("exige le secret, y compris pour une liaison (il porte les jetons)", () => {
+    expect(
+      storedAiSettingsSchema.safeParse({
+        provider: "chatgpt_subscription",
+        model: "gpt-5",
+        base_url: null,
+        api_key: JSON.stringify({ access_token: "a" }),
+      }).success,
+    ).toBe(true);
+    expect(
+      storedAiSettingsSchema.safeParse({ provider: "chatgpt_subscription", model: "gpt-5" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("ne borne pas la longueur du secret : un groupe de jetons dépasse une clé", () => {
+    expect(
+      storedAiSettingsSchema.safeParse({
+        provider: "chatgpt_subscription",
+        model: "gpt-5",
+        base_url: null,
+        api_key: "j".repeat(MAX_API_KEY_LENGTH * 2),
+      }).success,
+    ).toBe(true);
+  });
+});
+
 describe("aiSettingsRequestSchema", () => {
-  it("n'accepte que les deux actions prévues", () => {
+  it("n'accepte que les actions prévues", () => {
     expect(aiSettingsRequestSchema.safeParse({ action: "test", settings: VALID }).success).toBe(
       true,
     );
@@ -105,6 +161,54 @@ describe("aiSettingsRequestSchema", () => {
       true,
     );
     expect(aiSettingsRequestSchema.safeParse({ action: "drop", settings: VALID }).success).toBe(
+      false,
+    );
+  });
+
+  it("accepte les deux gestes de la liaison, et exige le jeton opaque pour l'attente", () => {
+    expect(aiSettingsRequestSchema.safeParse({ action: "link_start" }).success).toBe(true);
+    expect(aiSettingsRequestSchema.safeParse({ action: "link_poll", handle: "a.b" }).success).toBe(
+      true,
+    );
+    expect(aiSettingsRequestSchema.safeParse({ action: "link_poll" }).success).toBe(false);
+    expect(aiSettingsRequestSchema.safeParse({ action: "link_poll", handle: "" }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("les réponses de liaison ne portent jamais de jeton", () => {
+  it("`link_start` ne rend que de quoi afficher la marche à suivre", () => {
+    const parsed = aiLinkStartResponseSchema.parse({
+      link: {
+        userCode: "ABCD-1234",
+        verificationUri: "https://auth.openai.com/codex/device",
+        expiresIn: 900,
+        handle: "corps.signature",
+        access_token: "fuite",
+        refresh_token: "fuite",
+      },
+    });
+
+    expect(JSON.stringify(parsed)).not.toContain("fuite");
+  });
+
+  it("`link_poll` ne rend qu'un état et, au succès, la configuration publique", () => {
+    const parsed = aiLinkPollResponseSchema.parse({
+      status: "linked",
+      settings: {
+        provider: "chatgpt_subscription",
+        model: "gpt-5",
+        baseUrl: null,
+        updatedAt: "2026-08-09T10:00:00.000Z",
+        hasKey: true,
+        api_key: "fuite",
+      },
+      tokens: { access_token: "fuite" },
+    });
+
+    expect(JSON.stringify(parsed)).not.toContain("fuite");
+    expect(aiLinkPollResponseSchema.safeParse({ status: "attente", settings: null }).success).toBe(
       false,
     );
   });
@@ -133,6 +237,28 @@ describe("PROVIDERS", () => {
     expect(spec.experimental).toBeDefined();
     expect(spec.experimental).toContain("OpenAI");
     expect(spec.experimental).toContain("abonnement");
+  });
+
+  it("fait de ChatGPT (abonnement) le seul fournisseur à liaison de compte", () => {
+    const linked = PROVIDERS.filter((spec) => spec.auth === "account_link").map((spec) => spec.id);
+
+    expect(linked).toEqual(["chatgpt_subscription"]);
+    expect(isLinkProvider("chatgpt_subscription")).toBe(true);
+    expect(isLinkProvider("anthropic")).toBe(false);
+  });
+
+  it("n'annonce plus de champ de clé pour la liaison — il n'y en a plus", () => {
+    const spec = providerSpec("chatgpt_subscription");
+
+    expect(spec.auth).toBe("account_link");
+    expect(spec).not.toHaveProperty("keyLabel");
+    if (spec.auth !== "account_link") return;
+    expect(spec.linkHint).toContain("Aucune clé");
+  });
+
+  it("KEY_PROVIDERS ne garde que ce que la plateforme peut servir", () => {
+    expect(KEY_PROVIDERS.map((spec) => spec.id)).not.toContain("chatgpt_subscription");
+    expect(KEY_PROVIDERS).toHaveLength(PROVIDERS.length - 1);
   });
 
   it("garde le modèle Anthropic de la plateforme comme défaut", () => {

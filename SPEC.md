@@ -101,6 +101,13 @@ clé, avec « Tester la connexion » :
   clé — couvre OpenAI, Ollama distant, vLLM…), Mistral, ChatGPT (subscription)
   — ce dernier marqué Expérimental avec avertissement (dépend de la tolérance
   d'OpenAI, peut cesser de fonctionner).
+- **ChatGPT (subscription) ne prend PAS de clé** : c'est une **liaison de
+  compte** (flux OAuth du Codex CLI, comme engram) — bouton « Lier mon compte
+  ChatGPT », l'utilisateur autorise chez OpenAI, les jetons (accès + refresh)
+  sont stockés côté serveur dans le même champ write-only et rafraîchis par les
+  fonctions ; l'UI affiche « Compte lié » et un bouton « Délier ». Référence
+  d'implémentation : le code engram (`apps/web/src/features/ai/codex-link-*`
+  et son pendant serveur).
 - **Stockage des clés** : côté serveur uniquement, jamais réaffichées après
   enregistrement (write-only pour le client — le même verrou de privilèges de
   colonne que `linked_accounts`), lisibles seulement par les fonctions

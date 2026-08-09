@@ -118,6 +118,17 @@ describe("adminSettingsSaveSchema — cohérence du bloc IA", () => {
     );
     expect(adminSettingsSaveSchema.safeParse({ henrikdevApiKey: "  " }).success).toBe(false);
   });
+
+  it("refuse un fournisseur à liaison de compte : la plateforme n'a pas de compte à lier", () => {
+    // ChatGPT (abonnement) s'autorise depuis le compte d'une personne (SPEC
+    // §5 ter). Posé en configuration plateforme, il n'échouerait qu'au premier
+    // debrief de quelqu'un d'autre — et sans que personne comprenne pourquoi.
+    expect(
+      adminSettingsSaveSchema.safeParse({
+        ai: { provider: "chatgpt_subscription", model: "gpt-5", api_key: "peu-importe" },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("adminSettingsSchema — ce qui sort", () => {

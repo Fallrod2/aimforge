@@ -8,16 +8,26 @@
  */
 
 import { createAnthropicAsk } from "./anthropic.js";
-import { createChatGptAsk } from "./chatgpt.js";
+import { type ChatGptDeps, createChatGptAsk } from "./chatgpt.js";
 import { createChatAsk } from "./openai-compatible.js";
 import type { Ask, ModelRequest, ProviderConfig } from "./port.js";
 
-export function createAsk(config: ProviderConfig, request: ModelRequest): Ask {
+/**
+ * Ce dont un adaptateur peut avoir besoin en plus de sa configuration.
+ *
+ * Un seul en fait usage aujourd'hui — ChatGPT (abonnement), dont les jetons se
+ * rafraîchissent et doivent être réécrits (SPEC §5 ter). Les autres l'ignorent,
+ * et c'est pour cela que le paramètre est facultatif : brancher un fournisseur
+ * à clé ne demande toujours rien de plus qu'une clé.
+ */
+export type AskDeps = ChatGptDeps;
+
+export function createAsk(config: ProviderConfig, request: ModelRequest, deps: AskDeps = {}): Ask {
   switch (config.provider) {
     case "anthropic":
       return createAnthropicAsk(config, request);
     case "chatgpt_subscription":
-      return createChatGptAsk(config, request);
+      return createChatGptAsk(config, request, deps);
     case "openrouter":
     case "mistral":
     case "openai_compatible":
@@ -26,6 +36,16 @@ export function createAsk(config: ProviderConfig, request: ModelRequest): Ask {
 }
 
 export { checkBaseUrl, storedBaseUrl } from "./base-url.js";
+export { linkSecret } from "./codex-handle.js";
+export {
+  DEVICE_AUTH_DISABLED,
+  type LinkDeps,
+  type PollOutcome,
+  pollLink,
+  START_UNAVAILABLE,
+  type StartOutcome,
+  startLink,
+} from "./codex-link.js";
 export {
   type Ask,
   ModelError,

@@ -64,6 +64,7 @@ import type { Database } from "../src/client/supabase/database-types.js";
 import { TIER_IDS, type TierId } from "../src/lib/energy/index.js";
 import {
   AiSettingsUnavailableError,
+  type AskDeps,
   createAsk,
   ModelError,
   modelErrorMessage,
@@ -82,7 +83,7 @@ import {
   type StoredDebrief,
 } from "../src/shared/coach-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
-import { loadAiSettingsWith } from "./_lib/ai-settings.js";
+import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -246,8 +247,8 @@ async function loadBench(client: UserClient, userId: string): Promise<CoachConte
  * (relance corrective comprise) reste dans `generateDebrief`, qui ne sait
  * toujours pas qui répond au bout du fil.
  */
-function askWith(config: ProviderConfig): AskModel {
-  const ask = createAsk(config, { system: COACH_SYSTEM_PROMPT, maxTokens: MAX_TOKENS });
+function askWith(config: ProviderConfig, deps: AskDeps): AskModel {
+  const ask = createAsk(config, { system: COACH_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
 
   return (messages) => ask(messages, MODEL_TIMEOUT_MS);
 }
@@ -377,7 +378,13 @@ export async function POST(request: Request): Promise<Response> {
   let generated: Awaited<ReturnType<typeof generateDebrief>>;
 
   try {
-    generated = await generateDebrief(askWith(config), context);
+    generated = await generateDebrief(
+      // La réécriture des jetons ne concerne que la liaison ChatGPT ; les
+      // adaptateurs à clé l'ignorent. La passer sans condition évite d'avoir à
+      // se rappeler quel fournisseur en a besoin.
+      askWith(config, { persist: persistChatGptTokensWith(service, user.id) }),
+      context,
+    );
   } catch (cause) {
     // Le détail (clé, en-têtes, corps de requête) ne remonte jamais au client :
     // il part dans les logs de la fonction, où il est utile et confiné.

@@ -13,9 +13,13 @@
  */
 
 import {
+  type AiLinkPollResponse,
+  type AiLinkStart,
   type AiSettings,
   type AiSettingsInput,
   type AiTestResponse,
+  aiLinkPollResponseSchema,
+  aiLinkStartResponseSchema,
   aiSettingsErrorSchema,
   aiSettingsResponseSchema,
   aiTestResponseSchema,
@@ -127,4 +131,34 @@ export async function testAiSettings(settings: AiSettingsInput): Promise<AiTestR
 /** Retire la configuration : retour au fournisseur de la plateforme et à son quota. */
 export async function deleteAiSettings(): Promise<void> {
   readSettings(await call("DELETE"));
+}
+
+/* ------------------------------------------------------------------ */
+/* Liaison de compte (ChatGPT abonnement)                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ouvre une demande d'autorisation chez OpenAI et rend de quoi la présenter :
+ * le code à recopier, la page à ouvrir, et un jeton opaque à rendre tel quel à
+ * `pollChatGptLink`. Ce jeton ne porte aucun secret — les jetons de la liaison,
+ * eux, ne quittent jamais le serveur.
+ */
+export async function startChatGptLink(): Promise<AiLinkStart> {
+  const payload = await call("POST", { action: "link_start" });
+  const parsed = aiLinkStartResponseSchema.safeParse(payload);
+
+  if (!parsed.success) throw new AiSettingsError(UNEXPECTED, 200, parsed.error);
+  return parsed.data.link;
+}
+
+/**
+ * Demande où en est l'autorisation. Un seul aller-retour : c'est l'écran qui
+ * décide du rythme et du moment d'arrêter.
+ */
+export async function pollChatGptLink(handle: string): Promise<AiLinkPollResponse> {
+  const payload = await call("POST", { action: "link_poll", handle });
+  const parsed = aiLinkPollResponseSchema.safeParse(payload);
+
+  if (!parsed.success) throw new AiSettingsError(UNEXPECTED, 200, parsed.error);
+  return parsed.data;
 }

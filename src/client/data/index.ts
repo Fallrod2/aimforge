@@ -16,7 +16,9 @@ export {
   AiSettingsError,
   deleteAiSettings,
   getAiSettings,
+  pollChatGptLink,
   saveAiSettings,
+  startChatGptLink,
   testAiSettings,
 } from "./ai-settings";
 export {

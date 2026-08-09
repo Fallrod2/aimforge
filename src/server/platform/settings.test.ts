@@ -162,6 +162,21 @@ describe("resolvePlatformSettings — lignes hors contrat", () => {
     expect(resolved.aiKeySource).toBe("environment");
   });
 
+  it("ignore un fournisseur à liaison de compte : la plateforme n'a personne à lier", () => {
+    // ChatGPT (abonnement) s'autorise depuis le compte d'une personne (SPEC
+    // §5 ter) : la colonne `ai_api_key` de la plateforme ne peut pas porter une
+    // liaison. La ligne est ignorée, et le repli d'environnement reprend — le
+    // comportement d'avant, donc celui qu'on sait juste.
+    const resolved = resolvePlatformSettings(
+      { ...SEEDED, ai_provider: "chatgpt_subscription", ai_model: "gpt-5", ai_api_key: "jetons" },
+      ENV,
+    );
+
+    expect(resolved.storedAi).toBeNull();
+    expect(resolved.ai?.provider).toBe("anthropic");
+    expect(resolved.aiKeySource).toBe("environment");
+  });
+
   it("ignore un `openai_compatible` privé de son URL de base", () => {
     const resolved = resolvePlatformSettings(
       { ...SEEDED, ai_provider: "openai_compatible", ai_model: "gpt-4.1", ai_api_key: "cle" },

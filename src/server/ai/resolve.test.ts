@@ -147,6 +147,32 @@ describe("resolveModelFor — avec configuration personnelle", () => {
   });
 });
 
+describe("resolveModelFor — liaison de compte", () => {
+  it("sert la liaison ChatGPT comme n'importe quelle configuration personnelle", async () => {
+    // La colonne porte ici le groupe de jetons, pas une clé — la résolution ne
+    // le sait pas et n'a pas à le savoir : c'est l'adaptateur qui l'ouvre.
+    const bundle = JSON.stringify({ access_token: "a", refresh_token: "r" });
+    const resolution = await resolveModelFor(
+      loader({
+        provider: "chatgpt_subscription",
+        model: "gpt-5",
+        base_url: null,
+        api_key: bundle,
+        updated_at: "2026-08-09T10:00:00.000Z",
+      }),
+      "user-1",
+      PLATFORM,
+    );
+
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) return;
+    // `source: "user"` est ce qui lève le quota : une liaison paie ses jetons
+    // comme une clé.
+    expect(resolution.config.source).toBe("user");
+    expect(resolution.config.apiKey).toBe(bundle);
+  });
+});
+
 describe("resolveModelFor — lignes hors contrat", () => {
   it("refuse un fournisseur inconnu plutôt que de retomber sur la plateforme", async () => {
     const resolution = await resolveModelFor(

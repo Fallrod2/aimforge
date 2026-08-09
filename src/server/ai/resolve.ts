@@ -18,8 +18,8 @@
 
 import {
   type AiSettings,
-  aiSettingsInputSchema,
   providerSchema,
+  storedAiSettingsSchema,
 } from "../../shared/ai-settings-contract.js";
 import type { ProviderConfig } from "./port.js";
 
@@ -98,11 +98,14 @@ export async function resolveModelFor(
     return { ok: true, config: { source: "platform", ...platform } };
   }
 
-  // Revalidé avec le schéma qui l'a écrit : la contrainte `check` de la base
-  // garantit la liste des fournisseurs, pas la cohérence `base_url` ↔
+  // Revalidé avec le schéma de la ligne stockée — et non celui de la saisie :
+  // en base, `api_key` est toujours présente, y compris pour ChatGPT
+  // (abonnement) où elle porte le groupe de jetons de la liaison, que le
+  // navigateur n'a justement pas le droit d'envoyer. La contrainte `check` de
+  // la base garantit la liste des fournisseurs, pas la cohérence `base_url` ↔
   // fournisseur telle que les adaptateurs l'attendent. Une ligne hors contrat
   // (écrite à la main, ou par une version antérieure) est signalée, pas devinée.
-  const parsed = aiSettingsInputSchema.safeParse({
+  const parsed = storedAiSettingsSchema.safeParse({
     provider: stored.provider,
     model: stored.model,
     base_url: stored.base_url,

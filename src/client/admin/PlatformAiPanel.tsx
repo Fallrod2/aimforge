@@ -19,7 +19,7 @@
  */
 
 import { type FormEvent, useState } from "react";
-import { PROVIDERS, type ProviderId, providerSpec } from "../../shared/ai-settings-contract";
+import { KEY_PROVIDERS, type ProviderId, providerSpec } from "../../shared/ai-settings-contract";
 import { CONTROL_CLASSES, PRIMARY_BUTTON } from "../components/controls";
 import { ProviderCard } from "../components/ProviderCard";
 import { Badge, Feedback, type PanelProps, Section, useSave } from "./panel";
@@ -110,7 +110,10 @@ export function PlatformAiPanel({ settings, onSaved }: PanelProps) {
         <div className="flex flex-col gap-2">
           <span className="text-xs font-medium text-steel-200">Fournisseur</span>
           <div className="grid gap-2 sm:grid-cols-2">
-            {PROVIDERS.map((option) => (
+            {/* Seuls les fournisseurs à clé : une liaison de compte (ChatGPT
+                abonnement) appartient à une personne, et la plateforme n'en a
+                pas à lier au nom de tout le monde. */}
+            {KEY_PROVIDERS.map((option) => (
               <ProviderCard
                 key={option.id}
                 id={option.id}
@@ -179,7 +182,7 @@ export function PlatformAiPanel({ settings, onSaved }: PanelProps) {
 
           <div className="flex flex-col gap-1.5 sm:col-span-2">
             <label htmlFor="admin-ai-key" className="text-xs font-medium text-steel-200">
-              {spec.keyLabel}
+              {spec.auth === "key" ? spec.keyLabel : "Clé d'API"}
             </label>
             <input
               id="admin-ai-key"
@@ -194,8 +197,8 @@ export function PlatformAiPanel({ settings, onSaved }: PanelProps) {
               className={CONTROL_CLASSES}
             />
             <p id="admin-ai-key-hint" className="text-[11px] text-steel-500">
-              {spec.keyHint} Stockée côté serveur et jamais réaffichée, même ici : pour la changer,
-              colle la nouvelle.
+              {spec.auth === "key" ? spec.keyHint : ""} Stockée côté serveur et jamais réaffichée,
+              même ici : pour la changer, colle la nouvelle.
               {!keptKey && settings.hasAiKey
                 ? " Changer de fournisseur demande sa clé — celle qui est enregistrée appartient au précédent."
                 : null}

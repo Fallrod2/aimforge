@@ -15,12 +15,25 @@
  * n'est pas posée, et le secret le plus large du projet n'est pas convoqué
  * pour un formulaire.
  *
- * `POST` fait deux choses selon `action` :
+ * `POST` fait quatre choses selon `action` :
  *
  * - `test` : un mini-appel au fournisseur avec la configuration **fournie**,
  *   sans rien enregistrer. C'est le seul moyen honnête de dire « ta clé
  *   marche » — la valider par sa forme ne prouverait rien ;
- * - `save` : validation Zod, normalisation de l'URL de base, puis écriture.
+ * - `save` : validation Zod, normalisation de l'URL de base, puis écriture ;
+ * - `link_start` et `link_poll` : la **liaison de compte** de ChatGPT
+ *   (abonnement), qui ne prend pas de clé mais une autorisation (SPEC §5 ter).
+ *   Le premier ouvre la demande chez OpenAI et rend le code à saisir ; le
+ *   second attend l'autorisation, échange le code contre des jetons **côté
+ *   serveur**, et les enregistre. Aucun jeton ne revient au navigateur : la
+ *   réponse ne porte qu'un état (en attente / lié / expiré / refusé).
+ *
+ * Une nuance de configuration, depuis cette liaison : la clé de service reste
+ * **facultative** pour tout ce qui touche aux clés collées et pour la liaison
+ * elle-même (l'utilisateur pose son propre secret, ce que les privilèges de
+ * colonne autorisent). Elle devient nécessaire pour *tester* une liaison
+ * existante — il faut relire des jetons que seul `service_role` peut lire. Sans
+ * elle, le test le dit franchement au lieu d'échouer en 42501.
  *
  * Les trois verbes sont exportés nommément (`GET`, `POST`, `DELETE`) : c'est
  * la forme que le runtime Node de Vercel reconnaît comme gestionnaire web. Les
@@ -28,22 +41,39 @@
  */
 
 import {
+  type AskDeps,
   checkBaseUrl,
   createAsk,
+  linkSecret,
   ModelError,
   modelTestMessage,
+  pollLink,
+  startLink,
   storedBaseUrl,
   toPublicSettings,
 } from "../src/server/ai/index.js";
 import {
+  type AiLinkPollResponse,
+  type AiLinkStartResponse,
   type AiSettingsInput,
   type AiSettingsResponse,
   type AiTestResponse,
   aiSettingsRequestSchema,
+  isLinkProvider,
+  providerSchema,
   providerSpec,
 } from "../src/shared/ai-settings-contract.js";
-import { deleteSettings, type PublicRow, readSettings, saveSettings } from "./_lib/ai-settings.js";
+import {
+  deleteSettings,
+  linkChatGptSettings,
+  loadAiSettingsWith,
+  type PublicRow,
+  persistChatGptTokensWith,
+  readSettings,
+  saveSettings,
+} from "./_lib/ai-settings.js";
 import { authenticate, fail, json, readBody } from "./_lib/request.js";
+import { serviceClient } from "./_lib/service.js";
 
 /**
  * Un test de connexion appelle un fournisseur inconnu, potentiellement lent à
@@ -64,6 +94,14 @@ const STORE_FAILED = "Les réglages IA n'ont pas pu être lus. Réessaie dans un
 
 const SAVE_FAILED =
   "Les réglages IA n'ont pas pu être enregistrés. Réessaie ; si cela persiste, recharge la page.";
+
+/**
+ * Le refus d'un geste qui suppose une liaison encore absente. Le message nomme
+ * le geste manquant plutôt que l'état interne : « lie ton compte », pas
+ * « aucune ligne à modifier ».
+ */
+const NOT_LINKED =
+  "Lie d'abord ton compte ChatGPT : sans liaison, il n'y a ni configuration à enregistrer ni abonnement à tester.";
 
 /**
  * La ligne telle qu'elle sort d'ici : jamais la clé, seulement `hasKey`.
@@ -133,12 +171,19 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!body.ok) return body.response;
 
+  // La liaison de compte n'a ni fournisseur à valider ni URL à normaliser :
+  // elle n'a qu'un flux à ouvrir ou à suivre.
+  if (body.value.action === "link_start") return linkStart(auth.userId);
+  if (body.value.action === "link_poll") {
+    return linkPoll(auth.userId, body.value.handle, auth.client);
+  }
+
   const normalized = normalize(body.value.settings);
 
   if (!normalized.ok) return fail(normalized.reason, 400);
 
   if (body.value.action === "test") {
-    return json(await runTest(normalized.input), 200);
+    return json(await runTest(normalized.input, auth.userId), 200);
   }
 
   const saved = await saveSettings(auth.client, auth.userId, normalized.input);
@@ -147,7 +192,70 @@ export async function POST(request: Request): Promise<Response> {
     console.error("[ai-settings] enregistrement en échec", saved.reason);
     return fail(SAVE_FAILED, 503);
   }
+
+  // Rien à modifier et rien à créer : une configuration à liaison qu'on tente
+  // d'enregistrer avant d'avoir lié le compte. Le geste manquant est nommé.
+  if (saved.value === null) return fail(NOT_LINKED, 409);
   return json(present(saved.value), 200);
+}
+
+/* ------------------------------------------------------------------ */
+/* Liaison de compte (ChatGPT abonnement)                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ouvre la demande d'autorisation chez OpenAI.
+ *
+ * Rien à choisir dans le corps de la requête : ChatGPT (abonnement) est le seul
+ * fournisseur à liaison, et un paramètre de plus n'aurait servi qu'à pouvoir se
+ * tromper. La réponse ne porte que ce que l'écran doit afficher — jamais un
+ * jeton, jamais l'identifiant interne de la demande (il voyage scellé).
+ */
+async function linkStart(userId: string): Promise<Response> {
+  const outcome = await startLink(userId, { secret: linkSecret(process.env) });
+
+  if (!outcome.ok) {
+    console.error("[ai-settings] liaison ChatGPT : ouverture refusée", { status: outcome.status });
+    return fail(outcome.reason, outcome.status);
+  }
+  return json({ link: outcome.link } satisfies AiLinkStartResponse, 200);
+}
+
+/**
+ * Suit la demande, et l'enregistre quand elle aboutit.
+ *
+ * L'écriture passe par le JWT de l'appelant : poser son propre secret est ce
+ * que les privilèges de colonne autorisent (migration 0008). Un échec
+ * d'écriture après une autorisation réussie est un vrai problème — on le dit en
+ * 503 plutôt que de rendre « lié » sur une liaison qui n'existe nulle part.
+ */
+async function linkPoll(
+  userId: string,
+  handle: string,
+  client: Parameters<typeof linkChatGptSettings>[0],
+): Promise<Response> {
+  const outcome = await pollLink(userId, handle, { secret: linkSecret(process.env) });
+
+  if (outcome.status !== "linked") {
+    return json({ status: outcome.status, settings: null } satisfies AiLinkPollResponse, 200);
+  }
+
+  const saved = await linkChatGptSettings(client, userId, outcome.bundle);
+
+  if (!saved.ok || saved.value === null) {
+    console.error(
+      "[ai-settings] liaison ChatGPT : enregistrement en échec",
+      saved.ok ? "aucune ligne écrite" : saved.reason,
+    );
+    return fail(
+      "Ton compte ChatGPT a bien autorisé AimForge, mais la liaison n'a pas pu être enregistrée. Réessaie.",
+      503,
+    );
+  }
+  return json(
+    { status: "linked", settings: toPublicSettings(saved.value) } satisfies AiLinkPollResponse,
+    200,
+  );
 }
 
 export async function DELETE(request: Request): Promise<Response> {
@@ -179,8 +287,15 @@ export async function DELETE(request: Request): Promise<Response> {
  * « notre service est cassé », et l'écran aurait affiché le mauvais message
  * pour le mauvais responsable.
  */
-async function runTest(input: AiSettingsInput): Promise<AiTestResponse> {
+async function runTest(input: AiSettingsInput, userId: string): Promise<AiTestResponse> {
   const spec = providerSpec(input.provider);
+  // Sur un fournisseur à liaison, la clé n'est pas dans la requête — elle est en
+  // base, et seule la clé de service peut la relire.
+  const credentials = isLinkProvider(input.provider)
+    ? await linkedCredentials(userId)
+    : { ok: true as const, apiKey: input.api_key ?? "", deps: {} as AskDeps };
+
+  if (!credentials.ok) return { ok: false, message: credentials.message };
 
   try {
     // `createAsk` peut déjà refuser ici (URL de base inutilisable) : le même
@@ -191,9 +306,10 @@ async function runTest(input: AiSettingsInput): Promise<AiTestResponse> {
         provider: input.provider,
         model: input.model,
         baseUrl: input.base_url ?? null,
-        apiKey: input.api_key,
+        apiKey: credentials.apiKey,
       },
       { system: TEST_SYSTEM, maxTokens: TEST_MAX_TOKENS },
+      credentials.deps,
     );
     const answer = await ask([{ role: "user", content: "ok" }], TEST_TIMEOUT_MS);
 
@@ -213,4 +329,50 @@ async function runTest(input: AiSettingsInput): Promise<AiTestResponse> {
       message: "Le test n'a pas pu aboutir. Réessaie dans un instant.",
     };
   }
+}
+
+type Credentials =
+  | { readonly ok: true; readonly apiKey: string; readonly deps: AskDeps }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * Les jetons d'une liaison enregistrée, pour la durée d'un test.
+ *
+ * C'est le seul chemin de ce fichier qui convoque la clé de service, et il ne
+ * peut pas faire autrement : les privilèges de colonne (migration 0008)
+ * réservent la lecture de `api_key` à `service_role`. Le `persist` accompagne
+ * les jetons parce qu'un test peut déclencher un rafraîchissement — le perdre
+ * ferait rafraîchir à chaque test, et la rotation finirait par casser la
+ * liaison.
+ */
+async function linkedCredentials(userId: string): Promise<Credentials> {
+  const service = serviceClient();
+
+  if (service === null) {
+    return {
+      ok: false,
+      message:
+        "Test indisponible ici : le serveur n'est pas configuré pour relire ta liaison (clé de service absente). La liaison, elle, reste enregistrée.",
+    };
+  }
+
+  let stored: Awaited<ReturnType<ReturnType<typeof loadAiSettingsWith>>>;
+
+  try {
+    stored = await loadAiSettingsWith(service)(userId);
+  } catch (cause) {
+    console.error("[ai-settings] lecture de la liaison en échec", cause);
+    return { ok: false, message: "Ta liaison n'a pas pu être lue. Réessaie dans un instant." };
+  }
+
+  const provider = providerSchema.safeParse(stored?.provider);
+
+  if (stored === null || !provider.success || !isLinkProvider(provider.data)) {
+    return { ok: false, message: NOT_LINKED };
+  }
+  return {
+    ok: true,
+    apiKey: stored.api_key,
+    deps: { persist: persistChatGptTokensWith(service, userId) },
+  };
 }

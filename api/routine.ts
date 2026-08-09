@@ -50,6 +50,7 @@ import type { Database } from "../src/client/supabase/database-types.js";
 import { TIER_IDS, type TierId } from "../src/lib/energy/index.js";
 import {
   AiSettingsUnavailableError,
+  type AskDeps,
   createAsk,
   ModelError,
   modelErrorMessage,
@@ -71,7 +72,7 @@ import { scenarioCatalog } from "../src/server/routine/scenarios.js";
 import { coachAxeSchema } from "../src/shared/coach-contract.js";
 import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
-import { loadAiSettingsWith } from "./_lib/ai-settings.js";
+import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -267,8 +268,12 @@ async function loadDebriefs(
  * plutôt qu'un timeout de plateforme. Ce raisonnement vaut pour les cinq
  * fournisseurs, y compris ceux qu'on ne connaît pas.
  */
-function askWith(config: ProviderConfig, budget: ReturnType<typeof startBudget>): AskModel {
-  const ask = createAsk(config, { system: ROUTINE_SYSTEM_PROMPT, maxTokens: MAX_TOKENS });
+function askWith(
+  config: ProviderConfig,
+  budget: ReturnType<typeof startBudget>,
+  deps: AskDeps,
+): AskModel {
+  const ask = createAsk(config, { system: ROUTINE_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
 
   return (messages) => {
     const timeout = attemptTimeout(budget.remaining(), BUDGET_CALL_CAP_MS, BUDGET_CALL_FLOOR_MS);
@@ -407,7 +412,14 @@ export async function POST(request: Request): Promise<Response> {
   let generated: Awaited<ReturnType<typeof generateRoutine>>;
 
   try {
-    generated = await generateRoutine(askWith(config, budget), context, allowed);
+    generated = await generateRoutine(
+      // La réécriture des jetons ne concerne que la liaison ChatGPT ; les
+      // adaptateurs à clé l'ignorent. La passer sans condition évite d'avoir à
+      // se rappeler quel fournisseur en a besoin.
+      askWith(config, budget, { persist: persistChatGptTokensWith(service, user.id) }),
+      context,
+      allowed,
+    );
   } catch (cause) {
     // Le détail (clé, en-têtes, corps de requête) ne remonte jamais au client :
     // il part dans les logs de la fonction, où il est utile et confiné.

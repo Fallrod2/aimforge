@@ -132,6 +132,12 @@ function storedAi(row: PlatformSettingsRow | null): AdminAiSettings | null {
 
   if (!provider.success) return null;
 
+  // Un fournisseur à liaison de compte (ChatGPT abonnement) appartient à une
+  // personne : la plateforme n'a pas de compte à lier au nom de tout le monde.
+  // L'écran d'administration ne le propose pas ; une ligne qui le porterait
+  // quand même est ignorée, et la plateforme retombe sur l'environnement.
+  if (providerSpec(provider.data).auth === "account_link") return null;
+
   const model = present(row.ai_model) ?? providerSpec(provider.data).defaultModel;
   const baseUrl = present(row.ai_base_url);
 

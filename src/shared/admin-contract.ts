@@ -74,7 +74,22 @@ export const adminAiConfigSchema = z
     api_key: z.string().trim().min(1).max(MAX_API_KEY_LENGTH).optional(),
   })
   .superRefine((value, ctx) => {
-    const needsBaseUrl = providerSpec(value.provider).needsBaseUrl;
+    const spec = providerSpec(value.provider);
+
+    // Un fournisseur à liaison de compte (ChatGPT abonnement) est personnel :
+    // il s'autorise depuis le compte d'une personne, pas depuis un écran
+    // d'administration. Le refuser ici évite une configuration plateforme
+    // impossible à honorer — et qui n'échouerait qu'au premier debrief.
+    if (spec.auth === "account_link") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["provider"],
+        message:
+          "Ce fournisseur se lie à un compte personnel : la plateforme ne peut pas le servir.",
+      });
+    }
+
+    const needsBaseUrl = spec.needsBaseUrl;
     const given = value.base_url ?? "";
 
     if (needsBaseUrl && given === "") {
