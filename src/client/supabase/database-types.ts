@@ -404,6 +404,10 @@ export type Database = {
         Returns: number
       }
       platform_ai_usage_today: { Args: never; Returns: number }
+      refund_ai_usage: {
+        Args: { p_kind: string; p_user_id: string }
+        Returns: number
+      }
     }
     Enums: {
       [_ in never]: never

@@ -2,9 +2,12 @@
  * Résumé du dernier bench pour le prompt du coach. Module **pur** : il
  * s'appuie sur le moteur d'énergie (`src/lib/energy/`) et sur rien d'autre.
  *
- * Le coach n'a pas besoin des 18 scénarios — il a besoin de savoir où le
- * joueur en est (palier, overall, rang) et ce qui coince (les sous-catégories
- * les plus basses). Le reste ne ferait qu'allonger le prompt.
+ * Le coach n'a pas besoin des 18 scores — il a besoin de savoir où le joueur en
+ * est (palier, overall, rang) et ce qui coince (les sous-catégories les plus
+ * basses). Le reste ne ferait qu'allonger le prompt.
+ *
+ * Le palier (`tier`, et pas seulement son libellé) fait partie du résumé depuis
+ * que le coach cite des scénarios : c'est lui qui choisit le catalogue autorisé.
  */
 
 import { computeSubcategories, getTier, type TierId } from "../../lib/energy/index.js";
@@ -48,6 +51,7 @@ export function summarizeBench(
   const subcategories = computeSubcategories(run.tier, scoreMap);
 
   return {
+    tier: run.tier,
     tierLabel: getTier(run.tier).label,
     date: run.date,
     overall: run.overall,

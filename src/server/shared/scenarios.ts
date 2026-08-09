@@ -12,11 +12,30 @@
  *    corrective. Un joueur qui tape « VT Pasu Master » dans KovaaK's ne trouve
  *    rien : une routine qui cite un scénario inexistant n'est pas une routine.
  *
+ * Il vit dans `src/server/shared/` et non plus chez la routine parce que les
+ * **deux** fonctionnalités qui parlent de scénarios en ont besoin : la routine
+ * les prescrit, le coach les recommande dans ses axes. Une génération réelle du
+ * coach a proposé « Close Range Strafe Tracking », « PraFlick » et « Reactive
+ * Tracking » — trois noms qui n'existent nulle part. Un seul catalogue, une
+ * seule police : deux copies auraient dérivé.
+ *
  * La détection repose sur un fait du benchmark Voltaic S5, verrouillé par
  * `scenarios.test.ts` : les 54 scénarios (3 paliers × 18) commencent tous par
  * « VT ». Le marqueur `VT` est donc l'endroit exact où une citation commence —
  * on n'a pas à deviner où elle finit, il suffit de vérifier qu'un nom autorisé
  * commence bien là.
+ *
+ * **La limite de cette police, dite honnêtement** : elle ne voit que ce qui est
+ * annoncé comme un scénario Voltaic. Une invention **sans préfixe VT** —
+ * « PraFlick », « Close Range Strafe Tracking », « scénarios d'éco avec des
+ * armes faibles », toutes relevées dans une vraie génération — passe au travers,
+ * et aucune heuristique raisonnable ne l'attraperait : rien ne distingue
+ * mécaniquement un faux nom de scénario d'un exercice décrit en français, qui
+ * est justement ce qu'on veut autoriser (« échauffement libre », « deathmatch »).
+ * Ce qui combat ces inventions-là, c'est le prompt : la liste exacte est donnée
+ * au modèle, et la consigne lui dit de se rabattre sur le nom de la
+ * sous-catégorie plutôt que d'inventer. La police, elle, garantit le cas
+ * détectable — et `unknownScenarioMentions` a un test qui documente ce trou.
  */
 
 import { listSubcategories, type TierId } from "../../lib/energy/index.js";
@@ -42,6 +61,19 @@ export function scenarioCatalog(tier: TierId): ScenarioCatalog {
   }));
 
   return { names: groups.flatMap((group) => group.scenarios), groups };
+}
+
+/**
+ * Les noms autorisés d'un catalogue déjà groupé.
+ *
+ * Ce qui est montré au modèle, ce sont les **groupes** : c'est eux que le
+ * contexte transporte. Redemander un catalogue au palier pour obtenir la liste
+ * de contrôle ouvrirait la seule faille qui compte ici — une liste montrée et
+ * une liste appliquée qui ne seraient pas la même. On dérive donc la seconde de
+ * la première.
+ */
+export function scenarioNames(groups: readonly ScenarioGroup[]): readonly string[] {
+  return groups.flatMap((group) => group.scenarios);
 }
 
 /**
@@ -96,4 +128,48 @@ export function unknownScenarioMentions(
     unknown.push(excerpt);
   }
   return unknown;
+}
+
+/**
+ * Les scénarios inconnus cités par un ensemble de textes.
+ *
+ * Un scénario peut être cité n'importe où — le titre d'un bloc de routine, le
+ * détail d'un axe de debrief, le conseil final. L'appelant rend **tous** ses
+ * textes, on les relit tous plutôt que de parier sur l'endroit où le modèle a
+ * rangé le nom. Résultat dédupliqué et ordonné par première apparition : c'est
+ * un message destiné au modèle, pas une trace d'audit.
+ */
+export function unknownScenariosInTexts(
+  texts: readonly string[],
+  allowed: readonly string[],
+): readonly string[] {
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+
+  for (const text of texts) {
+    for (const mention of unknownScenarioMentions(text, allowed)) {
+      if (seen.has(mention)) continue;
+      seen.add(mention);
+      unknown.push(mention);
+    }
+  }
+  return unknown;
+}
+
+/** Nombre de scénarios fautifs nommés dans la relance ; au-delà, c'est du bruit. */
+const MAX_NAMED = 4;
+
+/**
+ * La raison du refus, rédigée **pour le modèle** : elle nomme les fautifs et
+ * rappelle où est la liste. Le coach et la routine ont le même besoin et le
+ * même bloc `<scenarios_autorises>` — un seul texte, donc, plutôt que deux qui
+ * dériveraient.
+ */
+export function unknownScenarioReason(unknown: readonly string[]): string {
+  const named = unknown
+    .slice(0, MAX_NAMED)
+    .map((name) => `« ${name} »`)
+    .join(", ");
+
+  return `ces scénarios n'existent pas dans le palier du joueur : ${named} — n'utilise que les noms de <scenarios_autorises>, copiés au mot près`;
 }

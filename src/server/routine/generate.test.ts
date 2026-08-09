@@ -5,9 +5,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { scenarioCatalog } from "../shared/scenarios";
 import { type AskModel, generateRoutine } from "./generate";
 import type { RoutineContext, RoutineMessage } from "./prompt";
-import { scenarioCatalog } from "./scenarios";
 
 const CATALOG = scenarioCatalog("novice");
 const ALLOWED = CATALOG.names;

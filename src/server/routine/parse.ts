@@ -20,7 +20,7 @@
 
 import { type RoutineContent, routineContentSchema } from "../../shared/routine-contract.js";
 import { extractJsonObject, summarizeIssues } from "../coach/parse.js";
-import { unknownScenarioMentions } from "./scenarios.js";
+import { unknownScenarioReason, unknownScenariosInTexts } from "../shared/scenarios.js";
 
 export type RoutineParse =
   | { readonly ok: true; readonly routine: RoutineContent }
@@ -51,21 +51,8 @@ export function unknownScenarios(
   routine: RoutineContent,
   allowed: readonly string[],
 ): readonly string[] {
-  const unknown: string[] = [];
-  const seen = new Set<string>();
-
-  for (const text of routineTexts(routine)) {
-    for (const mention of unknownScenarioMentions(text, allowed)) {
-      if (seen.has(mention)) continue;
-      seen.add(mention);
-      unknown.push(mention);
-    }
-  }
-  return unknown;
+  return unknownScenariosInTexts(routineTexts(routine), allowed);
 }
-
-/** Nombre de scénarios fautifs nommés dans la relance ; au-delà, c'est du bruit. */
-const MAX_NAMED = 4;
 
 /**
  * Le texte brut du modèle → une routine conforme au contrat **et** au palier,
@@ -101,16 +88,6 @@ export function parseRoutine(raw: string, allowed: readonly string[]): RoutinePa
 
   const unknown = unknownScenarios(parsed.data, allowed);
 
-  if (unknown.length > 0) {
-    const named = unknown
-      .slice(0, MAX_NAMED)
-      .map((name) => `« ${name} »`)
-      .join(", ");
-
-    return {
-      ok: false,
-      reason: `ces scénarios n'existent pas dans le palier du joueur : ${named} — n'utilise que les noms de <scenarios_autorises>, copiés au mot près`,
-    };
-  }
+  if (unknown.length > 0) return { ok: false, reason: unknownScenarioReason(unknown) };
   return { ok: true, routine: parsed.data };
 }

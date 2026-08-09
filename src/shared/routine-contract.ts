@@ -129,8 +129,11 @@ export type RoutineResponse = z.infer<typeof routineResponseSchema>;
 /**
  * La réponse d'erreur de `POST /api/routine`.
  *
- * `remaining` n'est renseigné que là où il veut dire quelque chose (429) ;
- * ailleurs, l'appel n'a pas atteint le compteur.
+ * `remaining` n'est renseigné que là où il veut dire quelque chose : le quota
+ * atteint (429), et les échecs qui ont **remboursé** l'incrément (migration
+ * 0010) — le compteur y a bougé, l'écran doit le savoir. Ailleurs, l'appel n'a
+ * pas atteint le compteur, et la clé est absente plutôt que nulle : facultative
+ * ne veut pas dire nullable, un `null` ferait échouer cette relecture.
  */
 export const routineErrorSchema = z.object({
   error: z.string().min(1),

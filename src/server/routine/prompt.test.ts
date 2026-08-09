@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { scenarioCatalog } from "../shared/scenarios";
 import type { RoutineBenchSummary } from "./bench";
 import {
   buildCorrectionMessages,
@@ -9,7 +10,6 @@ import {
   type RoutineDebriefAxes,
   sealText,
 } from "./prompt";
-import { scenarioCatalog } from "./scenarios";
 
 const BENCH: RoutineBenchSummary = {
   tier: "intermediate",

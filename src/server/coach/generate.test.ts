@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { scenarioCatalog } from "../shared/scenarios";
 import { type AskModel, generateDebrief, textOf } from "./generate";
 import type { CoachContext, CoachMessage } from "./prompt";
 
@@ -17,7 +18,22 @@ const DEBRIEF = {
 
 const JSON_TEXT = JSON.stringify(DEBRIEF);
 
-const CONTEXT: CoachContext = { stats: "Ascent 13-11", profile: null, bench: null };
+const CONTEXT: CoachContext = {
+  stats: "Ascent 13-11",
+  profile: null,
+  bench: null,
+  // Sans bench, le palier du joueur est inconnu : c'est la liste Novice qui
+  // fait foi, exactement comme dans `api/coach.ts`.
+  scenarios: scenarioCatalog("novice").groups,
+};
+
+/** Un debrief conforme qui cite un scénario inexistant. */
+function invented(name: string): string {
+  return JSON.stringify({
+    ...DEBRIEF,
+    axes: [{ titre: "Tracking", detail: `Fais 3 runs de ${name}.` }],
+  });
+}
 
 /** Un faux modèle qui déroule des réponses préparées et note ce qu'on lui envoie. */
 function fakeModel(answers: readonly string[]): {
@@ -107,6 +123,46 @@ describe("generateDebrief", () => {
 
     expect(result.ok).toBe(true);
     expect(model.calls[1]?.[2]?.content).toContain("schéma");
+  });
+
+  it("relance sur un scénario inventé, et garde la seconde réponse", async () => {
+    const model = fakeModel([invented("VT Reactive Tracking"), JSON_TEXT]);
+    const result = await generateDebrief(model.ask, CONTEXT);
+
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toBe(2);
+    // La relance nomme le fautif : le modèle sait quoi corriger.
+    expect(model.calls[1]?.[2]?.content).toContain("« VT Reactive Tracking »");
+  });
+
+  it("rend la main après deux inventions : l'appelant en fera un 502", async () => {
+    const model = fakeModel([invented("VT Reactive Tracking"), invented("VT Close Range Strafe")]);
+    const result = await generateDebrief(model.ask, CONTEXT);
+
+    expect(result.ok).toBe(false);
+    expect(result.attempts).toBe(2);
+    expect(model.calls).toHaveLength(2);
+    expect(result.ok || result.reason).toContain("« VT Close Range Strafe »");
+  });
+
+  it("accepte un scénario du palier montré au modèle", async () => {
+    const model = fakeModel([invented("VT Pasu Novice")]);
+    const result = await generateDebrief(model.ask, CONTEXT);
+
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toBe(1);
+  });
+
+  it("contrôle exactement la liste qu'il a montrée, pas une autre", async () => {
+    // Le palier Intermediate est montré : « VT Pasu Intermediate » est légitime,
+    // et « VT Pasu Novice » — d'un autre palier — ne l'est plus.
+    const context: CoachContext = { ...CONTEXT, scenarios: scenarioCatalog("intermediate").groups };
+    const model = fakeModel([invented("VT Pasu Intermediate")]);
+
+    expect((await generateDebrief(model.ask, context)).ok).toBe(true);
+    expect((await generateDebrief(fakeModel([invented("VT Pasu Novice")]).ask, context)).ok).toBe(
+      false,
+    );
   });
 
   it("laisse remonter une panne du modèle plutôt que de la déguiser en debrief", async () => {

@@ -58,7 +58,12 @@ import {
   type ProviderConfig,
   resolveModelFor,
 } from "../src/server/ai/index.js";
-import { evaluateQuota } from "../src/server/coach/quota.js";
+import {
+  createQuotaRefund,
+  evaluateQuota,
+  type QuotaRefund,
+  refundQuota,
+} from "../src/server/coach/quota.js";
 import { attemptTimeout, startBudget } from "../src/server/kovaaks/budget.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import { type RoutineBenchSummary, summarizeBenchForRoutine } from "../src/server/routine/bench.js";
@@ -68,11 +73,12 @@ import {
   type RoutineContext,
   type RoutineDebriefAxes,
 } from "../src/server/routine/prompt.js";
-import { scenarioCatalog } from "../src/server/routine/scenarios.js";
+import { scenarioCatalog } from "../src/server/shared/scenarios.js";
 import { coachAxeSchema } from "../src/shared/coach-contract.js";
 import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
+import { refundAiUsageWith } from "./_lib/ai-usage.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -122,6 +128,20 @@ function json(body: unknown, status: number): Response {
 
 function fail(error: string, status: number): Response {
   return json({ error }, status);
+}
+
+/**
+ * Un échec, avec le quota du jour quand il y en a un à annoncer — c'est-à-dire
+ * après un remboursement, pour que l'écran ne montre pas une routine consommée
+ * qui vient d'être rendue.
+ *
+ * La clé est **omise** plutôt que mise à `null` quand il n'y a rien à compter :
+ * le contrat d'erreur (`routineErrorSchema`) la déclare facultative, pas
+ * nullable. Un `null` ferait échouer la relecture côté client, qui remplacerait
+ * alors le message soigné par son message générique.
+ */
+function failWithQuota(error: string, status: number, remaining: number | null): Response {
+  return remaining === null ? fail(error, status) : json({ error, remaining }, status);
 }
 
 /** Renoncement volontaire faute de temps : distingué d'une panne du modèle. */
@@ -359,7 +379,14 @@ export async function POST(request: Request): Promise<Response> {
   //    sur la clé de la plateforme**. L'incrément et la lecture sont la même
   //    instruction SQL : deux requêtes simultanées ne peuvent pas passer
   //    toutes les deux sur la dernière routine disponible.
+  //
+  //    Ce que l'incrément anticipé ne doit pas faire, en revanche, c'est
+  //    facturer nos propres pannes : si rien n'est persisté au bout du compte,
+  //    on rembourse (`refund`, migration 0010). Le remboursement n'existe que
+  //    sur ce chemin — une configuration personnelle n'a rien incrémenté, il
+  //    n'y a donc rien à lui rendre.
   let remaining: number | null = null;
+  let refund: QuotaRefund | null = null;
 
   if (config.source === "platform") {
     // 5a. Le plafond **global** (SPEC §5 quater), avant le compteur personnel :
@@ -402,6 +429,11 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
     remaining = quota.remaining;
+    refund = createQuotaRefund(
+      quota.remaining,
+      limit,
+      refundAiUsageWith(service, user.id, "routine"),
+    );
   }
 
   // 6. Contexte puis génération.
@@ -424,28 +456,40 @@ export async function POST(request: Request): Promise<Response> {
     // Le détail (clé, en-têtes, corps de requête) ne remonte jamais au client :
     // il part dans les logs de la fonction, où il est utile et confiné.
     console.error("[routine] appel au modèle en échec", cause);
+    // Aucune routine produite : l'incrément n'a plus de contrepartie, on le
+    // rend. Le remboursement ne lève pas et ne change pas le code de retour —
+    // c'est l'erreur d'origine qui explique l'échec, pas l'état du compteur.
+    // Le renoncement au budget en fait partie : le temps manquant est le nôtre.
+    remaining = await refundQuota(refund, remaining);
     if (cause instanceof BudgetExhaustedError) {
-      return fail(
+      return failWithQuota(
         "La génération a pris trop de temps. Réessaie : c'est en général plus rapide.",
         504,
+        remaining,
       );
     }
     if (cause instanceof ModelError) {
       // La rédaction dit **à qui appartient le problème** : une clé personnelle
       // refusée n'est pas une panne d'AimForge, et l'utilisateur est le seul à
       // pouvoir la corriger.
-      return fail(modelErrorMessage(cause, "routine"), modelErrorStatus(cause));
+      return failWithQuota(modelErrorMessage(cause, "routine"), modelErrorStatus(cause), remaining);
     }
-    return fail("La génération est injoignable pour le moment. Réessaie dans un instant.", 502);
+    return failWithQuota(
+      "La génération est injoignable pour le moment. Réessaie dans un instant.",
+      502,
+      remaining,
+    );
   }
 
   if (!generated.ok) {
     console.error(`[routine] sortie hors contrat après ${generated.attempts} tentatives`, {
       reason: generated.reason,
     });
-    return fail(
+    remaining = await refundQuota(refund, remaining);
+    return failWithQuota(
       "La routine rendue n'était pas exploitable, même après relance. Réessaie dans un instant.",
       502,
+      remaining,
     );
   }
 
@@ -465,9 +509,15 @@ export async function POST(request: Request): Promise<Response> {
 
   if (insertError !== null || row === null) {
     console.error("[routine] enregistrement de la routine en échec", insertError);
-    return fail(
-      "La routine a été générée mais n'a pas pu être enregistrée. Ton quota a été consommé : réessaie une fois.",
+    // Générée mais pas enregistrée : l'utilisateur n'a rien, donc la règle du
+    // remboursement s'applique ici comme sur une panne du modèle. Le jeton
+    // dépensé chez le fournisseur, lui, est perdu — c'est notre affaire, pas
+    // celle de son quota.
+    remaining = await refundQuota(refund, remaining);
+    return failWithQuota(
+      "La routine a été générée mais n'a pas pu être enregistrée. Ton quota n'a pas été décompté : réessaie.",
       500,
+      remaining,
     );
   }
 

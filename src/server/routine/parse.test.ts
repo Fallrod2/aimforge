@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { scenarioCatalog } from "../shared/scenarios";
 import { parseRoutine, routineTexts, unknownScenarios } from "./parse";
-import { scenarioCatalog } from "./scenarios";
 
 const ALLOWED = scenarioCatalog("novice").names;
 

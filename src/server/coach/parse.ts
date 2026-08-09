@@ -9,9 +9,22 @@
  * de dépenser une relance sur une réponse dont le contenu était bon. Ce qu'on
  * ne tolère pas, c'est un contenu qui ne respecte pas le contrat : là, la
  * relance corrective a quelque chose à corriger.
+ *
+ * Deux contrôles, donc, dans cet ordre — les mêmes que la routine :
+ *
+ * 1. **la forme** — le schéma du contrat (`coach-contract.ts`) ;
+ * 2. **les scénarios** — chaque nom cité doit exister dans le palier du joueur.
+ *    Un debrief bien formé qui envoie chercher « VT Reactive Tracking » dans
+ *    KovaaK's est bien formé et inapplicable. Le défaut est corrigeable, la
+ *    relance a donc quelque chose à corriger — et le message nomme les fautifs.
+ *
+ * La portée exacte de ce second contrôle est décrite dans
+ * `../shared/scenarios.ts` : il attrape les mentions préfixées « VT », pas les
+ * inventions déguisées en français (« PraFlick »), que seul le prompt combat.
  */
 
 import { type CoachDebrief, coachDebriefSchema } from "../../shared/coach-contract.js";
+import { unknownScenarioReason, unknownScenariosInTexts } from "../shared/scenarios.js";
 
 export type DebriefParse =
   | { readonly ok: true; readonly debrief: CoachDebrief }
@@ -53,8 +66,37 @@ export function summarizeIssues(error: {
     .join(" ; ");
 }
 
-/** Le texte brut du modèle → un debrief conforme au contrat, ou la raison du refus. */
-export function parseDebrief(raw: string): DebriefParse {
+/**
+ * Tous les textes d'un debrief, dans l'ordre de lecture.
+ *
+ * Un scénario peut être cité n'importe où — le résumé, un point fort, le détail
+ * d'un axe, le focus. On les relit donc tous plutôt que de parier sur l'endroit
+ * où le modèle a rangé le nom.
+ */
+export function debriefTexts(debrief: CoachDebrief): readonly string[] {
+  return [
+    debrief.resume,
+    ...debrief.points_forts,
+    ...debrief.axes.flatMap((axe) => [axe.titre, axe.detail]),
+    debrief.focus,
+  ];
+}
+
+/** Les scénarios cités par le debrief qui ne sont pas dans le palier du joueur. */
+export function unknownScenarios(
+  debrief: CoachDebrief,
+  allowed: readonly string[],
+): readonly string[] {
+  return unknownScenariosInTexts(debriefTexts(debrief), allowed);
+}
+
+/**
+ * Le texte brut du modèle → un debrief conforme au contrat **et** au palier, ou
+ * la raison du refus.
+ *
+ * @param allowed Les noms exacts des scénarios du palier du joueur.
+ */
+export function parseDebrief(raw: string, allowed: readonly string[]): DebriefParse {
   const candidate = extractJsonObject(raw);
 
   if (candidate === null) {
@@ -79,5 +121,9 @@ export function parseDebrief(raw: string): DebriefParse {
       reason: `le JSON ne respecte pas le schéma (${summarizeIssues(parsed.error)})`,
     };
   }
+
+  const unknown = unknownScenarios(parsed.data, allowed);
+
+  if (unknown.length > 0) return { ok: false, reason: unknownScenarioReason(unknown) };
   return { ok: true, debrief: parsed.data };
 }

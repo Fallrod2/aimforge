@@ -23,8 +23,8 @@
  * l'applique — l'un sans l'autre ne suffit pas.
  */
 
+import type { ScenarioGroup } from "../shared/scenarios.js";
 import type { RoutineBenchSummary } from "./bench.js";
-import type { ScenarioGroup } from "./scenarios.js";
 
 /** Un message de la conversation, sans dépendance au SDK. */
 export interface RoutineMessage {

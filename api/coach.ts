@@ -75,8 +75,14 @@ import {
 import { summarizeBench } from "../src/server/coach/bench.js";
 import { type AskModel, generateDebrief } from "../src/server/coach/generate.js";
 import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt.js";
-import { evaluateQuota } from "../src/server/coach/quota.js";
+import {
+  createQuotaRefund,
+  evaluateQuota,
+  type QuotaRefund,
+  refundQuota,
+} from "../src/server/coach/quota.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
+import { scenarioCatalog } from "../src/server/shared/scenarios.js";
 import {
   coachRequestSchema,
   MAX_STATS_LENGTH,
@@ -84,6 +90,7 @@ import {
 } from "../src/shared/coach-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
+import { refundAiUsageWith } from "./_lib/ai-usage.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -100,6 +107,9 @@ const MAX_TOKENS = 2000;
 /** Marge sous `maxDuration` : mieux vaut un 502 propre qu'un timeout de plateforme. */
 const MODEL_TIMEOUT_MS = 45_000;
 
+/** Palier retenu quand le joueur n'a aucune passe : le premier du benchmark. */
+const DEFAULT_TIER: TierId = "novice";
+
 const usageCountSchema = z.number().int().min(0);
 
 const JSON_HEADERS: Readonly<Record<string, string>> = {
@@ -114,6 +124,20 @@ function json(body: unknown, status: number): Response {
 
 function fail(error: string, status: number): Response {
   return json({ error }, status);
+}
+
+/**
+ * Un échec, avec le quota du jour quand il y en a un à annoncer — c'est-à-dire
+ * après un remboursement, pour que l'écran ne montre pas un debrief consommé
+ * qui vient d'être rendu.
+ *
+ * La clé est **omise** plutôt que mise à `null` quand il n'y a rien à compter :
+ * le contrat d'erreur (`coachErrorSchema`) la déclare facultative, pas
+ * nullable. Un `null` ferait échouer la relecture côté client, qui remplacerait
+ * alors le message soigné par son message générique.
+ */
+function failWithQuota(error: string, status: number, remaining: number | null): Response {
+  return remaining === null ? fail(error, status) : json({ error, remaining }, status);
 }
 
 /* ------------------------------------------------------------------ */
@@ -169,6 +193,11 @@ function toTierId(value: string): TierId | null {
  * Le profil et le dernier bench sont du **contexte**, pas des prérequis : une
  * lecture qui échoue dégrade le debrief, elle ne doit pas l'annuler après
  * qu'un incrément de quota a déjà été consommé. D'où le `null` en cas d'échec.
+ *
+ * Le catalogue de scénarios, lui, est toujours présent : sans bench (donc sans
+ * palier mesuré), c'est celui du palier Novice, exactement comme la routine.
+ * Mieux vaut la liste du premier palier qu'aucune liste — sans elle, le modèle
+ * n'a plus de noms à citer et se remet à en inventer.
  */
 async function loadContext(
   client: UserClient,
@@ -179,8 +208,9 @@ async function loadContext(
     loadProfile(client, userId),
     loadBench(client, userId),
   ]);
+  const catalog = scenarioCatalog(bench?.tier ?? DEFAULT_TIER);
 
-  return { stats, profile, bench };
+  return { stats, profile, bench, scenarios: catalog.groups };
 }
 
 async function loadProfile(client: UserClient, userId: string): Promise<CoachContext["profile"]> {
@@ -327,7 +357,14 @@ export async function POST(request: Request): Promise<Response> {
   //    sur la clé de la plateforme**. L'incrément et la lecture sont la même
   //    instruction SQL : deux requêtes simultanées ne peuvent pas passer
   //    toutes les deux sur le dernier debrief disponible.
+  //
+  //    Ce que l'incrément anticipé ne doit pas faire, en revanche, c'est
+  //    facturer nos propres pannes : si rien n'est persisté au bout du compte,
+  //    on rembourse (`refund`, migration 0010). Le remboursement n'existe que
+  //    sur ce chemin — une configuration personnelle n'a rien incrémenté, il
+  //    n'y a donc rien à lui rendre.
   let remaining: number | null = null;
+  let refund: QuotaRefund | null = null;
 
   if (config.source === "platform") {
     // 5a. Le plafond **global** (SPEC §5 quater), avant le compteur personnel :
@@ -370,6 +407,11 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
     remaining = quota.remaining;
+    refund = createQuotaRefund(
+      quota.remaining,
+      limit,
+      refundAiUsageWith(service, user.id, "coach"),
+    );
   }
 
   // 6. Contexte puis génération.
@@ -389,22 +431,32 @@ export async function POST(request: Request): Promise<Response> {
     // Le détail (clé, en-têtes, corps de requête) ne remonte jamais au client :
     // il part dans les logs de la fonction, où il est utile et confiné.
     console.error("[coach] appel au modèle en échec", cause);
+    // Aucun debrief produit : l'incrément n'a plus de contrepartie, on le rend.
+    // Le remboursement ne lève pas et ne change pas le code de retour — c'est
+    // l'erreur d'origine qui explique l'échec, pas l'état du compteur.
+    remaining = await refundQuota(refund, remaining);
     if (cause instanceof ModelError) {
       // La rédaction dit **à qui appartient le problème** : une clé personnelle
       // refusée n'est pas une panne d'AimForge, et l'utilisateur est le seul à
       // pouvoir la corriger.
-      return fail(modelErrorMessage(cause, "coach"), modelErrorStatus(cause));
+      return failWithQuota(modelErrorMessage(cause, "coach"), modelErrorStatus(cause), remaining);
     }
-    return fail("Le coach est injoignable pour le moment. Réessaie dans un instant.", 502);
+    return failWithQuota(
+      "Le coach est injoignable pour le moment. Réessaie dans un instant.",
+      502,
+      remaining,
+    );
   }
 
   if (!generated.ok) {
     console.error(`[coach] sortie hors contrat après ${generated.attempts} tentatives`, {
       reason: generated.reason,
     });
-    return fail(
+    remaining = await refundQuota(refund, remaining);
+    return failWithQuota(
       "Le coach n'a pas rendu un debrief exploitable, même après relance. Réessaie dans un instant.",
       502,
+      remaining,
     );
   }
 
@@ -425,9 +477,15 @@ export async function POST(request: Request): Promise<Response> {
 
   if (insertError !== null || row === null) {
     console.error("[coach] enregistrement du debrief en échec", insertError);
-    return fail(
-      "Le debrief a été généré mais n'a pas pu être enregistré. Ton quota a été consommé : réessaie une fois.",
+    // Généré mais pas enregistré : l'utilisateur n'a rien, donc la règle du
+    // remboursement s'applique ici comme sur une panne du modèle. Le jeton
+    // dépensé chez le fournisseur, lui, est perdu — c'est notre affaire, pas
+    // celle de son quota.
+    remaining = await refundQuota(refund, remaining);
+    return failWithQuota(
+      "Le debrief a été généré mais n'a pas pu être enregistré. Ton quota n'a pas été décompté : réessaie.",
       500,
+      remaining,
     );
   }
 

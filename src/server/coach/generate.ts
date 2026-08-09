@@ -13,6 +13,7 @@
  */
 
 import type { CoachDebrief } from "../../shared/coach-contract.js";
+import { scenarioNames } from "../shared/scenarios.js";
 import { parseDebrief } from "./parse.js";
 import {
   buildCoachMessages,
@@ -53,13 +54,17 @@ export async function generateDebrief(
   ask: AskModel,
   context: CoachContext,
 ): Promise<GenerateResult> {
+  // La liste appliquée est **dérivée** de celle qu'on montre au modèle, jamais
+  // recalculée à côté : une liste montrée qui différerait de la liste contrôlée
+  // ferait relancer le modèle sur des noms qu'on lui a nous-mêmes donnés.
+  const allowed = scenarioNames(context.scenarios);
   const first = await ask(buildCoachMessages(context));
-  const parsed = parseDebrief(first);
+  const parsed = parseDebrief(first, allowed);
 
   if (parsed.ok) return { ok: true, debrief: parsed.debrief, attempts: 1 };
 
   const retry = await ask(buildCorrectionMessages(context, first, parsed.reason));
-  const reparsed = parseDebrief(retry);
+  const reparsed = parseDebrief(retry, allowed);
 
   if (reparsed.ok) return { ok: true, debrief: reparsed.debrief, attempts: 2 };
   return { ok: false, reason: reparsed.reason, attempts: 2 };

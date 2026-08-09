@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { listScenarios, TIER_IDS } from "../../lib/energy";
-import { scenarioCatalog, unknownScenarioMentions } from "./scenarios";
+import {
+  scenarioCatalog,
+  scenarioNames,
+  unknownScenarioMentions,
+  unknownScenarioReason,
+  unknownScenariosInTexts,
+} from "./scenarios";
 
 const NOVICE = scenarioCatalog("novice").names;
 
@@ -91,5 +97,68 @@ describe("unknownScenarioMentions", () => {
 
     expect(unknownScenarioMentions(text, NOVICE)).toEqual(["VT Inconnu"]);
     expect(unknownScenarioMentions(text, NOVICE)).toEqual(["VT Inconnu"]);
+  });
+
+  /**
+   * La limite de la police, documentée par un cas réel plutôt que par un
+   * commentaire seul : ces quatre inventions viennent d'un debrief produit en
+   * production. Aucune ne porte le marqueur « VT », donc aucune n'est
+   * détectable — et le test dit `[]` pour que personne ne croie le contraire.
+   * Ce qui les combat est ailleurs : la liste exacte et la consigne de repli
+   * sur la sous-catégorie, dans `../coach/prompt.ts`.
+   */
+  it("ne voit PAS les inventions sans préfixe VT — la limite assumée de la police", () => {
+    const reel = [
+      "Travaille Close Range Strafe Tracking pour tenir la cible de près.",
+      "Ajoute du PraFlick en fin de séance.",
+      "Enchaîne avec Reactive Tracking sur cible lente.",
+      "Fais des scénarios d'éco avec des armes faibles.",
+    ].join("\n");
+
+    expect(unknownScenariosInTexts(reel.split("\n"), NOVICE)).toEqual([]);
+  });
+});
+
+describe("scenarioNames", () => {
+  it("aplatit les groupes dans l'ordre du catalogue", () => {
+    const catalog = scenarioCatalog("advanced");
+
+    expect(scenarioNames(catalog.groups)).toEqual(catalog.names);
+  });
+
+  it("rend une liste vide sur un catalogue vide", () => {
+    expect(scenarioNames([])).toEqual([]);
+  });
+});
+
+describe("unknownScenariosInTexts", () => {
+  it("relit tous les textes, pas seulement le premier", () => {
+    expect(unknownScenariosInTexts(["VT Pasu Novice", "VT Inventé"], NOVICE)).toEqual([
+      "VT Inventé",
+    ]);
+  });
+
+  it("dédoublonne d'un texte à l'autre et garde l'ordre d'apparition", () => {
+    expect(unknownScenariosInTexts(["VT Faux A", "VT Faux B", "VT Faux A"], NOVICE)).toEqual([
+      "VT Faux A",
+      "VT Faux B",
+    ]);
+  });
+});
+
+describe("unknownScenarioReason", () => {
+  it("nomme les fautifs et renvoie à la liste autorisée", () => {
+    const reason = unknownScenarioReason(["VT Faux A", "VT Faux B"]);
+
+    expect(reason).toContain("« VT Faux A »");
+    expect(reason).toContain("« VT Faux B »");
+    expect(reason).toContain("<scenarios_autorises>");
+  });
+
+  it("s'arrête à quatre noms : au-delà, la relance devient du bruit", () => {
+    const reason = unknownScenarioReason(["a", "b", "c", "d", "e"]);
+
+    expect(reason).toContain("« d »");
+    expect(reason).not.toContain("« e »");
   });
 });
