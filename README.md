@@ -14,8 +14,10 @@ Le fil rouge : le bench mesure, les debriefs qualifient, la routine décide quoi
 
 ## Architecture
 
-Application **100 % statique + Supabase**. Il n'y a pas de serveur applicatif à faire tourner : le
-client parle directement à Postgres, et c'est la RLS qui isole les comptes.
+Application **statique + Supabase**, plus une poignée de fonctions serverless pour l'IA. Il n'y a
+pas de serveur applicatif à faire tourner : le client parle directement à Postgres, et c'est la RLS
+qui isole les comptes. Les fonctions (`api/`) n'existent que parce qu'une clé Anthropic ne peut pas
+vivre dans un navigateur.
 
 | Couche       | Choix                                                                       |
 | ------------ | --------------------------------------------------------------------------- |
@@ -23,7 +25,7 @@ client parle directement à Postgres, et c'est la RLS qui isole les comptes.
 | Hébergement  | Vercel (build statique, déploiement automatique au push)                     |
 | Données      | Supabase Postgres via `@supabase/supabase-js`, **RLS stricte** sur toutes les tables |
 | Auth         | Supabase Auth : Discord, Google, email + mot de passe (flux PKCE)            |
-| IA (P3/P4)   | Vercel Functions — seules détentrices de `ANTHROPIC_API_KEY`, JWT + quota vérifiés |
+| IA           | Vercel Functions (`api/`) — seules détentrices de `ANTHROPIC_API_KEY`, JWT + quota vérifiés |
 | Moteur métier| `src/lib/energy/` : lib pure, sans dépendance ni I/O, 100 % testée           |
 
 Le calcul d'une passe (`computeBenchRun`) vit dans la lib pure : l'aperçu live du tracker et
@@ -36,11 +38,22 @@ bun install
 bun dev            # client Vite sur http://localhost:5273
 ```
 
-Rien d'autre : pas de base locale à provisionner, pas de `.env` requis pour le développement. Les
-coordonnées du projet Supabase (URL + clé publiable) sont volontairement en dur dans
-`src/client/supabase/config.ts` — elles sont publiques par conception, ce qui protège les données
+Rien d'autre : pas de base locale à provisionner, pas de `.env` requis pour travailler sur le
+client. Les coordonnées du projet Supabase (URL + clé publiable) sont volontairement en dur dans
+`src/shared/supabase-config.ts` — elles sont publiques par conception, ce qui protège les données
 c'est la RLS. Les vrais secrets (`ANTHROPIC_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) n'existent que
-dans l'environnement Vercel des fonctions serverless.
+dans l'environnement Vercel des fonctions serverless (gabarit : `.env.example`).
+
+**`bun dev` ne sert que le client** : rien ne répond derrière `/api/coach`, et la vue Coach affiche
+l'erreur en conséquence. Pour exercer les fonctions en local :
+
+```sh
+cp .env.example .env.local   # puis remplir les deux clés
+bunx vercel dev --listen 3210
+```
+
+Sans les clés, `POST /api/coach` répond `503 {"error":"IA non configurée"}` — c'est le comportement
+attendu, pas une panne.
 
 ## Commandes
 
@@ -52,6 +65,41 @@ dans l'environnement Vercel des fonctions serverless.
 | `bun run lint`      | `biome check`                                    |
 | `bun run check`     | typecheck + lint + tests (à passer avant commit)  |
 | `bun run build`     | typecheck + build statique dans `dist/client`     |
+| `bunx vercel dev`   | client **+ fonctions `api/`** (nécessite `.env.local`) |
+
+## Coach post-game (`api/coach`)
+
+`POST /api/coach`, `Authorization: Bearer <jwt supabase>`, corps `{ "stats": "…" }` (8 000
+caractères au maximum). Réponse : `{ debrief: { id, date, resume, points_forts[], axes: [{titre,
+detail}], focus }, remaining }`.
+
+La fonction est le seul détenteur des secrets, et le seul endroit du projet où la service key est
+utilisée — uniquement pour incrémenter le quota (5 debriefs / jour / utilisateur, UTC) via
+`public.increment_ai_usage`, dont l'exécution est réservée à `service_role`. Tout le reste (profil,
+dernier bench, écriture du debrief) passe par le JWT de l'appelant, donc sous RLS.
+
+Les schémas Zod du contrat vivent dans `src/shared/coach-contract.ts` : la fonction valide avec eux
+la sortie du modèle, le client valide avec les mêmes ce qu'il reçoit et ce qu'il relit en base. La
+logique testable (prompt, parsing, relance corrective, quota, résumé du bench) est en modules purs
+dans `src/server/coach/`.
+
+Codes de retour : `401` sans JWT valide · `400`/`413` entrée vide ou trop longue · `503` clés
+absentes (`IA non configurée`) · `429` quota atteint · `502` sortie hors contrat après relance.
+La fonction est exportée en `export async function POST(request: Request)` : c'est la seule forme
+que le runtime Node de Vercel traite comme un gestionnaire web (un `export default` reçoit la
+signature historique `(req, res)` et casse à la première requête).
+
+**Pré-remplir le formulaire depuis ailleurs** (un match importé, par exemple) : déposer le texte
+puis naviguer vers `#/coach`. Le message est consommé au montage de la vue, une seule fois.
+
+```ts
+import { setCoachPrefill } from "./coach/prefill";
+
+setCoachPrefill(resumeDuMatch);
+navigate({ view: "coach", runId: null });
+```
+
+`CoachView` accepte aussi une prop `initialStats` pour un usage direct.
 
 ## Base de données
 

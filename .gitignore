@@ -6,6 +6,8 @@ dist
 # Secrets
 .env
 .env.*
+# … sauf le gabarit, qui ne contient que des noms de variables.
+!.env.example
 
 # Reliquat v1 : la base SQLite locale n'est plus écrite (les données vivent dans
 # Supabase depuis P2). La règle reste, **ancrée à la racine** (sinon elle

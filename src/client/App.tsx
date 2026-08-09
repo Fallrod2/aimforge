@@ -14,6 +14,7 @@ import { ComingSoon } from "./app/ComingSoon";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { AuthView } from "./auth/AuthView";
 import { RecoveryView } from "./auth/RecoveryView";
+import { CoachView } from "./coach/CoachView";
 import { DashboardView } from "./dashboard/DashboardView";
 import { HistoryView } from "./history/HistoryView";
 import { LandingView } from "./landing/LandingView";
@@ -93,18 +94,7 @@ function View({ route, navigate }: ViewProps) {
     case "history":
       return <HistoryView focusRunId={route.runId} onFocusRun={focusRun} />;
     case "coach":
-      return (
-        <ComingSoon
-          title="Coach post-game"
-          phase="Module Coach"
-          summary="Colle le tableau de stats d'une partie ; le coach en tire un debrief structuré, relu et rangé avec les précédents."
-          points={[
-            "Ce qui a marché dans la partie, en clair",
-            "Deux ou trois axes de travail concrets, pas des généralités",
-            "Un focus à reporter dans la routine du lendemain",
-          ]}
-        />
-      );
+      return <CoachView />;
     case "routine":
       return (
         <ComingSoon

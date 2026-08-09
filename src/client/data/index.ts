@@ -11,6 +11,7 @@ export {
   listBenchRuns,
   saveBenchRun,
 } from "./bench-runs";
+export { deleteDebrief, listDebriefs } from "./debriefs";
 export { DataError } from "./errors";
 export { getProfile, updateProfile } from "./profile";
 export type {

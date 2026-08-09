@@ -1,0 +1,66 @@
+/**
+ * Génération d'un debrief : un appel au modèle, et **une seule** relance
+ * corrective si la réponse n'entre pas dans le contrat (SPEC §4).
+ *
+ * Le modèle est derrière un port (`AskModel`) plutôt qu'importé : c'est la
+ * seule façon de vérifier la relance sans clé d'API ni réseau — le cas qui
+ * compte (« la première réponse est mauvaise, la seconde est bonne ») est
+ * précisément celui qu'on ne peut pas provoquer sur un vrai modèle.
+ *
+ * Une seule relance, pas une boucle : au-delà, une sortie durablement hors
+ * format est un problème de prompt ou de modèle, pas de chance — et chaque
+ * tentative se paie en latence et en jetons.
+ */
+
+import type { CoachDebrief } from "../../shared/coach-contract";
+import { parseDebrief } from "./parse";
+import {
+  buildCoachMessages,
+  buildCorrectionMessages,
+  type CoachContext,
+  type CoachMessage,
+} from "./prompt";
+
+/** Un bloc de contenu tel que le SDK Anthropic le rend. */
+export interface ModelContentBlock {
+  readonly type: string;
+  readonly text?: string;
+}
+
+/**
+ * Le texte d'une réponse : uniquement les blocs `text`, recollés.
+ *
+ * Les autres types de blocs (réflexion, appel d'outil) n'ont pas à finir dans
+ * le JSON qu'on s'apprête à parser — ce module en rencontrerait si la
+ * configuration du modèle changeait un jour.
+ */
+export function textOf(content: readonly ModelContentBlock[]): string {
+  return content
+    .flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : []))
+    .join("\n")
+    .trim();
+}
+
+/** Le seul contact avec le modèle : une conversation entre, du texte sort. */
+export type AskModel = (messages: readonly CoachMessage[]) => Promise<string>;
+
+export type GenerateResult =
+  | { readonly ok: true; readonly debrief: CoachDebrief; readonly attempts: number }
+  /** `reason` décrit le dernier défaut constaté ; destiné aux logs, pas à l'écran. */
+  | { readonly ok: false; readonly reason: string; readonly attempts: number };
+
+export async function generateDebrief(
+  ask: AskModel,
+  context: CoachContext,
+): Promise<GenerateResult> {
+  const first = await ask(buildCoachMessages(context));
+  const parsed = parseDebrief(first);
+
+  if (parsed.ok) return { ok: true, debrief: parsed.debrief, attempts: 1 };
+
+  const retry = await ask(buildCorrectionMessages(context, first, parsed.reason));
+  const reparsed = parseDebrief(retry);
+
+  if (reparsed.ok) return { ok: true, debrief: reparsed.debrief, attempts: 2 };
+  return { ok: false, reason: reparsed.reason, attempts: 2 };
+}
