@@ -12,7 +12,7 @@
  * droit de connaître le réseau ; ce fichier ne connaît que le vocabulaire.
  */
 
-import type { ProviderId } from "../../shared/ai-settings-contract.js";
+import { DEFAULT_CODEX_MODEL, type ProviderId } from "../../shared/ai-settings-contract.js";
 
 /** Un message de la conversation, sans dépendance à aucun SDK. */
 export interface ModelMessage {
@@ -60,7 +60,16 @@ export type ModelErrorKind =
   | "auth"
   /** Le fournisseur a dit « trop vite » ou « plus de crédit ». */
   | "rate_limit"
-  /** La requête n'a pas abouti dans le temps imparti. */
+  /**
+   * Le modèle n'a pas fini dans le temps imparti — à l'appel **ou** pendant la
+   * lecture de sa réponse.
+   *
+   * La seconde moitié de cette phrase a été ajoutée après coup, et elle est
+   * tout l'intérêt du genre : un modèle lent renvoie `200` puis met une minute
+   * à écrire. Tant que ce cas retombait dans `malformed`, l'utilisateur lisait
+   * « injoignable » ou « réponse illisible » à propos d'un modèle qui
+   * répondait — et cherchait la panne au mauvais endroit.
+   */
   | "timeout"
   /** Injoignable, ou en panne de son côté. */
   | "unreachable"
@@ -75,6 +84,15 @@ export type ModelErrorKind =
    * choisit la suite. Un point d'entrée légitime d'API ne redirige pas.
    */
   | "redirect"
+  /**
+   * Le modèle a répondu, mais son budget de jetons est parti en **raisonnement
+   * interne** : il ne reste rien à lire.
+   *
+   * Distinct de `malformed`, et la distinction est le message : ce modèle
+   * marche, il ne tient simplement pas dans le budget qu'on lui donne. Dire
+   * « réponse illisible » enverrait douter du format.
+   */
+  | "reasoning_budget"
   /** Réponse reçue, mais pas de la forme attendue. */
   | "malformed";
 
@@ -109,12 +127,44 @@ export class ModelError extends Error {
 }
 
 /**
+ * Ce que dit un dépassement de délai, quel que soit le propriétaire de la
+ * configuration.
+ *
+ * Le même texte des deux côtés, et c'est délibéré : la vérité est la même — le
+ * modèle a répondu, trop lentement. Seul le code HTTP diffère
+ * (`modelErrorStatus`), parce que lui désigne un responsable et non un geste.
+ */
+const TIMEOUT_MESSAGE =
+  "Le modèle n'a pas répondu dans le temps imparti. Choisis un modèle plus rapide, ou réessaie.";
+
+/**
+ * Ce que dit un modèle refusé par le back-end Codex.
+ *
+ * Une liaison de compte n'existe qu'en configuration personnelle : ce texte n'a
+ * donc pas de pendant « plateforme ».
+ */
+const CODEX_MODEL_MESSAGE = `Ce modèle n'est pas disponible via ton abonnement ChatGPT. Choisis un modèle Codex (par ex. ${DEFAULT_CODEX_MODEL})`;
+
+/**
+ * Ce que dit un budget parti en raisonnement.
+ *
+ * Même texte des deux côtés, pour la même raison que le dépassement de délai :
+ * le fait est identique, seul le code HTTP désigne un responsable.
+ */
+const REASONING_MESSAGE =
+  "Ce modèle a dépensé son budget en raisonnement interne et n'a rien rendu. Choisis un modèle non-raisonneur, ou un budget plus grand.";
+
+/**
  * La phrase à afficher pour un échec d'appel.
  *
  * Le point important est la **désignation du responsable**. Quand l'appel
  * partait sur la configuration personnelle de l'utilisateur, l'erreur doit le
  * dire : sans cela, une clé expirée ressemble à une panne d'AimForge, et
  * l'utilisateur attend au lieu d'aller réparer ce que lui seul peut réparer.
+ *
+ * Trois genres échappent à cette règle — `timeout`, `reasoning_budget` et le
+ * refus de modèle de l'abonnement ChatGPT : le fait constaté y est le même des
+ * deux côtés, et c'est le code HTTP, pas la phrase, qui désigne le responsable.
  *
  * Fonction pure : c'est elle qu'on teste, pas les `catch` des handlers.
  */
@@ -126,7 +176,9 @@ export function modelErrorMessage(error: ModelError, feature: "coach" | "routine
       case "rate_limit":
         return `${what} est saturé pour le moment. Réessaie dans quelques minutes.`;
       case "timeout":
-        return `${what} a mis trop de temps à répondre. Réessaie : c'est en général plus rapide.`;
+        return TIMEOUT_MESSAGE;
+      case "reasoning_budget":
+        return REASONING_MESSAGE;
       default:
         return `${what} est injoignable pour le moment. Réessaie dans un instant.`;
     }
@@ -141,6 +193,14 @@ export function modelErrorMessage(error: ModelError, feature: "coach" | "routine
     return `Liaison expirée : relie ton compte ChatGPT dans Réglages IA. ${what} n'a pas pu passer par ton abonnement.`;
   }
 
+  // Même raisonnement pour une requête refusée : sur ce back-end, le seul
+  // paramètre que l'utilisateur ait choisi est le modèle, et il n'accepte que
+  // la famille Codex. Le message générique parlait de « clé » et d'« URL de
+  // base » — deux choses qui n'existent pas ici.
+  if (error.kind === "request" && error.provider === "chatgpt_subscription") {
+    return `${CODEX_MODEL_MESSAGE} dans Réglages IA.`;
+  }
+
   switch (error.kind) {
     case "auth":
       return `${prefix} a été refusée : la clé est invalide, expirée, ou n'a pas accès à ce modèle. Corrige-la dans Réglages IA (le quota AimForge reste levé tant qu'une configuration est enregistrée).`;
@@ -151,7 +211,9 @@ export function modelErrorMessage(error: ModelError, feature: "coach" | "routine
     case "request":
       return `${prefix} a été refusée par le fournisseur : le modèle « ${error.provider} » n'accepte pas cette requête. Vérifie l'identifiant du modèle dans Réglages IA.`;
     case "timeout":
-      return `${prefix} n'a pas répondu à temps. Réessaie, ou choisis un modèle plus rapide dans Réglages IA.`;
+      return TIMEOUT_MESSAGE;
+    case "reasoning_budget":
+      return REASONING_MESSAGE;
     case "malformed":
       return `${prefix} a renvoyé une réponse illisible. Ce modèle ne convient peut-être pas : essaie-en un autre dans Réglages IA.`;
     default:
@@ -173,6 +235,9 @@ export function modelTestMessage(error: ModelError): string {
   if (error.kind === "auth" && error.provider === "chatgpt_subscription") {
     return "Liaison expirée : relie ton compte ChatGPT.";
   }
+  if (error.kind === "request" && error.provider === "chatgpt_subscription") {
+    return `${CODEX_MODEL_MESSAGE}.`;
+  }
 
   switch (error.kind) {
     case "auth":
@@ -184,7 +249,9 @@ export function modelTestMessage(error: ModelError): string {
     case "rate_limit":
       return "La clé est acceptée, mais la limite du fournisseur est atteinte (débit ou crédit épuisé). Réessaie plus tard.";
     case "timeout":
-      return "Pas de réponse dans le temps imparti. Le serveur est peut-être lent à démarrer : réessaie une fois.";
+      return TIMEOUT_MESSAGE;
+    case "reasoning_budget":
+      return REASONING_MESSAGE;
     case "malformed":
       return "Le fournisseur a répondu, mais pas de manière exploitable. Ce modèle ne convient probablement pas.";
     default:
@@ -194,7 +261,15 @@ export function modelTestMessage(error: ModelError): string {
 
 /** Le statut HTTP que la fonction serverless doit rendre pour cet échec. */
 export function modelErrorStatus(error: ModelError): number {
-  if (error.kind === "timeout") return 504;
+  // Un dépassement de délai n'est plus un 504 indifférencié. Sur une
+  // configuration personnelle, il est **imputable au choix de modèle** — donc
+  // 409, comme les autres réglages à corriger. Sur celle de la plateforme,
+  // c'est une indisponibilité passagère : 503, comme la saturation.
+  // Idem pour un budget parti en raisonnement : c'est le modèle choisi qui ne
+  // tient pas dans le budget, pas la passerelle qui est en panne.
+  if (error.kind === "timeout" || error.kind === "reasoning_budget") {
+    return error.custom ? 409 : 503;
+  }
   // Une configuration personnelle fautive n'est pas une panne de passerelle :
   // c'est une requête que l'utilisateur doit corriger, et le 409 le dit sans
   // se confondre avec le 401 de session ni le 429 de quota.

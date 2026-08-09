@@ -6,12 +6,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { createChatGptAsk, readResponsesPayload } from "./chatgpt";
+import { createChatGptAsk, isUnsupportedModelRefusal, readResponsesPayload } from "./chatgpt";
 import { OAUTH_TOKEN_URL } from "./codex-oauth";
 import {
   ModelError,
   type ModelRequest,
   modelErrorMessage,
+  modelErrorStatus,
   modelTestMessage,
   type ProviderConfig,
 } from "./port";
@@ -136,6 +137,80 @@ describe("createChatGptAsk", () => {
     await expect(ask([{ role: "user", content: "x" }], 5000)).rejects.toMatchObject({
       kind: "rate_limit",
     });
+  });
+
+  /**
+   * Le corps est celui qu'OpenAI a réellement renvoyé (prod, 09/08/2026) quand
+   * le modèle enregistré était `gpt-5`. L'écran affichait « requête refusée
+   * (400) » — vrai, inutile, et muet sur le seul geste qui répare.
+   */
+  const UNSUPPORTED_BODY =
+    '{"detail":"The \'gpt-5\' model is not supported when using Codex with a ChatGPT account."}';
+
+  it("traduit le refus « modèle non servi par l'abonnement » en geste à faire", async () => {
+    const ask = createChatGptAsk(CONFIG, REQUEST, {
+      fetchImpl: async () => new Response(UNSUPPORTED_BODY, { status: 400 }),
+    });
+    const error = (await ask([{ role: "user", content: "x" }], 5000).catch(
+      (cause) => cause,
+    )) as ModelError;
+
+    expect(error).toBeInstanceOf(ModelError);
+    expect(error.kind).toBe("request");
+    // Une liaison de compte est toujours personnelle : 409, pas 502.
+    expect(modelErrorStatus(error)).toBe(409);
+    expect(modelErrorMessage(error, "coach")).toContain("modèle Codex");
+    expect(modelTestMessage(error)).toContain("abonnement ChatGPT");
+  });
+
+  it("reconnaît le refus sans dépendre de la phrase exacte", () => {
+    expect(isUnsupportedModelRefusal(UNSUPPORTED_BODY)).toBe(true);
+    expect(
+      isUnsupportedModelRefusal('{"error":{"message":"This model is not supported here."}}'),
+    ).toBe(true);
+    // Ce qui n'en est pas : un refus de paramètre, et un corps qui n'est pas du JSON.
+    expect(
+      isUnsupportedModelRefusal('{"detail":"Unsupported parameter: max_output_tokens."}'),
+    ).toBe(false);
+    expect(isUnsupportedModelRefusal("<html>bad request</html>")).toBe(false);
+  });
+
+  /**
+   * La reconnaissance affine le **détail technique** (donc les logs), pas le
+   * genre : un 400 reste `request`, et sur une liaison de compte `request` mène
+   * toujours au même conseil. C'est délibéré — l'utilisateur n'a ni clé ni URL
+   * de base à corriger ici, le modèle est le seul champ qu'il ait rempli.
+   */
+  it("laisse un 400 ordinaire dans le même genre, avec un détail distinct", async () => {
+    const ask = createChatGptAsk(CONFIG, REQUEST, {
+      fetchImpl: async () => new Response('{"detail":"Unsupported parameter"}', { status: 400 }),
+    });
+    const error = (await ask([{ role: "user", content: "x" }], 5000).catch(
+      (cause) => cause,
+    )) as ModelError;
+
+    expect(error.kind).toBe("request");
+    expect(error.message).toContain("requête refusée (400)");
+    expect(error.message).not.toContain("hors famille Codex");
+  });
+
+  it("traite un flux coupé par notre délai comme une lenteur, pas comme une panne", async () => {
+    const ask = createChatGptAsk(CONFIG, REQUEST, {
+      fetchImpl: async () =>
+        new Response(
+          new ReadableStream({
+            pull() {
+              throw new DOMException("trop lent", "TimeoutError");
+            },
+          }),
+        ),
+    });
+    const error = (await ask([{ role: "user", content: "x" }], 5000).catch(
+      (cause) => cause,
+    )) as ModelError;
+
+    expect(error).toBeInstanceOf(ModelError);
+    expect(error.kind).toBe("timeout");
   });
 
   it("signale une réponse illisible plutôt que de rendre du vide", async () => {

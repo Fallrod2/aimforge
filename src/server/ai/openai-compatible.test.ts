@@ -9,11 +9,19 @@
 import { describe, expect, it } from "vitest";
 import {
   chatEndpoint,
+  connectBudget,
   createChatAsk,
   type FetchLike,
   readChatCompletion,
+  spentOnReasoning,
 } from "./openai-compatible";
-import { ModelError, type ModelRequest, type ProviderConfig } from "./port";
+import {
+  ModelError,
+  type ModelRequest,
+  modelErrorMessage,
+  modelErrorStatus,
+  type ProviderConfig,
+} from "./port";
 
 const REQUEST: ModelRequest = { system: "Tu es le coach.", maxTokens: 2000 };
 
@@ -192,6 +200,40 @@ describe("createChatAsk — erreurs traduites", () => {
     });
   });
 
+  /**
+   * Le cas OpenRouter de la production : `200`, puis une lecture du corps qui
+   * dépasse notre budget. Le fournisseur a répondu — le classer en `malformed`
+   * faisait afficher « Le coach est injoignable », ce qui était faux deux fois.
+   */
+  it("distingue un corps trop lent d'un corps illisible", async () => {
+    const stalled = new Response(
+      new ReadableStream({
+        pull() {
+          throw new DOMException("délai de lecture dépassé", "TimeoutError");
+        },
+      }),
+      { status: 200 },
+    );
+    const ask = createChatAsk(MISTRAL, REQUEST, recorder([stalled]).fetch);
+
+    await expect(ask([{ role: "user", content: "x" }], 5000)).rejects.toMatchObject({
+      kind: "timeout",
+      status: 200,
+    });
+  });
+
+  it("garde `malformed` pour un corps qui n'est pas du JSON", async () => {
+    const ask = createChatAsk(
+      MISTRAL,
+      REQUEST,
+      recorder([new Response("<html>", { status: 200 })]).fetch,
+    );
+
+    await expect(ask([{ role: "user", content: "x" }], 5000)).rejects.toMatchObject({
+      kind: "malformed",
+    });
+  });
+
   it("marque `custom: false` pour la configuration de la plateforme", async () => {
     const fake = recorder([new Response("{}", { status: 401 })]);
     const ask = createChatAsk({ ...MISTRAL, source: "platform" }, REQUEST, fake.fetch);
@@ -257,5 +299,117 @@ describe("createChatAsk — redirections", () => {
     expect(error).toBeInstanceOf(ModelError);
     expect((error as ModelError).kind).toBe("redirect");
     expect(fake.calls).toHaveLength(1);
+  });
+});
+
+/**
+ * Un modèle raisonneur (`deepseek/deepseek-v4-flash-0731` en production) rend
+ * un `200` parfaitement formé, mais vide : tout le budget est passé dans
+ * `reasoning`. Confondre ce cas avec « réponse illisible » envoyait chercher
+ * une incompatibilité de format là où il n'y a qu'un budget mal réparti.
+ */
+describe("spentOnReasoning", () => {
+  /** La forme réelle : contenu vide, raisonnement rempli, troncature au plafond. */
+  const REASONED = {
+    choices: [
+      {
+        message: { role: "assistant", content: "", reasoning: "Analysons les scores…" },
+        finish_reason: "length",
+      },
+    ],
+  };
+
+  it("reconnaît un budget parti en raisonnement", () => {
+    expect(spentOnReasoning(REASONED)).toBe(true);
+  });
+
+  it("se contente de la troncature quand le raisonnement n'est pas renvoyé", () => {
+    const hidden = { choices: [{ message: { content: "" }, finish_reason: "length" }] };
+
+    expect(spentOnReasoning(hidden)).toBe(true);
+  });
+
+  it("accepte les autres noms du champ", () => {
+    const deepseek = {
+      choices: [{ message: { content: null, reasoning_content: "…" }, finish_reason: "stop" }],
+    };
+
+    expect(spentOnReasoning(deepseek)).toBe(true);
+  });
+
+  it("ne diagnostique rien quand il y a un texte à lire", () => {
+    const answered = {
+      choices: [{ message: { content: '{"a":1}', reasoning: "…" }, finish_reason: "length" }],
+    };
+
+    expect(spentOnReasoning(answered)).toBe(false);
+  });
+
+  it("ne diagnostique rien sur un vide ordinaire", () => {
+    expect(spentOnReasoning({ choices: [] })).toBe(false);
+    expect(
+      spentOnReasoning({ choices: [{ message: { content: "" }, finish_reason: "stop" }] }),
+    ).toBe(false);
+    expect(spentOnReasoning(null)).toBe(false);
+  });
+
+  it("remonte comme un genre à part, avec un message qui nomme la cause", async () => {
+    const fake = recorder([new Response(JSON.stringify(REASONED), { status: 200 })]);
+    const ask = createChatAsk({ ...MISTRAL, provider: "openrouter" }, REQUEST, fake.fetch);
+    const error = (await ask([{ role: "user", content: "x" }], 5000).catch(
+      (cause) => cause,
+    )) as ModelError;
+
+    expect(error.kind).toBe("reasoning_budget");
+    expect(modelErrorStatus(error)).toBe(409);
+    expect(modelErrorMessage(error, "coach")).toContain("raisonnement interne");
+  });
+});
+
+/**
+ * `reasoning` est un paramètre **d'OpenRouter** : l'envoyer ailleurs, c'est
+ * risquer un 400 sur un appel qui marchait.
+ */
+describe("createChatAsk — désactivation du raisonnement", () => {
+  it("demande à OpenRouter de ne pas raisonner", async () => {
+    const fake = recorder([completion("{}")]);
+    const ask = createChatAsk({ ...MISTRAL, provider: "openrouter" }, REQUEST, fake.fetch);
+
+    await ask([{ role: "user", content: "x" }], 5000);
+    expect(body(fake.calls[0] as { init: RequestInit }).reasoning).toEqual({ effort: "none" });
+  });
+
+  it("ne l'envoie ni à Mistral ni à un serveur OpenAI-compatible", async () => {
+    for (const config of [
+      MISTRAL,
+      { ...MISTRAL, provider: "openai_compatible" as const, baseUrl: "https://api.exemple.com/v1" },
+    ]) {
+      const fake = recorder([completion("{}")]);
+      const ask = createChatAsk(config, REQUEST, fake.fetch);
+
+      await ask([{ role: "user", content: "x" }], 5000);
+      expect(body(fake.calls[0] as { init: RequestInit })).not.toHaveProperty("reasoning");
+    }
+  });
+});
+
+/**
+ * Le partage du délai est de l'arithmétique, et c'est ce qui le rend testable :
+ * la lecture doit recevoir davantage que l'établissement de l'appel, sans que
+ * la somme dépasse le budget que le port a confié à l'adaptateur.
+ */
+describe("connectBudget", () => {
+  it("laisse la plus grosse part à la lecture du corps", () => {
+    for (const total of [5_000, 20_000, 45_000, 48_000]) {
+      const connect = connectBudget(total);
+
+      expect(connect).toBeGreaterThan(0);
+      expect(connect).toBeLessThan(total - connect);
+    }
+  });
+
+  it("reste positif sur un budget minuscule", () => {
+    expect(connectBudget(1)).toBe(1);
+    expect(connectBudget(0)).toBe(1);
   });
 });

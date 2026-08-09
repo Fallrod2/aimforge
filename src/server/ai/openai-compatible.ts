@@ -113,6 +113,62 @@ export function readChatCompletion(body: unknown): string | null {
 }
 
 /* ------------------------------------------------------------------ */
+/* Modèles raisonneurs                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * La réponse est-elle vide **parce que le modèle a raisonné** au lieu de
+ * répondre ?
+ *
+ * Le cas réel : `deepseek/deepseek-v4-flash-0731` répond 200, `content` vide,
+ * `finish_reason: "length"`, et tout le budget passé dans `reasoning`. Un
+ * modèle raisonneur dépense d'abord ses jetons en réflexion interne ; avec les
+ * 2 000 à 3 000 jetons que le coach et la routine accordent, il n'en reste
+ * aucun pour écrire le JSON demandé.
+ *
+ * Sans cette lecture, l'échec ressortait en `malformed` — « ce modèle ne
+ * convient peut-être pas », qui est vrai mais n'explique rien, et surtout
+ * n'indique pas les deux seuls gestes qui marchent : changer de modèle, ou
+ * agrandir le budget.
+ *
+ * Deux indices, et il en faut **un** en plus du contenu vide :
+ *
+ * - des jetons de raisonnement dans la réponse (`reasoning`,
+ *   `reasoning_details`, `reasoning_content` selon les fournisseurs) : preuve
+ *   directe ;
+ * - `finish_reason: "length"` : la réponse a été tronquée par le plafond. Sur
+ *   un contenu vide, cela ne peut vouloir dire qu'une chose — le plafond a été
+ *   atteint **avant** le premier mot de la réponse.
+ *
+ * Fonction pure : elle se teste sur un corps réel, sans réseau.
+ */
+export function spentOnReasoning(body: unknown): boolean {
+  const choices = (body as { choices?: unknown } | null)?.choices;
+
+  if (!Array.isArray(choices) || choices.length === 0) return false;
+
+  const choice = choices[0] as {
+    readonly message?: Record<string, unknown> | null;
+    readonly finish_reason?: unknown;
+  } | null;
+
+  // Un contenu exploitable exclut ce diagnostic : le modèle a bien répondu.
+  if (readChatCompletion(body) !== null) return false;
+
+  const message = choice?.message ?? null;
+  const reasoned =
+    message !== null &&
+    ["reasoning", "reasoning_content", "reasoning_details"].some((field) => {
+      const value = message[field];
+
+      if (typeof value === "string") return value.trim() !== "";
+      return Array.isArray(value) ? value.length > 0 : false;
+    });
+
+  return reasoned || choice?.finish_reason === "length";
+}
+
+/* ------------------------------------------------------------------ */
 /* Appel                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -124,8 +180,28 @@ interface ChatBody {
   readonly messages: readonly { readonly role: string; readonly content: string }[];
   readonly max_tokens?: number;
   readonly max_completion_tokens?: number;
+  readonly reasoning?: { readonly effort: "none" };
   readonly stream: false;
 }
+
+/**
+ * Le paramètre qui demande à un modèle raisonneur de **ne pas** raisonner.
+ *
+ * `reasoning.effort` est un paramètre **d'OpenRouter**, pas de la
+ * spécification `/chat/completions` : c'est la passerelle qui le traduit vers
+ * chaque fournisseur. Il n'est donc envoyé qu'à OpenRouter — un serveur
+ * générique (`openai_compatible`) ou Mistral le refuserait comme un champ
+ * inconnu, et on transformerait un appel qui marche en 400.
+ *
+ * Pourquoi le poser : voir `spentOnReasoning`. Avec 2 000 à 3 000 jetons de
+ * budget, un modèle raisonneur les dépense en réflexion et ne rend rien. Le
+ * coach et la routine ne demandent pas une démonstration, ils demandent un
+ * JSON court — le raisonnement interne n'a rien à y apporter que du silence.
+ * Les modèles dont le fournisseur rend le raisonnement obligatoire ignorent ce
+ * champ ; pour ceux-là, `spentOnReasoning` reste la seule réponse, et elle est
+ * un message, pas une réparation.
+ */
+const NO_REASONING = { effort: "none" } as const;
 
 function buildBody(
   config: ProviderConfig,
@@ -144,6 +220,7 @@ function buildBody(
     ...(tokenField === "max_tokens"
       ? { max_tokens: request.maxTokens }
       : { max_completion_tokens: request.maxTokens }),
+    ...(config.provider === "openrouter" ? { reasoning: NO_REASONING } : {}),
     stream: false,
   };
 }
@@ -164,6 +241,81 @@ function wantsCompletionTokens(status: number, body: string): boolean {
 /** Une réponse de redirection, quelle que soit sa forme (301, 302, 307, 308…). */
 export function isRedirect(status: number): boolean {
   return status >= 300 && status < 400;
+}
+
+/**
+ * Cet échec est-il **notre** délai qui a expiré ?
+ *
+ * `AbortSignal.timeout` lève une `TimeoutError`, `AbortController.abort()` une
+ * `AbortError` : les deux sont notre horloge, pas une panne du fournisseur, et
+ * la nuance décide du message affiché. Exporté parce que l'adaptateur ChatGPT
+ * pose exactement la même question.
+ */
+export function timedOut(cause: unknown): boolean {
+  return cause instanceof Error && /abort|timeout/i.test(cause.name);
+}
+
+/* ------------------------------------------------------------------ */
+/* Partage du délai entre l'appel et la lecture                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Part du délai laissée à l'**établissement** de la réponse (jusqu'aux
+ * en-têtes) ; le reste va à la lecture du corps.
+ *
+ * Le calcul, parce qu'il doit rester vérifiable — et parce qu'un incident réel
+ * l'a rendu nécessaire. Un modèle lent d'OpenRouter (souvent un `:free`) répond
+ * `200` en quelques secondes, puis met une minute à écrire. Avec un délai
+ * unique attaché au `fetch`, l'abandon tombait **pendant la lecture** : le
+ * `response.json()` échouait, l'adaptateur classait cela en `malformed`, et
+ * l'utilisateur lisait « Le coach est injoignable » — trois affirmations
+ * fausses d'affilée.
+ *
+ * Le budget total ne bouge pas (`timeoutMs` reste le contrat du port, et
+ * `maxDuration` reste ce qu'il est : 60 s pour le coach comme pour la routine).
+ * Ce qui change, c'est sa **répartition** : un serveur qui n'a pas rendu ses
+ * en-têtes après 35 % du budget ne les rendra pas, tandis qu'un serveur qui a
+ * commencé à écrire mérite les 65 % restants pour finir. Sur le coach
+ * (`MODEL_TIMEOUT_MS = 45 s`, soit 15 s de marge sous `maxDuration`), cela fait
+ * ~15,7 s pour l'appel et ~29,3 s pour la génération. Aucune addition ne
+ * dépasse `timeoutMs` : la lecture n'a pas un délai à elle, elle a **ce qui
+ * reste** avant la même échéance.
+ */
+const CONNECT_SHARE = 0.35;
+
+/** Le délai accordé à l'établissement de la réponse, pour un budget donné. */
+export function connectBudget(timeoutMs: number): number {
+  return Math.max(1, Math.round(timeoutMs * CONNECT_SHARE));
+}
+
+/**
+ * Une échéance unique, dont l'abandon frappe d'abord l'appel puis la lecture.
+ *
+ * Un seul `AbortController` pour les deux phases : c'est lui qui coupe aussi le
+ * flux du corps, ce qu'un signal rendu au seul `fetch` ne saurait pas faire une
+ * fois les en-têtes reçus.
+ */
+function startDeadline(timeoutMs: number): {
+  readonly signal: AbortSignal;
+  /** Passe à la phase de lecture, avec ce qui reste du budget. */
+  readonly toRead: () => void;
+  readonly done: () => void;
+} {
+  const controller = new AbortController();
+  const deadline = Date.now() + timeoutMs;
+  const arm = (ms: number, message: string): ReturnType<typeof setTimeout> =>
+    setTimeout(() => controller.abort(new DOMException(message, "TimeoutError")), Math.max(0, ms));
+
+  let timer = arm(connectBudget(timeoutMs), "délai d'appel dépassé");
+
+  return {
+    signal: controller.signal,
+    toRead: () => {
+      clearTimeout(timer);
+      timer = arm(deadline - Date.now(), "délai de lecture dépassé");
+    },
+    done: () => clearTimeout(timer),
+  };
 }
 
 function translate(config: ProviderConfig, status: number, body: string): ModelError {
@@ -202,6 +354,7 @@ export function createChatAsk(
     let tokenField: "max_tokens" | "max_completion_tokens" = "max_tokens";
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      const deadline = startDeadline(timeoutMs);
       let response: Response;
 
       try {
@@ -212,13 +365,12 @@ export function createChatAsk(
           // Voir le traitement des 3xx plus bas : l'URL a été vérifiée, la
           // suite d'une chaîne de redirections ne le serait pas.
           redirect: "manual",
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: deadline.signal,
         });
       } catch (cause) {
-        const timedOut = cause instanceof Error && /abort|timeout/i.test(cause.name);
-
+        deadline.done();
         throw new ModelError(
-          timedOut ? "timeout" : "unreachable",
+          timedOut(cause) ? "timeout" : "unreachable",
           config,
           "appel impossible",
           null,
@@ -226,40 +378,72 @@ export function createChatAsk(
         );
       }
 
-      // Une redirection n'est pas suivie, et n'est pas non plus traitée comme
-      // une erreur ordinaire : `checkBaseUrl` a validé **cette** adresse, pas
-      // celle que le serveur distant désignerait ensuite. Sans ce refus, un
-      // hôte public autorisé pourrait renvoyer 302 vers 169.254.169.254 et
-      // faire porter l'appel à notre fonction — la vérification d'URL ne
-      // vaudrait plus que pour le premier maillon de la chaîne.
-      if (isRedirect(response.status)) {
-        throw new ModelError("redirect", config, `redirection ${response.status}`, response.status);
-      }
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-
-        if (attempt === 0 && wantsCompletionTokens(response.status, body)) {
-          tokenField = "max_completion_tokens";
-          continue;
-        }
-        throw translate(config, response.status, body);
-      }
-
-      let payload: unknown;
-
+      // Les en-têtes sont là : la lecture du corps prend le reste du budget.
+      deadline.toRead();
       try {
-        payload = await response.json();
-      } catch (cause) {
-        throw new ModelError("malformed", config, "réponse illisible", response.status, cause);
-      }
+        // Une redirection n'est pas suivie, et n'est pas non plus traitée comme
+        // une erreur ordinaire : `checkBaseUrl` a validé **cette** adresse, pas
+        // celle que le serveur distant désignerait ensuite. Sans ce refus, un
+        // hôte public autorisé pourrait renvoyer 302 vers 169.254.169.254 et
+        // faire porter l'appel à notre fonction — la vérification d'URL ne
+        // vaudrait plus que pour le premier maillon de la chaîne.
+        if (isRedirect(response.status)) {
+          throw new ModelError(
+            "redirect",
+            config,
+            `redirection ${response.status}`,
+            response.status,
+          );
+        }
 
-      const text = readChatCompletion(payload);
+        if (!response.ok) {
+          const body = await response.text().catch(() => "");
 
-      if (text === null) {
-        throw new ModelError("malformed", config, "aucun texte dans la réponse", response.status);
+          if (attempt === 0 && wantsCompletionTokens(response.status, body)) {
+            tokenField = "max_completion_tokens";
+            continue;
+          }
+          throw translate(config, response.status, body);
+        }
+
+        let payload: unknown;
+
+        try {
+          payload = await response.json();
+        } catch (cause) {
+          // La distinction qui manquait : un modèle **trop lent** n'a pas
+          // renvoyé une réponse illisible, il n'a pas fini de la renvoyer. Dire
+          // « illisible » enverrait l'utilisateur changer de modèle pour cause
+          // d'incompatibilité, alors que le sien marche — lentement.
+          throw new ModelError(
+            timedOut(cause) ? "timeout" : "malformed",
+            config,
+            timedOut(cause) ? "lecture interrompue" : "réponse illisible",
+            response.status,
+            cause,
+          );
+        }
+
+        const text = readChatCompletion(payload);
+
+        if (text === null) {
+          // Vide **et** raisonné n'est pas la même chose que vide : le modèle a
+          // fonctionné, il a juste tout dépensé avant d'écrire. Le confondre
+          // avec `malformed` envoyait chercher une incompatibilité de format
+          // là où il n'y a qu'un budget mal réparti.
+          throw spentOnReasoning(payload)
+            ? new ModelError(
+                "reasoning_budget",
+                config,
+                "budget dépensé en raisonnement",
+                response.status,
+              )
+            : new ModelError("malformed", config, "aucun texte dans la réponse", response.status);
+        }
+        return text;
+      } finally {
+        deadline.done();
       }
-      return text;
     }
 
     // Inatteignable : la boucle rend ou lève à chaque tour. Présent pour que

@@ -100,6 +100,26 @@ export type ProviderSpec = KeyProviderSpec | LinkProviderSpec;
  */
 export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
 
+/**
+ * Les modèles que le back-end Codex sert à un abonnement ChatGPT.
+ *
+ * Ce n'est **pas** le catalogue de l'API d'OpenAI, et c'est toute la raison
+ * d'être de cette constante : le back-end refuse par un 400 tout modèle qui
+ * n'appartient pas à la famille Codex (« The 'gpt-5' model is not supported
+ * when using Codex with a ChatGPT account. »). Proposer `gpt-5` en défaut,
+ * comme on le faisait, garantissait un premier appel refusé à qui venait de
+ * lier son compte.
+ *
+ * Il n'existe pas de point d'entrée fiable qui liste ces modèles : la liste est
+ * relevée sur le client officiel (reprise de `codex-constants.ts` du projet
+ * engram, 07/2026). Elle vieillira — d'où le champ resté libre à l'écran. Ce
+ * qu'elle garantit, c'est que la valeur **proposée** est servie aujourd'hui.
+ */
+export const CODEX_MODELS = ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
+
+/** Le modèle proposé à qui vient de lier son abonnement ChatGPT. */
+export const DEFAULT_CODEX_MODEL = "gpt-5.5";
+
 export const PROVIDERS: readonly ProviderSpec[] = [
   {
     id: "anthropic",
@@ -154,8 +174,8 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     id: "chatgpt_subscription",
     label: "ChatGPT (abonnement)",
     hint: "Utilise ton abonnement ChatGPT plutôt qu'une clé d'API facturée à l'usage.",
-    defaultModel: "gpt-5",
-    models: ["gpt-5", "gpt-5-codex"],
+    defaultModel: DEFAULT_CODEX_MODEL,
+    models: CODEX_MODELS,
     needsBaseUrl: false,
     auth: "account_link",
     linkHint:

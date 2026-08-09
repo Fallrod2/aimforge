@@ -49,7 +49,7 @@ import {
   parseTokenBundle,
   serializeTokenBundle,
 } from "./codex-tokens.js";
-import { type FetchLike, isRedirect } from "./openai-compatible.js";
+import { type FetchLike, isRedirect, timedOut } from "./openai-compatible.js";
 import { type Ask, ModelError, type ModelRequest, type ProviderConfig } from "./port.js";
 
 /**
@@ -162,12 +162,70 @@ function textOfResponse(response: unknown): string | null {
   return text === "" ? null : text;
 }
 
-function translate(config: ProviderConfig, status: number): ModelError {
+/**
+ * Le refus « ce modèle n'est pas servi par un abonnement ».
+ *
+ * Le back-end Codex n'accepte que la famille Codex, et le dit dans un corps de
+ * cette forme, relevé en production le 09/08/2026 :
+ *
+ * ```json
+ * {"detail":"The 'gpt-5' model is not supported when using Codex with a ChatGPT account."}
+ * ```
+ *
+ * Pas de liste blanche côté serveur : la famille bouge plus vite que ce
+ * fichier, et refuser nous-mêmes un modèle qu'OpenAI vient d'ouvrir serait pire
+ * que le 400. Ce qu'on fait, c'est **traduire le refus** — le seul geste utile
+ * à l'écran est de changer de modèle, et rien dans « requête refusée (400) » ne
+ * le disait.
+ *
+ * Fonction pure : la reconnaissance se teste sur le corps réel, pas sur un
+ * appel réseau. Volontairement lâche (deux mots, pas une phrase exacte) — c'est
+ * une prose de fournisseur, elle sera réécrite sans préavis.
+ */
+export function isUnsupportedModelRefusal(body: string): boolean {
+  const detail = refusalDetail(body);
+
+  if (detail === null) return false;
+
+  const lowered = detail.toLowerCase();
+
+  return lowered.includes("not supported") && lowered.includes("model");
+}
+
+/** Le texte explicatif d'un refus, là où ce back-end le range. */
+function refusalDetail(body: string): string | null {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object") return null;
+
+  const detail = (parsed as { detail?: unknown }).detail;
+
+  if (typeof detail === "string") return detail;
+
+  // Certaines réponses passent par l'emballage `error.message` du reste de
+  // l'API : le refus est le même, la boîte est différente.
+  const message = (parsed as { error?: { message?: unknown } | null }).error?.message;
+
+  return typeof message === "string" ? message : null;
+}
+
+function translate(config: ProviderConfig, status: number, body: string): ModelError {
   // 401 et 403 sont le cas courant, et il a une cause banale : la liaison a été
   // révoquée ou n'est plus honorée. Le geste à faire est de relier son compte.
   if (status === 401 || status === 403)
     return new ModelError("auth", config, "liaison refusée", status);
   if (status === 429) return new ModelError("rate_limit", config, "limite d'abonnement", status);
+  if (status === 400 && isUnsupportedModelRefusal(body)) {
+    // Toujours `request` — donc 409 pour une configuration personnelle, ce
+    // qu'est forcément une liaison de compte. Seule la rédaction change
+    // (`modelErrorMessage`/`modelTestMessage`), et c'est elle qui manquait.
+    return new ModelError("request", config, "modèle hors famille Codex", status);
+  }
   if (status === 400 || status === 404 || status === 422) {
     return new ModelError("request", config, `requête refusée (${status})`, status);
   }
@@ -313,10 +371,8 @@ export function createChatGptAsk(
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (cause) {
-      const timedOut = cause instanceof Error && /abort|timeout/i.test(cause.name);
-
       throw new ModelError(
-        timedOut ? "timeout" : "unreachable",
+        timedOut(cause) ? "timeout" : "unreachable",
         config,
         "appel impossible",
         null,
@@ -337,10 +393,28 @@ export function createChatGptAsk(
         status: response.status,
         body: body.slice(0, 300),
       });
-      throw translate(config, response.status);
+      throw translate(config, response.status, body);
     }
 
-    const raw = await response.text();
+    // Le flux d'évènements peut mettre plus longtemps à s'écouler que l'appel
+    // n'a mis à démarrer, et le `signal` ci-dessus couvre les deux : sans ce
+    // `catch`, un flux trop lent faisait remonter une `TimeoutError` brute, que
+    // les handlers ne savent pas rédiger — ils répondaient 500 au lieu de dire
+    // ce qui s'est passé.
+    let raw: string;
+
+    try {
+      raw = await response.text();
+    } catch (cause) {
+      throw new ModelError(
+        timedOut(cause) ? "timeout" : "unreachable",
+        config,
+        "flux interrompu",
+        response.status,
+        cause,
+      );
+    }
+
     const text = readResponsesPayload(raw);
 
     if (text === null) {

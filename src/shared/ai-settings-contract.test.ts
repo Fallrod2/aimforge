@@ -12,7 +12,9 @@ import {
   aiSettingsInputSchema,
   aiSettingsRequestSchema,
   aiSettingsSchema,
+  CODEX_MODELS,
   DEFAULT_ANTHROPIC_MODEL,
+  DEFAULT_CODEX_MODEL,
   isLinkProvider,
   KEY_PROVIDERS,
   MAX_API_KEY_LENGTH,
@@ -263,5 +265,22 @@ describe("PROVIDERS", () => {
 
   it("garde le modèle Anthropic de la plateforme comme défaut", () => {
     expect(providerSpec("anthropic").defaultModel).toBe(DEFAULT_ANTHROPIC_MODEL);
+  });
+
+  /**
+   * Le back-end Codex refuse par un 400 tout modèle hors de sa famille — c'est
+   * arrivé en production avec `gpt-5`, qui était notre défaut. Ce que ce cas
+   * garde : la valeur **proposée** est servie par ce chemin, et aucune des
+   * suggestions n'est un modèle de l'API publique.
+   */
+  it("ne suggère que des modèles Codex à l'abonnement ChatGPT", () => {
+    const spec = providerSpec("chatgpt_subscription");
+
+    expect(spec.defaultModel).toBe(DEFAULT_CODEX_MODEL);
+    expect(spec.models).toEqual(CODEX_MODELS);
+    expect(spec.models).toContain(spec.defaultModel);
+    // `gpt-5` et `gpt-5-codex` : les deux valeurs que le back-end a refusées.
+    expect(spec.models).not.toContain("gpt-5");
+    expect(spec.models).not.toContain("gpt-5-codex");
   });
 });
