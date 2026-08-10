@@ -14,9 +14,25 @@
  *   avant de sauvegarder — c'est lui qui valide, pas l'API ;
  * - **non** : la grille reste dépliée comme avant, et un encart explique ce
  *   que la liaison ferait gagner. On ne bloque rien, on propose.
+ *
+ * V6 (SPEC §5 sexies) enlève le dernier clic du premier cas : l'import **part
+ * tout seul** à l'ouverture, pour le palier affiché, et « Rafraîchir » ne sert
+ * plus qu'à le rejouer. Ce qui ne bouge pas : la sauvegarde reste manuelle, et
+ * rien n'est écrit avant que l'utilisateur ait relu ses chiffres.
+ *
+ * Trois détails d'attente en découlent, tous dictés par le fait qu'on ouvre
+ * désormais sur du réseau plutôt que sur une grille vide :
+ *
+ * - le palier de départ est celui du **dernier bench** (`useStartTier`), et le
+ *   pull l'attend — sinon on importerait Novice avant de découvrir qu'on joue
+ *   Intermediate ;
+ * - pendant le pull, la zone de saisie montre le **squelette** des 9
+ *   sous-catégories du palier plutôt qu'un écran quasi vide ;
+ * - un échec (429 du frein quotidien, source muette) déplie la saisie manuelle
+ *   sous le message : il reste toujours un chemin pour enregistrer sa passe.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { computeBenchRun, getTier, listScenarios, TIER_IDS, type TierId } from "../../lib/energy";
 import { RankBadge } from "../components/RankBadge";
 import { Segmented } from "../components/Segmented";
@@ -28,9 +44,10 @@ import {
   saveBenchRun,
 } from "../data";
 import { rankColorFor } from "../energy-view";
-import { formatEnergy } from "../format";
+import { formatEnergy, scenarioLabel } from "../format";
 import { LinkInvite } from "../linked/LinkInvite";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
+import { awaitsAutoPull, rememberAutoPull, sessionAutoPulls, shouldAutoPull } from "./auto-import";
 import { type BenchDraft, clearTier, draftScores, emptyDraft, setScoreInput } from "./draft";
 import {
   applyImportedScores,
@@ -46,8 +63,17 @@ import {
   NO_IMPORTS,
   withImportState,
 } from "./import";
+import {
+  isManualOpen,
+  type ManualTiers,
+  NO_MANUAL,
+  openManual,
+  opensManualGrid,
+  toggleManual,
+} from "./manual";
 import { ScenarioRow } from "./ScenarioRow";
 import { SummaryPanel } from "./SummaryPanel";
+import { useStartTier } from "./useStartTier";
 
 interface TrackerViewProps {
   /** Ouvre l'historique sur la passe qui vient d'être enregistrée. */
@@ -57,13 +83,23 @@ interface TrackerViewProps {
 const tierOptions = TIER_IDS.map((id) => ({ value: id, label: getTier(id).label }));
 
 export function TrackerView({ onSaved }: TrackerViewProps) {
-  const [tier, setTier] = useState<TierId>("novice");
+  /**
+   * Le palier choisi à la main, `null` tant que l'utilisateur n'a rien choisi :
+   * on affiche alors celui de son dernier bench. Un `useState` initialisé puis
+   * corrigé par un effet ferait clignoter Novice sous quelqu'un qui joue
+   * Intermediate — et surtout, déclencherait un import de trop.
+   */
+  const [chosenTier, setChosenTier] = useState<TierId | null>(null);
+  const start = useStartTier();
+  const tier = chosenTier ?? (start.status === "ready" ? start.tier : "novice");
+
   const [draft, setDraft] = useState<BenchDraft>(emptyDraft);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<BenchRunSummary | null>(null);
 
   const linked = useLinkedAccounts();
+  const accountsKnown = linked.state.status !== "loading";
   const kovaaks =
     linked.state.status === "ready" ? primaryAccount(linked.state.accounts, "kovaaks") : null;
   /**
@@ -71,13 +107,42 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
    * changement de palier et annoncerait un import au-dessus d'une grille vide.
    */
   const [imports, setImports] = useState<ImportStates>(NO_IMPORTS);
-  /** La grille manuelle a-t-elle été ouverte à la main ? */
-  const [manualOpen, setManualOpen] = useState(false);
+  /**
+   * La grille manuelle dépliée, palier par palier — comme la saisie et comme
+   * l'état d'import, et pour la même raison : deux pulls peuvent être en vol en
+   * même temps, et celui du palier qu'on a quitté n'a pas à décider de ce qui
+   * s'affiche sur celui qu'on regarde (`manual.ts`).
+   */
+  const [manual, setManual] = useState<ManualTiers>(NO_MANUAL);
+  const manualOpen = isManualOpen(manual, tier);
 
   const importState = importStateFor(imports, tier);
   const importedTier = isImportedTier(imports, tier);
+  const tierEmpty = Object.keys(draft[tier]).length === 0;
+  /**
+   * Le squelette tient la place de la grille tant qu'on attend des chiffres :
+   * comptes liés encore inconnus, ou import en route sur un palier encore vide
+   * (`awaitsAutoPull`). Deux choses qu'il ne fait jamais : escamoter des champs
+   * déjà remplis — un « Rafraîchir » ne retire pas à l'écran ce que
+   * l'utilisateur est en train de lire —, et faire attendre quelqu'un dont plus
+   * rien n'arrivera tout seul (import abouti, échoué, ou saisie effacée).
+   *
+   * La mémoire d'onglet est lue pendant le rendu : elle n'est écrite que juste
+   * avant `setImports(LOADING)`, donc aucun rendu ne la voit changer sans que
+   * l'état d'import change dans la foulée.
+   *
+   * Il s'affiche aussi le temps de savoir s'il y a un compte lié, donc y compris
+   * à quelqu'un qui n'en a pas. C'est assumé : on ne peut pas le savoir avant, et
+   * le squelette montre les vrais noms de scénarios du palier, aux places exactes
+   * qu'ils occuperont — il se change en grille, il ne clignote pas. L'éviter
+   * demanderait de repartir sur un écran vide, c'est-à-dire de rendre l'attente
+   * plus longue pour le cas que V6 vient d'optimiser.
+   */
+  const showSkeleton =
+    !accountsKnown ||
+    (kovaaks !== null && tierEmpty && awaitsAutoPull(importState, sessionAutoPulls(), tier));
   // Sans compte lié, il n'y a rien à replier : la grille est le seul chemin.
-  const showGrid = kovaaks === null || manualOpen;
+  const showGrid = !showSkeleton && (kovaaks === null || manualOpen);
 
   const { scores, invalid } = useMemo(() => draftScores(draft, tier), [draft, tier]);
   const computed = useMemo(() => computeBenchRun(tier, scores), [tier, scores]);
@@ -118,23 +183,52 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
    * La grille s'ouvre à l'arrivée, toujours : l'import ne sauvegarde rien, et
    * un écran qui annoncerait « 18 scores importés » sans les montrer
    * demanderait de faire confiance à une source non officielle les yeux fermés.
+   * Elle s'ouvre aussi sur un échec — c'est le repli manuel (`auto-import.ts`).
    */
-  async function runImport(account: LinkedAccount, target: TierId) {
+  const runImport = useCallback(async (account: LinkedAccount, target: TierId) => {
     setImports((current) => withImportState(current, target, LOADING));
     setSaved(null);
     setError(null);
+
+    let settled: ImportState;
+
     try {
       const result = await importKovaaksScores(account.externalId, target);
 
       setDraft((current) => applyImportedScores(current, target, result.scores));
-      setImports((current) => withImportState(current, target, importSucceeded(result)));
-      setManualOpen(true);
+      settled = importSucceeded(result);
     } catch (cause) {
-      const failure = importFailed(cause instanceof Error ? cause.message : "L'import a échoué.");
-
-      setImports((current) => withImportState(current, target, failure));
+      settled = importFailed(cause instanceof Error ? cause.message : "L'import a échoué.");
     }
-  }
+    setImports((current) => withImportState(current, target, settled));
+    // `target`, pas le palier affiché : une réponse en retard n'ouvre que sa
+    // propre grille, jamais celle que l'utilisateur vient de replier ailleurs.
+    if (opensManualGrid(settled)) setManual((current) => openManual(current, target));
+  }, []);
+
+  /**
+   * Le pull automatique : l'import du palier affiché, sans clic, une fois par
+   * palier et par session d'onglet.
+   *
+   * La marque est posée **avant** la requête, dans une mémoire de module que
+   * ni le double montage de `StrictMode` ni un aller-retour par le tableau de
+   * bord ne remettent à zéro : deux imports pour un écran, ce sont deux unités
+   * du quota quotidien de l'utilisateur (SPEC §5 bis, 20/jour).
+   */
+  useEffect(() => {
+    if (kovaaks === null) return;
+    const context = {
+      tier,
+      hasAccount: true,
+      ready: start.status === "ready",
+      pulls: sessionAutoPulls(),
+      state: importState,
+    };
+
+    if (!shouldAutoPull(context)) return;
+    rememberAutoPull(tier);
+    void runImport(kovaaks, tier);
+  }, [kovaaks, tier, start.status, importState, runImport]);
 
   function reset() {
     setSaved(null);
@@ -152,10 +246,15 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           <p className="mb-2 text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
             Palier
           </p>
-          <Segmented label="Palier" options={tierOptions} value={tier} onChange={setTier} />
+          <Segmented label="Palier" options={tierOptions} value={tier} onChange={setChosenTier} />
         </div>
 
-        <SummaryPanel tier={tier} computed={computed} scenarioCount={scenarios.length} />
+        <SummaryPanel
+          tier={tier}
+          computed={computed}
+          scenarioCount={scenarios.length}
+          onTierChange={setChosenTier}
+        />
 
         <div className="hidden flex-col gap-3 lg:flex">
           <SaveActions
@@ -172,17 +271,19 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
       <div className="flex flex-col gap-8 lg:order-1">
         <ImportPanel
           account={kovaaks}
-          loading={linked.state.status === "loading"}
+          loading={!accountsKnown}
           state={importState}
           scenarioCount={scenarios.length}
           tierLabel={tierData.label}
           imported={importedTier}
           manualOpen={manualOpen}
-          onImport={() => {
+          onRefresh={() => {
             if (kovaaks !== null) void runImport(kovaaks, tier);
           }}
-          onToggleManual={() => setManualOpen((open) => !open)}
+          onToggleManual={() => setManual((current) => toggleManual(current, tier))}
         />
+
+        {showSkeleton ? <TierSkeleton tier={tier} /> : null}
 
         {!showGrid
           ? null
@@ -277,7 +378,8 @@ interface ImportPanelProps {
   /** La saisie courante du palier vient d'un import. */
   readonly imported: boolean;
   readonly manualOpen: boolean;
-  readonly onImport: () => void;
+  /** Rejoue l'import du palier affiché, à la demande. */
+  readonly onRefresh: () => void;
   readonly onToggleManual: () => void;
 }
 
@@ -288,6 +390,11 @@ interface ImportPanelProps {
  * Tant que les comptes liés ne sont pas chargés, on n'affiche ni l'un ni
  * l'autre : proposer de lier un compte à quelqu'un qui en a déjà un, même une
  * demi-seconde, c'est lui dire qu'on ne l'a pas reconnu.
+ *
+ * Depuis V6, l'import ne s'y déclenche plus : il est déjà parti. Le panneau
+ * rend compte (« Récupération… », le bilan, ce qui manque) et garde un
+ * « Rafraîchir » discret pour rejouer le palier — un bouton d'action primaire
+ * n'a plus de sens pour quelque chose que l'écran fait de lui-même.
  */
 function ImportPanel({
   account,
@@ -297,7 +404,7 @@ function ImportPanel({
   tierLabel,
   imported,
   manualOpen,
-  onImport,
+  onRefresh,
   onToggleManual,
 }: ImportPanelProps) {
   if (loading) return null;
@@ -318,25 +425,30 @@ function ImportPanel({
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-steel-800 bg-steel-900/60 p-4">
       <div className="flex flex-wrap items-center gap-3">
+        {imported ? <SourceBadge /> : null}
         <button
           type="button"
           disabled={busy}
-          onClick={onImport}
-          className="rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
+          onClick={onRefresh}
+          className="shrink-0 rounded-md border border-steel-700 px-2.5 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:border-steel-800 disabled:text-steel-600"
         >
-          {busy ? "Import en cours…" : "Importer mes scores KovaaK's"}
+          {busy ? "Récupération…" : "Rafraîchir"}
         </button>
-        {imported ? <SourceBadge /> : null}
-        {/* Sur téléphone, le bouton occupe déjà la largeur : la provenance passe
-            à la ligne plutôt que d'être tronquée à trois lettres. */}
+        {/* Sur téléphone, badge et bouton occupent déjà la ligne : la
+            provenance passe dessous plutôt que d'être tronquée à trois lettres. */}
         <p className="min-w-0 basis-full truncate text-[11px] text-steel-500 sm:flex-1 sm:basis-auto">
           {account.externalId} · palier {tierLabel}
         </p>
       </div>
 
+      {busy ? (
+        <p aria-live="polite" className="text-xs text-steel-400">
+          Récupération de tes scores KovaaK's…
+        </p>
+      ) : null}
       {state.status === "error" ? (
         <p aria-live="polite" className="text-xs text-ember-400">
-          {state.message}
+          {state.message} Tes scores restent saisissables à la main ci-dessous.
         </p>
       ) : null}
       {report === null ? null : (
@@ -400,6 +512,63 @@ const MISSING_LABELS: Readonly<Record<ImportMissing[number]["reason"], string>> 
   "sans-score": "jamais joué",
   incoherent: "score inexploitable",
 };
+
+/**
+ * Le squelette de saisie : les 9 sous-catégories et leurs 18 scénarios, aux
+ * vrais noms du palier, sans valeur.
+ *
+ * Il ne s'agit pas de meubler. Depuis que l'import part tout seul, l'écran
+ * passe une à deux secondes sans grille — et une page quasi vide ne dit ni ce
+ * qui arrive, ni ce que l'application va demander. Les noms réels, eux,
+ * répondent aux deux : voilà les scénarios de ton palier, les chiffres
+ * arrivent. C'est aussi ce qui rend la bascule sans saut de mise en page,
+ * puisque le squelette a la forme de la grille qui le remplace.
+ */
+function TierSkeleton({ tier }: { readonly tier: TierId }) {
+  const { label, categories } = getTier(tier);
+
+  return (
+    <div aria-busy="true" className="flex flex-col gap-8">
+      {categories.map((category) => (
+        <section key={category.name}>
+          <div className="mb-3 flex items-center gap-3">
+            <h2 className="text-[11px] font-semibold tracking-[0.18em] text-steel-300 uppercase">
+              {category.name}
+            </h2>
+            <span className="h-px flex-1 bg-steel-800" />
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {category.subcategories.map((subcategory) => (
+              <div
+                key={subcategory.name}
+                className="rounded-xl border border-steel-800 bg-steel-900/40 px-4 py-3"
+              >
+                <div className="flex items-baseline justify-between gap-3 border-b border-steel-800 pb-2">
+                  <h3 className="text-sm font-medium text-steel-400">{subcategory.name}</h3>
+                  <p className="font-mono text-xs tabular-nums text-steel-600">—</p>
+                </div>
+                <div className="divide-y divide-steel-800/70">
+                  {subcategory.scenarios.map((scenario) => (
+                    <div
+                      key={scenario.name}
+                      className="flex items-center justify-between gap-3 py-3"
+                    >
+                      <span className="min-w-0 truncate text-sm text-steel-500">
+                        {scenarioLabel(scenario.name, label)}
+                      </span>
+                      <span className="h-9 w-24 shrink-0 animate-pulse rounded-md bg-steel-800/70" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
 
 interface SaveButtonProps {
   readonly canSave: boolean;
