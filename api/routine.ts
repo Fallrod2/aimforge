@@ -40,10 +40,25 @@
  * unique et décroissant (`src/server/kovaaks/budget.ts`) partagé par les deux
  * tentatives : quand il ne reste pas de quoi tenter, on renonce nous-mêmes, à
  * temps, avec notre propre message.
+ *
+ * Depuis V5 (SPEC §5 sexies), elle fait aussi deux choses de plus :
+ *
+ * 1. elle **compte les parties classées récentes** de l'appelant (14 jours,
+ *    `src/server/routine/gating.ts`) et en déduit le mode. Sous cinq parties,
+ *    la routine se génère quand même mais sans la moindre stat in-game dans le
+ *    prompt, et la réponse porte `mode: "bench_only"` pour que l'écran le dise ;
+ * 2. elle **fait vérifier les chiffres cités** par le modèle contre les vraies
+ *    valeurs du contexte (`src/server/routine/citations.ts`). Une citation
+ *    fausse suit exactement le chemin d'un scénario inventé : une relance
+ *    corrective nominative, puis 502 avec remboursement du quota.
  */
 
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import {
+  type MatchSummary,
+  matchSummarySchema,
+} from "../src/client/data/linked-accounts-contract.js";
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
@@ -67,7 +82,9 @@ import {
 import { attemptTimeout, startBudget } from "../src/server/kovaaks/budget.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import { type RoutineBenchSummary, summarizeBenchForRoutine } from "../src/server/routine/bench.js";
+import { gateRoutine, type RoutineGate } from "../src/server/routine/gating.js";
 import { type AskModel, generateRoutine } from "../src/server/routine/generate.js";
+import { summarizeIngameForRoutine } from "../src/server/routine/ingame.js";
 import {
   ROUTINE_SYSTEM_PROMPT,
   type RoutineContext,
@@ -110,6 +127,14 @@ const DEFAULT_TIER: TierId = "novice";
 
 /** Nombre de debriefs relus pour en tirer les axes (AIMFORGE_KICKOFF §3). */
 const DEBRIEF_COUNT = 3;
+
+/**
+ * Plafond de matchs importés relus, comme `api/valorant/stats`.
+ *
+ * Les deux fenêtres qui comptent ici (14 et 30 jours) sont servies par les plus
+ * récents, et le tri est explicite pour que la troncature coupe l'ancien.
+ */
+const MATCH_CAP = 200;
 
 const usageCountSchema = z.number().int().min(0);
 
@@ -204,24 +229,88 @@ function toSeason(value: string): SeasonId | null {
 }
 
 /**
- * Le bench et les debriefs sont du **contexte**, pas des prérequis : une
- * lecture qui échoue dégrade la routine, elle ne doit pas l'annuler après
- * qu'un incrément de quota a déjà été consommé. D'où le repli sur `null` et
- * sur la liste vide en cas d'échec — le prompt sait le dire au modèle.
+ * Le bench, les debriefs et les matchs sont du **contexte**, pas des
+ * prérequis : une lecture qui échoue dégrade la routine, elle ne doit pas
+ * l'annuler après qu'un incrément de quota a déjà été consommé. D'où le repli
+ * sur `null` et sur la liste vide en cas d'échec — le prompt sait le dire au
+ * modèle.
+ *
+ * La contrepartie, dite franchement : une lecture de matchs en échec fait
+ * basculer la routine en mode « bench seul », donc affiche un bandeau qui
+ * demande au joueur de jouer des parties qu'il a peut-être déjà jouées. C'est
+ * le moindre mal — l'inverse serait de citer des chiffres qu'on n'a pas pu
+ * lire — et l'échec part dans les logs de la fonction.
  */
 async function loadContext(
   client: UserClient,
   userId: string,
   dureeMinutes: number,
   focus: string | null,
-): Promise<RoutineContext> {
-  const [bench, debriefs] = await Promise.all([
+): Promise<{ readonly context: RoutineContext; readonly gate: RoutineGate }> {
+  const [bench, debriefs, matches] = await Promise.all([
     loadBench(client, userId),
     loadDebriefs(client, userId),
+    loadMatches(client),
   ]);
   const catalog = scenarioCatalog(bench?.tier ?? DEFAULT_TIER);
+  const gate = gateRoutine(matches);
+  // Sous le seuil, le modèle ne voit **aucune** statistique de partie : c'est
+  // ce qui rend le mode « bench seul » vrai plutôt que déclaratif.
+  const ingame = gate.mode === "full" ? summarizeIngameForRoutine(matches) : null;
 
-  return { dureeMinutes, focus, bench, debriefs, scenarios: catalog.groups };
+  return {
+    context: { dureeMinutes, focus, bench, debriefs, ingame, scenarios: catalog.groups },
+    gate,
+  };
+}
+
+/**
+ * Les parties importées du compte Riot principal, lues sous RLS.
+ *
+ * Même chemin que `api/valorant/stats` — compte principal, tri du plus récent
+ * au plus ancien, plafond, revalidation ligne à ligne — parce que ce sont les
+ * mêmes données, et qu'une routine qui compterait ses matchs autrement que le
+ * tracker affiché juste à côté finirait par ne plus dire la même chose que lui.
+ */
+async function loadMatches(client: UserClient): Promise<readonly MatchSummary[]> {
+  const account = await client
+    .from("linked_accounts")
+    .select("id")
+    .eq("provider", "riot")
+    .order("is_primary", { ascending: false })
+    .order("id", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (account.error !== null) {
+    console.error("[routine] lecture du compte Riot principal en échec", account.error);
+    return [];
+  }
+
+  const accountId = account.data?.id ?? null;
+
+  if (accountId === null) return [];
+
+  const rows = await client
+    .from("imported_matches")
+    .select("payload")
+    .eq("linked_account_id", accountId)
+    .order("played_at", { ascending: false, nullsFirst: false })
+    .order("id", { ascending: false })
+    .limit(MATCH_CAP);
+
+  if (rows.error !== null) {
+    console.error("[routine] lecture des matchs importés en échec", rows.error);
+    return [];
+  }
+
+  // Une entrée hors contrat (import d'une version antérieure) est écartée
+  // plutôt que de fausser une moyenne que le modèle va ensuite citer.
+  return (rows.data ?? []).flatMap((row) => {
+    const parsed = matchSummarySchema.safeParse(row.payload);
+
+    return parsed.success ? [parsed.data] : [];
+  });
 }
 
 async function loadBench(client: UserClient, userId: string): Promise<RoutineBenchSummary | null> {
@@ -451,8 +540,8 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  // 6. Contexte puis génération.
-  const context = await loadContext(userClient, user.id, body.dureeMinutes, body.focus);
+  // 6. Contexte (bench, debriefs, parties récentes → mode) puis génération.
+  const { context, gate } = await loadContext(userClient, user.id, body.dureeMinutes, body.focus);
   const allowed = scenarioCatalog(context.bench?.tier ?? DEFAULT_TIER).names;
   const budget = startBudget(BUDGET_TOTAL_MS);
 
@@ -510,13 +599,27 @@ export async function POST(request: Request): Promise<Response> {
 
   // 7. Persistance, avec le JWT de l'utilisateur : c'est la RLS qui autorise
   //    l'insertion, pas la fonction.
+  //
+  //    L'ancrage (mode, parties comptées, sources vérifiées) part dans la même
+  //    colonne `jsonb` que le contenu : c'est ce qui permet à l'historique de
+  //    réafficher le bandeau et les sources d'une routine d'hier sans migration
+  //    ni seconde lecture. Le contrat les déclare facultatifs, donc les
+  //    routines écrites avant V5 se relisent toujours (`routine-contract.ts`).
+  const contenu = {
+    ...generated.routine,
+    mode: gate.mode,
+    matchesUsed: gate.matchesUsed,
+    // Copie mutable : `contenu` part en `jsonb`, dont le type généré n'accepte
+    // pas un tableau en lecture seule.
+    sources: [...generated.sources],
+  };
   const { data: row, error: insertError } = await userClient
     .from("routines")
     .insert({
       user_id: user.id,
       duree_minutes: body.dureeMinutes,
       focus: body.focus,
-      contenu: generated.routine,
+      contenu,
       done: false,
     })
     .select("id, date, done")
@@ -537,7 +640,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const stored: StoredRoutine = {
-    ...generated.routine,
+    ...contenu,
     id: row.id,
     date: new Date(row.date).toISOString(),
     duree_minutes: body.dureeMinutes,

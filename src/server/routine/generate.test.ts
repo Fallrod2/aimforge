@@ -44,8 +44,33 @@ const CONTEXT: RoutineContext = {
   focus: null,
   bench: null,
   debriefs: [],
+  ingame: null,
   scenarios: CATALOG.groups,
 };
+
+/** Le même contexte, mais avec des chiffres à citer (SPEC §5 sexies, V5). */
+const CONTEXT_WITH_DATA: RoutineContext = {
+  ...CONTEXT,
+  ingame: {
+    windowDays: 30,
+    matches: 12,
+    winrate: null,
+    headshotPercent: 23,
+    adr: null,
+    kd: null,
+    worstMaps: [],
+  },
+};
+
+const CITED = JSON.stringify({
+  ...ROUTINE,
+  conseil: "Coupe le chat vocal, ton [HS% 23] le mérite.",
+});
+
+const WRONG_CITATION = JSON.stringify({
+  ...ROUTINE,
+  conseil: "Coupe le chat vocal, ton [HS% 41] le mérite.",
+});
 
 /** Un faux modèle qui déroule des réponses préparées et note ce qu'on lui envoie. */
 function fakeModel(answers: readonly string[]): {
@@ -108,6 +133,29 @@ describe("generateRoutine", () => {
     expect(result.attempts).toBe(2);
     expect(model.calls).toHaveLength(2);
     expect(result.ok || result.reason).toContain("n'existent pas dans le palier");
+  });
+
+  it("relance quand la routine cite un chiffre faux, en le nommant au modèle", async () => {
+    const model = fakeModel([WRONG_CITATION, CITED]);
+    const result = await generateRoutine(model.ask, CONTEXT_WITH_DATA, ALLOWED);
+
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toBe(2);
+    expect(model.calls[1]?.[2]?.content).toContain("[HS% 41]");
+    // Le marqueur vérifié ne survit pas dans le texte : il devient une source.
+    expect(result.ok && result.routine.conseil).toBe("Coupe le chat vocal, ton le mérite.");
+    expect(result.ok && result.sources).toEqual([
+      { label: "Tirs à la tête (30 derniers jours)", value: "23 %" },
+    ]);
+  });
+
+  it("ne relance qu'une fois sur une citation fausse non plus", async () => {
+    const model = fakeModel([WRONG_CITATION, WRONG_CITATION, CITED]);
+    const result = await generateRoutine(model.ask, CONTEXT_WITH_DATA, ALLOWED);
+
+    expect(result.ok).toBe(false);
+    expect(model.calls).toHaveLength(2);
+    expect(result.ok || result.reason).toContain("chiffre faux");
   });
 
   it("laisse remonter une panne du modèle plutôt que de la déguiser en routine", async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { scenarioCatalog } from "../shared/scenarios";
+import type { CitableFact } from "./citations";
 import { parseRoutine, routineTexts, unknownScenarios } from "./parse";
 
 const ALLOWED = scenarioCatalog("novice").names;
@@ -170,5 +171,79 @@ describe("parseRoutine", () => {
 
     expect(parsed.ok).toBe(false);
     expect(parsed.ok || (parsed.reason.match(/«/gu) ?? []).length).toBe(4);
+  });
+});
+
+describe("parseRoutine — citations chiffrées (V5)", () => {
+  const FACTS: readonly CitableFact[] = [
+    { key: "HS%", value: 23, label: "Tirs à la tête (30 derniers jours)", display: "23 %" },
+    { key: "Precise", value: 401.4, label: "Énergie Precise (dernier bench)", display: "401.4" },
+  ];
+
+  /** La routine de référence, avec un marqueur posé dans le détail d'un item. */
+  function cited(marker: string): string {
+    return JSON.stringify({
+      ...ROUTINE,
+      conseil: `Coupe le chat vocal, ton ${marker} le mérite.`,
+    });
+  }
+
+  it("accepte une citation vraie, retire le marqueur et rend la source", () => {
+    const parsed = parseRoutine(cited("[HS% 23]"), ALLOWED, FACTS);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // Le joueur lit une phrase, pas un appareil de notes.
+    expect(parsed.routine.conseil).toBe("Coupe le chat vocal, ton le mérite.");
+    expect(parsed.sources).toEqual([
+      { label: "Tirs à la tête (30 derniers jours)", value: "23 %" },
+    ]);
+  });
+
+  it("accepte un arrondi de la valeur montrée au modèle", () => {
+    expect(parseRoutine(cited("[Precise 401]"), ALLOWED, FACTS).ok).toBe(true);
+  });
+
+  it("refuse un chiffre faux, et le nomme dans la raison de la relance", () => {
+    const parsed = parseRoutine(cited("[HS% 41]"), ALLOWED, FACTS);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok || parsed.reason).toContain("[HS% 41]");
+  });
+
+  it("refuse une donnée qui n'existe pas dans le contexte", () => {
+    const parsed = parseRoutine(cited("[KAST 71]"), ALLOWED, FACTS);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok || parsed.reason).toContain("aucune donnée fournie");
+  });
+
+  it("refuse une routine qui ne cite rien alors qu'il y avait de quoi citer", () => {
+    const parsed = parseRoutine(JSON_TEXT, ALLOWED, FACTS);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok || parsed.reason).toContain("aucune recommandation n'est appuyée");
+  });
+
+  it("refuse une citation quand le registre est vide : il n'y avait rien à citer", () => {
+    const parsed = parseRoutine(cited("[HS% 23]"), ALLOWED);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok || parsed.reason).toContain("aucune donnée fournie");
+  });
+
+  it("refuse un texte qui ne survit pas au retrait des marqueurs", () => {
+    const empty = JSON.stringify({ ...ROUTINE, conseil: "[HS% 23]" });
+    const parsed = parseRoutine(empty, ALLOWED, FACTS);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok || parsed.reason).toContain("phrases complètes");
+  });
+
+  it("laisse une routine sans citation intacte quand il n'y a rien à citer", () => {
+    const parsed = parseRoutine(JSON_TEXT, ALLOWED);
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.ok && parsed.sources).toEqual([]);
   });
 });

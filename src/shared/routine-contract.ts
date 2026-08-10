@@ -99,7 +99,85 @@ export const routineContentSchema = z.object({
 
 export type RoutineContent = z.infer<typeof routineContentSchema>;
 
-/** Une routine enregistrée : le contenu, plus ce que la base y a ajouté. */
+/* ------------------------------------------------------------------ */
+/* Ancrage : mode de génération et sources citées (SPEC §5 sexies, V5) */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Sur quoi la séance a été construite.
+ *
+ * `full` : le contexte incluait les agrégats in-game (le joueur a assez de
+ * parties classées récentes). `bench_only` : la routine a été produite **sans
+ * aucune stat in-game**, et l'écran doit le dire — une routine bâtie sur le seul
+ * bench reste utile, mais elle ne prétend pas connaître les parties.
+ */
+/**
+ * Fenêtre de « récence » des parties classées, en jours.
+ *
+ * « Récent » ne veut pas dire « éternel » : une routine du jour ne doit pas
+ * s'appuyer sur des parties d'il y a trois mois, jouées sur un autre patch avec
+ * une autre sensibilité. Quatorze jours couvrent deux week-ends — donc le rythme
+ * d'un joueur qui ne joue pas tous les soirs — sans remonter à une période dont
+ * il ne se souvient plus. C'est un choix, pas une mesure.
+ */
+export const ROUTINE_RECENT_WINDOW_DAYS = 14;
+
+/**
+ * Parties classées récentes exigées pour une routine ancrée in-game.
+ *
+ * En dessous, la moyenne d'un HS% ou d'un ADR se déplace de plusieurs points sur
+ * une seule partie : une routine bâtie dessus prescrirait du tracking parce
+ * qu'une soirée s'est mal passée. Cinq n'est pas un seuil statistique, c'est le
+ * minimum en dessous duquel on préfère l'admettre — d'où le mode « bench seul »
+ * plutôt qu'un refus : la routine se génère quand même, elle le dit.
+ *
+ * Les deux constantes vivent dans le contrat, et non côté serveur, parce que
+ * les deux côtés en ont besoin : la fonction pour trancher, l'écran pour écrire
+ * « joue N parties classées ». Deux copies finiraient par annoncer un seuil que
+ * le serveur n'applique pas.
+ */
+export const ROUTINE_MIN_RECENT_MATCHES = 5;
+
+export const ROUTINE_MODES = ["bench_only", "full"] as const;
+
+export const routineModeSchema = z.enum(ROUTINE_MODES);
+
+export type RoutineMode = z.infer<typeof routineModeSchema>;
+
+/**
+ * Une donnée citée par le modèle **et vérifiée par le serveur**, telle que
+ * l'écran la rend en puce « source ».
+ *
+ * Les deux champs sont du texte déjà mis en forme : l'unité et l'arrondi sont
+ * décidés côté serveur, là où la donnée est connue, pas dans le composant.
+ */
+export const routineSourceSchema = z.object({
+  label: z.string().min(1).max(120),
+  value: z.string().min(1).max(40),
+});
+
+export type RoutineSource = z.infer<typeof routineSourceSchema>;
+
+/** Sources affichées au maximum : au-delà, c'est un tableau, pas une note. */
+export const MAX_ROUTINE_SOURCES = 20;
+
+/**
+ * Une routine enregistrée : le contenu, ce que la base y a ajouté, et
+ * l'ancrage que la fonction a calculé.
+ *
+ * `mode`, `matchesUsed` et `sources` sont **facultatifs**, et c'est une
+ * compatibilité, pas une hésitation : les routines écrites avant V5 n'en
+ * portent pas, et leur relecture ne doit pas échouer pour autant (le contenu
+ * vit dans une colonne `jsonb`, il n'y a pas de migration qui les remplirait).
+ * Absents, l'écran n'affiche ni bandeau ni sources — ce qui est exact : cette
+ * routine-là n'a jamais été ancrée.
+ *
+ * Le nommage mélange les deux conventions du projet, et délibérément : ce que
+ * le **modèle** rend garde le `snake_case` qu'il a produit (`duree_minutes`,
+ * `objectif_game`), ce que le **serveur** calcule garde le `camelCase` des
+ * agrégats d'où il sort (`valorant-contract.ts` : `matchCount`,
+ * `headshotPercent`). La casse dit d'où vient le champ.
+ */
 export const storedRoutineSchema = routineContentSchema.extend({
   id: z.number().int().positive(),
   /** Horodatage ISO 8601 de l'enregistrement. */
@@ -108,6 +186,10 @@ export const storedRoutineSchema = routineContentSchema.extend({
   duree_minutes: z.number().int().min(MIN_DUREE_MINUTES).max(MAX_DUREE_MINUTES),
   focus: z.string().max(MAX_FOCUS_LENGTH).nullable(),
   done: z.boolean(),
+  mode: routineModeSchema.optional(),
+  /** Parties classées récentes prises en compte pour décider du mode. */
+  matchesUsed: z.number().int().min(0).optional(),
+  sources: z.array(routineSourceSchema).max(MAX_ROUTINE_SOURCES).optional(),
 });
 
 export type StoredRoutine = z.infer<typeof storedRoutineSchema>;

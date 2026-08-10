@@ -106,6 +106,49 @@ describe("routineContentSchema", () => {
   });
 });
 
+describe("storedRoutineSchema — ancrage V5", () => {
+  const STORED = {
+    ...CONTENT,
+    id: 12,
+    date: "2026-08-09T10:00:00.000Z",
+    duree_minutes: 45,
+    focus: null,
+    done: false,
+  };
+
+  it("relit le mode, le compte de parties et les sources", () => {
+    const parsed = storedRoutineSchema.safeParse({
+      ...STORED,
+      mode: "bench_only",
+      matchesUsed: 2,
+      sources: [{ label: "Tirs à la tête (30 derniers jours)", value: "23 %" }],
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.mode).toBe("bench_only");
+    expect(parsed.success && parsed.data.matchesUsed).toBe(2);
+    expect(parsed.success && parsed.data.sources).toHaveLength(1);
+  });
+
+  it("relit une routine d'avant V5, qui ne porte aucun ancrage", () => {
+    const parsed = storedRoutineSchema.safeParse(STORED);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.mode).toBeUndefined();
+    expect(parsed.success && parsed.data.sources).toBeUndefined();
+  });
+
+  it("refuse un mode inconnu plutôt que de l'afficher tel quel", () => {
+    expect(storedRoutineSchema.safeParse({ ...STORED, mode: "partiel" }).success).toBe(false);
+  });
+
+  it("refuse une source sans valeur : une puce vide ne prouve rien", () => {
+    expect(
+      storedRoutineSchema.safeParse({ ...STORED, sources: [{ label: "HS%", value: "" }] }).success,
+    ).toBe(false);
+  });
+});
+
 describe("storedRoutineSchema", () => {
   it("accepte une routine relue en base", () => {
     const parsed = storedRoutineSchema.safeParse({

@@ -15,15 +15,37 @@
  *    C'est le contrôle propre à la routine : une séance bien formée qui envoie
  *    le joueur chercher « VT Tile Frenzy Deluxe » dans KovaaK's est bien formée
  *    et inutilisable. Le défaut est corrigeable, la relance a donc quelque
- *    chose à corriger — et le message nomme les scénarios fautifs.
+ *    chose à corriger — et le message nomme les scénarios fautifs ;
+ * 3. **les citations chiffrées** (SPEC §5 sexies, V5) — chaque marqueur écrit
+ *    par le modèle doit correspondre à une donnée réelle du contexte
+ *    (`./citations.ts`). Même patron que les scénarios, pour la même raison :
+ *    un chiffre inventé rend la routine plus convaincante et moins vraie.
+ *
+ * Et une transformation, après les contrôles : les marqueurs vérifiés sont
+ * **retirés du texte** et rendus séparément (`sources`). Le joueur lit une
+ * séance, pas un appareil de notes ; l'écran affiche les chiffres en puces
+ * « source » sous la routine. Une routine dont un texte ne survivrait pas au
+ * retrait (parce qu'il ne contenait que des marqueurs) est refusée comme une
+ * routine hors format — c'est le même défaut, vu après nettoyage.
  */
 
-import { type RoutineContent, routineContentSchema } from "../../shared/routine-contract.js";
+import {
+  type RoutineContent,
+  type RoutineSource,
+  routineContentSchema,
+} from "../../shared/routine-contract.js";
 import { extractJsonObject, summarizeIssues } from "../coach/parse.js";
 import { unknownScenarioReason, unknownScenariosInTexts } from "../shared/scenarios.js";
+import { type CitableFact, stripCitations, verifyCitations } from "./citations.js";
 
 export type RoutineParse =
-  | { readonly ok: true; readonly routine: RoutineContent }
+  | {
+      readonly ok: true;
+      /** La routine **sans** les marqueurs : ce qui sera enregistré et affiché. */
+      readonly routine: RoutineContent;
+      /** Les données citées et vérifiées, dans l'ordre de première apparition. */
+      readonly sources: readonly RoutineSource[];
+    }
   /** `reason` est renvoyé au modèle dans la relance : il doit être explicite. */
   | { readonly ok: false; readonly reason: string };
 
@@ -54,13 +76,39 @@ export function unknownScenarios(
   return unknownScenariosInTexts(routineTexts(routine), allowed);
 }
 
+/** La même routine, marqueurs de citation retirés de tous ses textes. */
+export function stripRoutineCitations(routine: RoutineContent): RoutineContent {
+  return {
+    ...routine,
+    titre: stripCitations(routine.titre),
+    blocs: routine.blocs.map((bloc) => ({
+      ...bloc,
+      nom: stripCitations(bloc.nom),
+      items: bloc.items.map((item) => ({
+        texte: stripCitations(item.texte),
+        detail: stripCitations(item.detail),
+      })),
+    })),
+    objectif_game: stripCitations(routine.objectif_game),
+    conseil: stripCitations(routine.conseil),
+  };
+}
+
 /**
- * Le texte brut du modèle → une routine conforme au contrat **et** au palier,
- * ou la raison du refus.
+ * Le texte brut du modèle → une routine conforme au contrat, au palier **et**
+ * aux données, ou la raison du refus.
  *
  * @param allowed Les noms exacts des scénarios du palier du joueur.
+ * @param facts Le registre des chiffres citables, celui-là même qui a été
+ *   montré au modèle (`citableFacts`). Vide par défaut : aucun chiffre à citer,
+ *   donc aucune citation exigée — c'est l'état d'une routine bâtie sur rien
+ *   d'autre que le temps disponible.
  */
-export function parseRoutine(raw: string, allowed: readonly string[]): RoutineParse {
+export function parseRoutine(
+  raw: string,
+  allowed: readonly string[],
+  facts: readonly CitableFact[] = [],
+): RoutineParse {
   const candidate = extractJsonObject(raw);
 
   if (candidate === null) {
@@ -89,5 +137,18 @@ export function parseRoutine(raw: string, allowed: readonly string[]): RoutinePa
   const unknown = unknownScenarios(parsed.data, allowed);
 
   if (unknown.length > 0) return { ok: false, reason: unknownScenarioReason(unknown) };
-  return { ok: true, routine: parsed.data };
+
+  const citations = verifyCitations(routineTexts(parsed.data), facts);
+
+  if (!citations.ok) return { ok: false, reason: citations.reason };
+
+  const stripped = routineContentSchema.safeParse(stripRoutineCitations(parsed.data));
+
+  if (!stripped.success) {
+    return {
+      ok: false,
+      reason: `une fois les marqueurs de citation retirés, le JSON ne respecte plus le schéma (${summarizeIssues(stripped.error)}) : écris des phrases complètes autour des marqueurs`,
+    };
+  }
+  return { ok: true, routine: stripped.data, sources: citations.sources };
 }

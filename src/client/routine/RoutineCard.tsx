@@ -15,10 +15,31 @@
  * scénario le sait très bien, où il en est. Ce qui doit survivre survit :
  * « marquer comme faite », lui, part en base. Les cases retombent donc à zéro
  * au rechargement, et c'est la seule chose que ce composant oublie.
+ *
+ * Depuis V5 (SPEC §5 sexies), la carte porte aussi **l'ancrage** de la séance :
+ *
+ * - un **bandeau** quand la routine a été bâtie sur le seul bench, avec le
+ *   nombre de parties classées qui manquent pour un plan complet. Il est dans
+ *   la carte et non dans le formulaire parce que le mode appartient à *cette*
+ *   routine-là : une séance d'hier générée sans parties doit continuer à le
+ *   dire dans l'historique ;
+ * - les **sources** : les chiffres que le modèle a cités et que le serveur a
+ *   vérifiés (`src/server/routine/citations.ts`). Les marqueurs eux-mêmes ont
+ *   été retirés du texte avant enregistrement — une séance se lit comme une
+ *   séance, pas comme un article annoté — et les chiffres sont rendus en puces
+ *   sous la routine. Le choix est assumé : on garde la preuve (« sur quoi
+ *   est-ce que ça se fonde ? ») sans hacher les phrases qui la portent.
+ *
+ * Les deux sont facultatifs dans le contrat : une routine d'avant V5 n'a ni
+ * mode ni sources, et n'affiche donc ni bandeau ni puces.
  */
 
 import { useState } from "react";
-import type { StoredRoutine } from "../../shared/routine-contract";
+import {
+  ROUTINE_MIN_RECENT_MATCHES,
+  type RoutineSource,
+  type StoredRoutine,
+} from "../../shared/routine-contract";
 import { formatRunDate } from "../format";
 import { formatDuration } from "./duration";
 
@@ -108,6 +129,8 @@ export function RoutineCard({
 
       {expanded ? (
         <div id={panelId} className="border-t border-steel-800 px-4 py-4">
+          <BenchOnlyBanner routine={routine} />
+
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h4 className="text-sm font-semibold text-steel-100">{routine.titre}</h4>
             <p className="font-mono text-xs tabular-nums text-steel-500">
@@ -181,6 +204,8 @@ export function RoutineCard({
             <p className="text-sm leading-relaxed text-steel-300">{routine.conseil}</p>
           </Section>
 
+          <Sources sources={routine.sources ?? []} />
+
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
             <button
               type="button"
@@ -232,6 +257,51 @@ export function RoutineCard({
         </div>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * Le bandeau du mode « bench seul ».
+ *
+ * `missing` est recalculé ici à partir du seuil du contrat plutôt que stocké :
+ * le compte de parties, lui, est un fait daté (« il y en avait 2 ce jour-là »),
+ * alors que le seuil est une règle du produit qui peut bouger. Recalculer garde
+ * la phrase cohérente avec la règle du moment.
+ */
+function BenchOnlyBanner({ routine }: { readonly routine: StoredRoutine }) {
+  if (routine.mode !== "bench_only") return null;
+
+  const missing = Math.max(1, ROUTINE_MIN_RECENT_MATCHES - (routine.matchesUsed ?? 0));
+
+  return (
+    <p className="mb-4 rounded-lg border border-steel-700 bg-steel-950/60 px-3 py-2.5 text-xs leading-relaxed text-steel-300">
+      Routine basée sur ton bench seul — joue {missing} partie{missing > 1 ? "s" : ""} classée
+      {missing > 1 ? "s" : ""} pour un plan complet.
+    </p>
+  );
+}
+
+/**
+ * Les chiffres cités par le modèle, vérifiés par le serveur.
+ *
+ * Rendus en puces plutôt que laissés dans le texte : la phrase reste lisible, et
+ * la donnée reste vérifiable. Rien à afficher quand la liste est vide — une
+ * routine sans source n'a rien à prouver, elle n'a rien avancé.
+ */
+function Sources({ sources }: { readonly sources: readonly RoutineSource[] }) {
+  if (sources.length === 0) return null;
+
+  return (
+    <Section title="Sources">
+      <ul className="flex flex-col gap-1">
+        {sources.map((source) => (
+          <li key={source.label} className="flex items-baseline gap-2 text-xs text-steel-400">
+            <span className="min-w-0 flex-1 truncate">{source.label}</span>
+            <span className="shrink-0 font-mono tabular-nums text-steel-200">{source.value}</span>
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 
