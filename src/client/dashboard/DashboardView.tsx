@@ -37,7 +37,7 @@ import { formatEnergy, formatRunDate } from "../format";
 import { LinkInvite } from "../linked/LinkInvite";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
 import { ValorantPanel } from "../linked/ValorantPanel";
-import { type Route, routeHash } from "../route";
+import { type RouteTarget, routeHash } from "../route";
 import { formatDuration } from "../routine/duration";
 import { routineOfToday } from "../routine/today";
 import { latestRun, weakestSubcategories } from "./summary";
@@ -70,12 +70,14 @@ const ROUTINE_HASH = routeHash({ view: "routine", runId: null });
 
 const COACH_HASH = routeHash({ view: "coach", runId: null });
 
+const VALORANT_HASH = routeHash({ view: "valorant" });
+
 /** Le geste principal d'un emplacement vide. Un seul par carte, jamais deux. */
 const PRIMARY_ACTION =
   "rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500";
 
 function historyHash(runId: number | null): string {
-  const route: Route = { view: "history", runId };
+  const route: RouteTarget = { view: "history", runId };
 
   return routeHash(route);
 }
@@ -176,9 +178,12 @@ export function DashboardView() {
         </Card>
 
         {/* Le rang Valorant tient sur toute la largeur : c'est le seul
-            emplacement qui porte une liste (les dernières parties). */}
+            emplacement qui porte une liste (les dernières parties). Depuis V2
+            (SPEC §5 sexies) il n'en montre que trois et renvoie vers l'onglet
+            Valorant, qui porte les tendances, les ventilations et les
+            scoreboards — le dashboard résume, il n'analyse pas. */}
         <div className="lg:col-span-2 lg:order-last">
-          <Card title="Valorant">
+          <Card title="Valorant" action={{ href: VALORANT_HASH, label: "Voir tout" }}>
             <ValorantPanel state={linked.state} />
           </Card>
         </div>

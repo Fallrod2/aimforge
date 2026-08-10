@@ -10,7 +10,7 @@
 import type { ReactNode } from "react";
 import { useIsAdmin } from "../admin/useIsAdmin";
 import { useAuth } from "../auth/AuthProvider";
-import { NAV_ITEMS, type Route, routeHash, type ViewId } from "../route";
+import { NAV_ITEMS, type Route, routeHash, type ViewId, viewRoute } from "../route";
 
 interface AppLayoutProps {
   readonly route: Route;
@@ -28,6 +28,9 @@ const ICONS: Readonly<Record<ViewId, string>> = {
   dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 11h7v9h-7zM4 14h7v6H4z",
   tracker: "M12 3v3M12 18v3M3 12h3M18 12h3M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z",
   history: "M4 19V5M4 19h16M7 15l4-5 3 3 5-7",
+  // Un fanion : la partie jouée, l'objectif pris — surtout pas un second
+  // réticule, qui se confondrait avec celui du tracker à 20 px.
+  valorant: "M6 4v16M6 5h11l-2.5 3.5L17 12H6z",
   coach: "M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-5 4z",
   routine: "M9 6h11M9 12h11M9 18h11M4 6l1.4 1.4L8 4.8M4 12l1.4 1.4L8 10.8M4 18l1.4 1.4L8 16.8",
   profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM5 20a7 7 0 0 1 14 0",
@@ -64,7 +67,7 @@ export function AppLayout({ route, children }: AppLayoutProps) {
       <header className="sticky top-0 z-20 border-b border-steel-800 bg-steel-950/90 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3 sm:px-6">
           <a
-            href={routeHash({ view: "dashboard", runId: null })}
+            href={routeHash(viewRoute("dashboard"))}
             className="flex shrink-0 items-baseline gap-2"
           >
             <span className="font-mono text-lg font-semibold tracking-tight text-ember-500">
@@ -86,12 +89,12 @@ export function AppLayout({ route, children }: AppLayoutProps) {
                 — un confort, pas une protection : `api/admin/*` revérifie et
                 répond 404 à tout le reste (SPEC §5 quater). Elle vit dans
                 l'en-tête, à côté du profil, plutôt que dans la barre du pouce :
-                celle-ci est déjà à cinq entrées, et une sixième descendrait les
-                cibles tactiles sous la largeur utilisable sur un téléphone de
-                360 px. */}
+                celle-ci est à six entrées depuis V2 (cf. `NAV_ITEMS`), et une
+                septième descendrait les cibles tactiles sous la largeur
+                utilisable sur un téléphone de 360 px. */}
             {isAdmin ? (
               <a
-                href={routeHash({ view: "admin", runId: null })}
+                href={routeHash(viewRoute("admin"))}
                 aria-current={adminActive ? "page" : undefined}
                 title="Administration"
                 className={`rounded-lg p-2 transition-colors ${
@@ -106,7 +109,7 @@ export function AppLayout({ route, children }: AppLayoutProps) {
             ) : null}
 
             <a
-              href={routeHash({ view: "profile", runId: null })}
+              href={routeHash(viewRoute("profile"))}
               aria-current={profileActive ? "page" : undefined}
               title={user?.email ?? "Profil"}
               className={`rounded-lg p-2 transition-colors ${
@@ -159,7 +162,7 @@ function TabLink({ view, label, active }: LinkProps) {
 
   return (
     <a
-      href={routeHash({ view, runId: null })}
+      href={routeHash(viewRoute(view))}
       aria-current={current ? "page" : undefined}
       className={`rounded-lg px-3 py-2 text-xs font-semibold tracking-wide uppercase transition-colors ${
         current
@@ -172,19 +175,37 @@ function TabLink({ view, label, active }: LinkProps) {
   );
 }
 
+/**
+ * Une entrée de la barre du pouce.
+ *
+ * Trois réglages ont changé au passage à six entrées, et ils tiennent tous au
+ * même calcul : la barre répartit les entrées sur la largeur de l'écran, donc
+ * une colonne fait 60 px sur un téléphone de 360 px, où le plus long libellé
+ * (« HISTORIQUE ») demandait environ 62 px.
+ *
+ * - l'interlettrage est resserré (`tracking-normal` et non `tracking-wide`) ;
+ * - le corps descend à 9 px sous 400 px de large, où la place manque vraiment,
+ *   et reprend 10 px au-dessus ;
+ * - `min-w-0` + `truncate` sont la ceinture : un libellé qui ne tiendrait
+ *   toujours pas s'abrège au lieu de déborder sur son voisin.
+ *
+ * La cible tactile, elle, ne bouge pas : elle occupe toute la colonne et toute
+ * la hauteur de la barre, soit 60 × 64 px — bien au-dessus des 44 px
+ * recommandés.
+ */
 function BarLink({ view, label, active }: LinkProps) {
   const current = view === active;
 
   return (
     <a
-      href={routeHash({ view, runId: null })}
+      href={routeHash(viewRoute(view))}
       aria-current={current ? "page" : undefined}
-      className={`flex flex-col items-center justify-center gap-1 text-[10px] font-medium tracking-wide uppercase transition-colors ${
+      className={`flex min-w-0 flex-col items-center justify-center gap-1 px-0.5 text-[9px] font-medium tracking-normal uppercase transition-colors min-[400px]:text-[10px] ${
         current ? "text-ember-400" : "text-steel-500"
       }`}
     >
       <Icon view={view} />
-      {label}
+      <span className="w-full truncate text-center">{label}</span>
     </a>
   );
 }

@@ -12,13 +12,17 @@
  * Conséquence assumée : quand la source est injoignable ou pas encore
  * configurée, le bloc reste utile (il montre ce qu'il sait) et dit en petit
  * pourquoi il ne s'est pas mis à jour.
+ *
+ * **Depuis V2 (SPEC §5 sexies), ce bloc est un résumé et rien d'autre.** Le
+ * bouton « Débriefer » et le badge qui vivaient sur chaque ligne sont partis
+ * sur la page de la partie (`src/client/valorant/MatchView.tsx`) : un geste qui
+ * dépense un quota se prend devant le scoreboard, pas au passage sur l'accueil.
+ * Chaque ligne est désormais un lien vers cette page, et la carte porte un
+ * « Voir tout » vers l'onglet Valorant.
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { CoachError, requestDebriefForMatch } from "../coach/coach-api";
-import { setCoachDebriefFocus } from "../coach/prefill";
 import {
-  debriefedMatches,
   type LinkedAccount,
   LinkedAccountError,
   listImportedMatches,
@@ -32,8 +36,11 @@ import { routeHash } from "../route";
 import { LinkInvite } from "./LinkInvite";
 import type { LinkedAccountsState } from "./useLinkedAccounts";
 
-/** Parties affichées : de quoi voir une tendance, pas de quoi scroller. */
-const VISIBLE_MATCHES = 4;
+/**
+ * Parties affichées : trois. C'est un résumé — « où j'en suis », pas
+ * « qu'ai-je joué » : la liste complète est à un clic, dans l'onglet Valorant.
+ */
+const VISIBLE_MATCHES = 3;
 
 const RESULT_LABELS: Readonly<Record<NonNullable<MatchSummary["result"]>, string>> = {
   victoire: "Victoire",
@@ -41,19 +48,8 @@ const RESULT_LABELS: Readonly<Record<NonNullable<MatchSummary["result"]>, string
   egalite: "Égalité",
 };
 
-const COACH_HASH = routeHash({ view: "coach", runId: null });
-
-/**
- * Ouvre la vue Coach sur un debrief précis.
- *
- * La boîte à lettres (`../coach/prefill`) est remplie **avant** la navigation :
- * la grammaire du hash ne transporte qu'un identifiant de passe de bench, et y
- * ajouter un paramètre pour le coach reviendrait à élargir le routage pour un
- * besoin qui ne survit pas au rechargement de la page.
- */
-function openCoach(debriefId: number): void {
-  setCoachDebriefFocus(debriefId);
-  window.location.hash = COACH_HASH;
+function matchHash(matchId: string): string {
+  return routeHash({ view: "valorant", matchId });
 }
 
 export function ValorantPanel({ state }: { readonly state: LinkedAccountsState }) {
@@ -86,16 +82,6 @@ function Live({ account }: { readonly account: LinkedAccount }) {
   const [matches, setMatches] = useState<readonly MatchSummary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  /**
-   * Les matchs déjà débriefés : référence du match → identifiant du debrief
-   * (SPEC §5 ter bis). Une carte vide n'est pas une erreur — c'est simplement
-   * « aucun badge », et un chargement en échec doit dégrader ainsi plutôt que
-   * de casser l'affichage des parties.
-   */
-  const [debriefed, setDebriefed] = useState<ReadonlyMap<string, number>>(new Map());
-  /** Le match dont le debrief est en cours de génération. */
-  const [debriefing, setDebriefing] = useState<string | null>(null);
-  const [debriefError, setDebriefError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -130,56 +116,12 @@ function Live({ account }: { readonly account: LinkedAccount }) {
       .catch(() => {
         /* L'appel de rafraîchissement, juste après, dira ce qui ne va pas. */
       });
-    void debriefedMatches()
-      .then((map) => {
-        if (!cancelled) setDebriefed(map);
-      })
-      .catch(() => {
-        /* Pas de badge, c'est tout : le bouton reste, et le serveur refusera
-           un second debrief du même match (409) si l'un existait déjà. */
-      });
     void refresh();
 
     return () => {
       cancelled = true;
     };
   }, [account.id, refresh]);
-
-  /**
-   * Débriefe un match importé : une génération complète, puis la navigation
-   * vers le Coach avec ce debrief ouvert.
-   *
-   * Un 409 n'est pas traité comme un échec — il veut dire que le debrief existe
-   * (une autre fenêtre, un double clic) : on va le lire, comme si la génération
-   * venait d'aboutir. C'est la seule réponse qui rende le geste cohérent.
-   */
-  const debrief = useCallback(async (matchId: string) => {
-    setDebriefing(matchId);
-    setDebriefError(null);
-    try {
-      // `thread: true` : le debrief part aussi dans le fil du coach sous forme
-      // de carte (SPEC §5 sexies). Sans ce drapeau, le joueur arrive sur un fil
-      // muet alors que son quota vient d'être consommé — c'est la fonction qui
-      // pose la carte, le navigateur n'y a plus accès (migration 0015).
-      const { debrief: created } = await requestDebriefForMatch(matchId, { thread: true });
-
-      setDebriefed((current) => new Map(current).set(matchId, created.id));
-      openCoach(created.id);
-    } catch (cause) {
-      if (cause instanceof CoachError && cause.alreadyDebriefed && cause.debriefId !== null) {
-        const existing = cause.debriefId;
-
-        setDebriefed((current) => new Map(current).set(matchId, existing));
-        openCoach(existing);
-        return;
-      }
-      setDebriefError(
-        cause instanceof Error ? cause.message : "Le debrief n'a pas pu être généré.",
-      );
-    } finally {
-      setDebriefing(null);
-    }
-  }, []);
 
   return (
     <div className="flex flex-col gap-3">
@@ -220,24 +162,11 @@ function Live({ account }: { readonly account: LinkedAccount }) {
       ) : (
         <ul className="flex flex-col gap-1.5">
           {matches.slice(0, VISIBLE_MATCHES).map((match) => (
-            <MatchRow
-              key={match.matchId}
-              match={match}
-              debriefId={debriefed.get(match.matchId) ?? null}
-              generating={debriefing === match.matchId}
-              // Un debrief à la fois : deux générations simultanées doubleraient
-              // la dépense de quota pour un écran qui n'en montrera qu'une.
-              busy={debriefing !== null}
-              onDebrief={() => void debrief(match.matchId)}
-            />
+            <li key={match.matchId}>
+              <MatchRow match={match} />
+            </li>
           ))}
         </ul>
-      )}
-
-      {debriefError === null ? null : (
-        <p aria-live="polite" className="text-[11px] leading-relaxed text-ember-400">
-          {debriefError}
-        </p>
       )}
 
       {notice === null ? null : (
@@ -249,18 +178,8 @@ function Live({ account }: { readonly account: LinkedAccount }) {
   );
 }
 
-interface MatchRowProps {
-  readonly match: MatchSummary;
-  /** Le debrief déjà posé sur ce match, s'il y en a un. */
-  readonly debriefId: number | null;
-  /** Ce match-ci est en cours de génération. */
-  readonly generating: boolean;
-  /** Un autre match est en cours de génération : on n'en lance pas un second. */
-  readonly busy: boolean;
-  readonly onDebrief: () => void;
-}
-
-function MatchRow({ match, debriefId, generating, busy, onDebrief }: MatchRowProps) {
+/** Une partie du résumé : un lien vers son scoreboard, rien de plus. */
+function MatchRow({ match }: { readonly match: MatchSummary }) {
   const kda =
     match.kills === null || match.deaths === null || match.assists === null
       ? null
@@ -271,51 +190,29 @@ function MatchRow({ match, debriefId, generating, busy, onDebrief }: MatchRowPro
       : `${match.roundsWon}–${match.roundsLost}`;
 
   return (
-    <li className="rounded-lg bg-steel-950/60 px-3 py-2">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm text-steel-200">
-            {match.map ?? "Map inconnue"}
-            {match.agent === null ? null : <span className="text-steel-500"> · {match.agent}</span>}
-          </p>
-          <p className="mt-0.5 text-[11px] text-steel-500">
-            {match.result === null ? "Résultat inconnu" : RESULT_LABELS[match.result]}
-            {rounds === null ? null : ` ${rounds}`}
-            {match.playedAt === null ? null : ` · ${formatRunDate(match.playedAt)}`}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="font-mono text-sm tabular-nums text-steel-200">{kda ?? "—"}</p>
-          <p className="mt-0.5 font-mono text-[11px] tabular-nums text-steel-500">
-            {match.adr === null ? "—" : `${match.adr} ADR`}
-            {match.headshotPercent === null ? null : ` · ${match.headshotPercent} % HS`}
-          </p>
-        </div>
+    <a
+      href={matchHash(match.matchId)}
+      className="flex items-baseline justify-between gap-3 rounded-lg bg-steel-950/60 px-3 py-2 transition-colors hover:bg-steel-800/60"
+    >
+      <div className="min-w-0">
+        <p className="truncate text-sm text-steel-200">
+          {match.map ?? "Map inconnue"}
+          {match.agent === null ? null : <span className="text-steel-500"> · {match.agent}</span>}
+        </p>
+        <p className="mt-0.5 text-[11px] text-steel-500">
+          {match.result === null ? "Résultat inconnu" : RESULT_LABELS[match.result]}
+          {rounds === null ? null : ` ${rounds}`}
+          {match.playedAt === null ? null : ` · ${formatRunDate(match.playedAt)}`}
+        </p>
       </div>
-
-      <div className="mt-1.5 flex justify-end">
-        {debriefId === null ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onDebrief}
-            className="rounded-md border border-steel-700 px-2.5 py-1 text-[11px] font-medium text-steel-300 transition-colors hover:border-ember-600 hover:text-ember-400 disabled:cursor-not-allowed disabled:border-steel-800 disabled:text-steel-600"
-          >
-            {generating ? "Le coach lit ta partie…" : "Débriefer"}
-          </button>
-        ) : (
-          // Un lien et non un bouton : c'est une navigation, et elle doit
-          // s'ouvrir dans un nouvel onglet comme n'importe quel lien.
-          <a
-            href={COACH_HASH}
-            onClick={() => setCoachDebriefFocus(debriefId)}
-            className="rounded-md border border-quench-600/50 px-2.5 py-1 text-[11px] font-medium text-quench-500 transition-colors hover:border-quench-500 hover:text-quench-400"
-          >
-            Débriefé
-          </a>
-        )}
+      <div className="shrink-0 text-right">
+        <p className="font-mono text-sm tabular-nums text-steel-200">{kda ?? "—"}</p>
+        <p className="mt-0.5 font-mono text-[11px] tabular-nums text-steel-500">
+          {match.adr === null ? "—" : `${match.adr} ADR`}
+          {match.headshotPercent === null ? null : ` · ${match.headshotPercent} % HS`}
+        </p>
       </div>
-    </li>
+    </a>
   );
 }
 

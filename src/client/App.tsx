@@ -7,12 +7,14 @@
  * de connexion affiche la landing **sans changer le hash** : l'adresse
  * demandée survit à la connexion, et l'utilisateur atterrit là où il allait.
  *
- * Deux vues sont chargées à la demande, pour deux raisons différentes :
+ * Trois vues sont chargées à la demande, pour deux raisons différentes :
  *
- * - **l'historique**, parce que sa courbe de progression tire Recharts, et
- *   Recharts tire d3 et un store Redux — environ un tiers du bundle pour un
- *   écran que personne ne voit au premier chargement (l'application ouvre sur
- *   le tableau de bord) ;
+ * - **l'historique** et **Valorant**, parce que leurs courbes tirent Recharts,
+ *   et Recharts tire d3 et un store Redux — environ un tiers du bundle pour des
+ *   écrans que personne ne voit au premier chargement (l'application ouvre sur
+ *   le tableau de bord). Valorant pousse le découpage d'un cran : ses figures
+ *   sont elles-mêmes différées à l'intérieur de la vue, pour que ses chiffres
+ *   s'affichent sans attendre ses graphes ;
  * - **l'administration**, parce que presque personne ne l'ouvrira jamais : elle
  *   n'existe que pour les administrateurs (SPEC §5 quater), et il n'y a aucune
  *   raison de la faire télécharger à tous les autres.
@@ -31,7 +33,14 @@ import { CoachThreadView } from "./coach/CoachThreadView";
 import { DashboardView } from "./dashboard/DashboardView";
 import { LandingView } from "./landing/LandingView";
 import { ProfileView } from "./profile/ProfileView";
-import { DEFAULT_ROUTE, parseRoute, type Route, requiresSession, routeHash } from "./route";
+import {
+  DEFAULT_ROUTE,
+  parseRoute,
+  type Route,
+  type RouteTarget,
+  requiresSession,
+  routeHash,
+} from "./route";
 import { RoutineView } from "./routine/RoutineView";
 import { TrackerView } from "./tracker/TrackerView";
 
@@ -42,6 +51,10 @@ import { TrackerView } from "./tracker/TrackerView";
  */
 const HistoryView = lazy(async () => ({
   default: (await import("./history/HistoryView")).HistoryView,
+}));
+
+const ValorantView = lazy(async () => ({
+  default: (await import("./valorant/ValorantView")).ValorantView,
 }));
 
 const AdminView = lazy(async () => ({
@@ -71,7 +84,7 @@ function Routed() {
     return () => window.removeEventListener("hashchange", sync);
   }, []);
 
-  const navigate = useCallback((next: Route) => {
+  const navigate = useCallback((next: RouteTarget) => {
     const hash = routeHash(next);
 
     // `hashchange` ne se déclenche pas si le hash est déjà le bon (premier
@@ -113,7 +126,7 @@ function Routed() {
 
 interface ViewProps {
   readonly route: Route;
-  readonly navigate: (route: Route) => void;
+  readonly navigate: (route: RouteTarget) => void;
 }
 
 function View({ route, navigate }: ViewProps) {
@@ -124,6 +137,13 @@ function View({ route, navigate }: ViewProps) {
       return <TrackerView onSaved={(run) => focusRun(run.id)} />;
     case "history":
       return <HistoryView focusRunId={route.runId} onFocusRun={focusRun} />;
+    case "valorant":
+      return (
+        <ValorantView
+          matchId={route.matchId}
+          onOpenMatch={(matchId) => navigate({ view: "valorant", matchId })}
+        />
+      );
     case "coach":
       // L'onglet Coach est le fil (SPEC §5 sexies) ; l'historique des debriefs
       // vit à l'intérieur, en repli.

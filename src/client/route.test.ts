@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MATCH_ID_MAX } from "../shared/valorant-contract";
 import {
   AUTH_ROUTE,
   DEFAULT_ROUTE,
@@ -8,12 +9,14 @@ import {
   requiresSession,
   routeHash,
   type ViewId,
+  viewRoute,
 } from "./route";
 
 const ALL_VIEWS: readonly ViewId[] = [
   "dashboard",
   "tracker",
   "history",
+  "valorant",
   "coach",
   "routine",
   "profile",
@@ -31,6 +34,7 @@ describe("parseRoute", () => {
     expect(parseRoute("#/dashboard").view).toBe("dashboard");
     expect(parseRoute("#/tracker").view).toBe("tracker");
     expect(parseRoute("#/historique").view).toBe("history");
+    expect(parseRoute("#/valorant").view).toBe("valorant");
     expect(parseRoute("#/coach").view).toBe("coach");
     expect(parseRoute("#/routine").view).toBe("routine");
     expect(parseRoute("#/profil").view).toBe("profile");
@@ -38,12 +42,16 @@ describe("parseRoute", () => {
   });
 
   it("lit la vue historique sans passe ouverte", () => {
-    expect(parseRoute("#/historique")).toEqual({ view: "history", runId: null });
-    expect(parseRoute("historique")).toEqual({ view: "history", runId: null });
+    expect(parseRoute("#/historique")).toEqual(viewRoute("history"));
+    expect(parseRoute("historique")).toEqual(viewRoute("history"));
   });
 
   it("lit l'identifiant de la passe ouverte", () => {
-    expect(parseRoute("#/historique?run=12")).toEqual({ view: "history", runId: 12 });
+    expect(parseRoute("#/historique?run=12")).toEqual({
+      view: "history",
+      runId: 12,
+      matchId: null,
+    });
   });
 
   it("ignore un identifiant qui n'est pas un entier positif", () => {
@@ -53,7 +61,11 @@ describe("parseRoute", () => {
   });
 
   it("ignore les paramètres inconnus", () => {
-    expect(parseRoute("#/historique?tri=date&run=7")).toEqual({ view: "history", runId: 7 });
+    expect(parseRoute("#/historique?tri=date&run=7")).toEqual({
+      view: "history",
+      runId: 7,
+      matchId: null,
+    });
   });
 
   it("ne porte d'identifiant de passe que sur l'historique", () => {
@@ -66,19 +78,68 @@ describe("parseRoute", () => {
   });
 });
 
+describe("parseRoute · vue Valorant", () => {
+  it("lit la vue d'ensemble quand aucun match n'est désigné", () => {
+    expect(parseRoute("#/valorant")).toEqual(viewRoute("valorant"));
+    expect(parseRoute("#/valorant?")).toEqual(viewRoute("valorant"));
+  });
+
+  it("lit l'identifiant du match ouvert", () => {
+    expect(parseRoute("#/valorant?match=abc-123")).toEqual({
+      view: "valorant",
+      runId: null,
+      matchId: "abc-123",
+    });
+  });
+
+  it("décode l'identifiant et écarte les espaces autour", () => {
+    expect(parseRoute("#/valorant?match=a%20b").matchId).toBe("a b");
+    expect(parseRoute("#/valorant?match=%20abc%20").matchId).toBe("abc");
+  });
+
+  it("retombe sur la vue d'ensemble pour un identifiant vide ou trop long", () => {
+    for (const raw of ["", "%20%20", "x".repeat(MATCH_ID_MAX + 1)]) {
+      expect(parseRoute(`#/valorant?match=${raw}`).matchId, raw).toBeNull();
+    }
+  });
+
+  it("accepte un identifiant à la longueur maximale du contrat", () => {
+    const longest = "x".repeat(MATCH_ID_MAX);
+
+    expect(parseRoute(`#/valorant?match=${longest}`).matchId).toBe(longest);
+  });
+
+  it("ne porte d'identifiant de match que sur la vue Valorant", () => {
+    for (const view of ALL_VIEWS.filter((candidate) => candidate !== "valorant")) {
+      const hash = routeHash({ view, matchId: "abc" });
+
+      expect(hash, view).not.toContain("match=");
+      expect(parseRoute(hash).matchId, view).toBeNull();
+    }
+  });
+});
+
 describe("routeHash", () => {
   it("produit un hash relu à l'identique pour chaque vue", () => {
     for (const view of ALL_VIEWS) {
-      const hash = routeHash({ view, runId: null });
+      const hash = routeHash(viewRoute(view));
 
-      expect(parseRoute(hash), hash).toEqual({ view, runId: null });
+      expect(parseRoute(hash), hash).toEqual(viewRoute(view));
     }
   });
 
   it("conserve la passe ouverte de l'historique", () => {
-    const route: Route = { view: "history", runId: 42 };
+    const route: Route = { view: "history", runId: 42, matchId: null };
 
     expect(parseRoute(routeHash(route))).toEqual(route);
+  });
+
+  it("conserve le match ouvert, y compris avec un caractère à encoder", () => {
+    for (const matchId of ["abc-123", "a b", "a&b=c", "é#/?"]) {
+      const route: Route = { view: "valorant", runId: null, matchId };
+
+      expect(parseRoute(routeHash(route)), matchId).toEqual(route);
+    }
   });
 
   it("laisse tomber l'identifiant de passe hors de l'historique", () => {
@@ -110,5 +171,19 @@ describe("NAV_ITEMS", () => {
 
   it("commence par le dashboard, la vue d'accueil", () => {
     expect(NAV_ITEMS[0]?.view).toBe(DEFAULT_ROUTE.view);
+  });
+
+  it("porte la vue Valorant, destination de plein droit depuis V2", () => {
+    expect(NAV_ITEMS.map((item) => item.view)).toContain("valorant");
+  });
+
+  /**
+   * La barre du pouce répartit ces entrées sur toute la largeur : à six, une
+   * cible fait encore 60 px sur un téléphone de 360 px. Une septième
+   * descendrait à 51 px — sous le confort de frappe — et devrait remonter dans
+   * l'en-tête, comme le profil et l'administration.
+   */
+  it("ne dépasse pas six entrées, la limite de la barre du pouce", () => {
+    expect(NAV_ITEMS.length).toBeLessThanOrEqual(6);
   });
 });
