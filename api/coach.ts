@@ -99,6 +99,7 @@ import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-c
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
 import { DEFAULT_TIER, loadBench, loadProfile } from "./_lib/coach-context.js";
+import { postDebriefCard } from "./_lib/coach-thread-write.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -154,8 +155,8 @@ function failWithQuota(error: string, status: number, remaining: number | null):
  * dont **le serveur** ira chercher le résumé (SPEC §5 ter bis).
  */
 type Input =
-  | { readonly kind: "stats"; readonly stats: string }
-  | { readonly kind: "match"; readonly matchId: string };
+  | { readonly kind: "stats"; readonly stats: string; readonly thread: boolean }
+  | { readonly kind: "match"; readonly matchId: string; readonly thread: boolean };
 
 type BodyResult =
   | { readonly ok: true; readonly input: Input }
@@ -192,12 +193,14 @@ function readBody(raw: string): BodyResult {
       response: fail("Colle les stats de ta partie, ou choisis un match importé.", 400),
     };
   }
+  const thread = parsed.data.thread === true;
+
   return {
     ok: true,
     input:
       "stats" in parsed.data
-        ? { kind: "stats", stats: parsed.data.stats }
-        : { kind: "match", matchId: parsed.data.match_id },
+        ? { kind: "stats", stats: parsed.data.stats, thread }
+        : { kind: "match", matchId: parsed.data.match_id, thread },
   };
 }
 
@@ -620,5 +623,29 @@ export async function POST(request: Request): Promise<Response> {
     match_id: row.match_id,
   };
 
-  return json({ debrief: stored, remaining }, 200);
+  // 8. La carte dans le fil (SPEC §5 sexies), quand le debrief a été demandé
+  //    depuis le fil ou depuis un geste qui y mène. Elle est posée **ici** et
+  //    non par le navigateur, parce que la migration 0015 lui interdit d'écrire
+  //    une ligne `role = 'coach'` — et parce que la poser au plus près de la
+  //    génération supprime la fenêtre où le joueur arriverait sur un fil muet
+  //    alors que son quota est déjà consommé.
+  //
+  //    Aucun doublon possible sur ce chemin : `row.id` vient d'être créé, donc
+  //    aucune carte ne peut déjà le référencer. Et un échec ici ne fait pas
+  //    échouer la requête : le debrief est enregistré et facturé, `thread` est
+  //    simplement absent de la réponse et l'écran se rabat sur l'historique.
+  const thread = body.input.thread
+    ? await postDebriefCard(
+        userClient,
+        service,
+        user.id,
+        stored,
+        body.input.kind === "match" ? "match" : "stats",
+      )
+    : null;
+
+  return json(
+    thread === null ? { debrief: stored, remaining } : { debrief: stored, remaining, thread },
+    200,
+  );
 }

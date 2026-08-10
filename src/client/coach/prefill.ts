@@ -1,11 +1,16 @@
 /**
- * Pré-remplissage du formulaire du Coach depuis l'extérieur.
+ * Pré-remplissage de l'entrée du Coach depuis l'extérieur.
  *
  * SPEC §5 bis : « le Coach peut débriefer un match importé (pré-remplissage de
- * son entrée depuis `imported_matches`) ». Le module d'import n'existe pas
- * encore ; ce module est le point d'entrée qu'il utilisera, et il est écrit
- * pour ne rien lui demander en retour — il ne connaît ni les matchs, ni la
- * base, ni React.
+ * son entrée depuis `imported_matches`) ». Ce module est le point d'entrée que
+ * les vues de matchs utilisent, et il est écrit pour ne rien leur demander en
+ * retour — il ne connaît ni les matchs, ni la base, ni React.
+ *
+ * **Ce que le dépôt alimente a changé** (SPEC §5 sexies) : ce n'est plus la
+ * zone de stats du formulaire de debrief, c'est le **champ du fil du coach**.
+ * Le contrat, lui, est identique — un texte déposé, consommé au montage de la
+ * vue Coach — parce que le geste de l'appelant n'a pas changé : il dépose ce
+ * dont il veut parler, puis navigue vers `#/coach`.
  *
  * Une boîte à lettres à un seul message plutôt qu'un paramètre de route : la
  * grammaire du hash (`src/client/route.ts`) ne transporte qu'un identifiant de

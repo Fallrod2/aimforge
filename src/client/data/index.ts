@@ -28,6 +28,7 @@ export {
   saveBenchRun,
 } from "./bench-runs";
 export { listCoachMessages } from "./coach-messages";
+export { clearThread, lastUndebriefedMatch, listThreadMessages } from "./coach-thread";
 export { debriefedMatches, deleteDebrief, listDebriefs } from "./debriefs";
 export { DataError } from "./errors";
 export {
@@ -65,3 +66,23 @@ export type {
   ScenarioScore,
   SubcategoryEnergy,
 } from "./types";
+export { ValorantError } from "./valorant-call";
+export type {
+  MatchDetail,
+  MatchDetailResponse,
+  RoundOutcome,
+  ScoreboardEntry,
+  Side,
+  SidePerformance,
+  Team,
+} from "./valorant-match";
+export { getMatchDetail } from "./valorant-match";
+export type {
+  StatBreakdown,
+  StatPeriods,
+  StatTotals,
+  TrendPoint,
+  ValorantStats,
+  ValorantStatsResponse,
+} from "./valorant-stats";
+export { getValorantStats } from "./valorant-stats";

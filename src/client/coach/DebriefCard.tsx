@@ -2,14 +2,20 @@
  * Un debrief à l'écran : ligne repliée (date, focus en une ligne) et contenu
  * déplié (résumé, points forts, axes, focus, suppression).
  *
- * Même composant pour le debrief qui vient d'être généré et pour ceux de
- * l'historique : ce qui sort du coach et ce qui est relu en base sont la même
+ * Même composant pour le debrief qui vient d'être généré, pour ceux de
+ * l'historique et pour la **carte rendue dans le fil du coach** (SPEC
+ * §5 sexies) : ce qui sort du coach et ce qui est relu en base sont la même
  * chose, les afficher différemment inviterait à croire le contraire.
+ *
+ * La carte du fil est en **lecture** (`readOnly`) : ni suppression, ni
+ * conversation archivée. Supprimer depuis le fil laisserait un message qui
+ * parle d'un debrief disparu, et l'historique reste l'endroit d'où l'on
+ * supprime.
  */
 
 import type { StoredDebrief } from "../../shared/coach-contract";
 import { formatRunDate } from "../format";
-import { CoachChat } from "./CoachChat";
+import { CoachChatArchive } from "./CoachChatArchive";
 
 interface DebriefCardProps {
   readonly debrief: StoredDebrief;
@@ -17,11 +23,18 @@ interface DebriefCardProps {
   readonly fresh?: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
-  readonly confirming: boolean;
-  readonly deleting: boolean;
-  readonly onAskDelete: () => void;
-  readonly onCancelDelete: () => void;
-  readonly onConfirmDelete: () => void;
+  /**
+   * Carte en lecture seule (le fil). Les trois gestes de suppression et la
+   * conversation archivée ne sont alors ni rendus ni attendus — d'où des props
+   * facultatives : les exiger obligerait l'appelant à passer trois fonctions
+   * vides pour une carte qui ne les appellera jamais.
+   */
+  readonly readOnly?: boolean;
+  readonly confirming?: boolean;
+  readonly deleting?: boolean;
+  readonly onAskDelete?: () => void;
+  readonly onCancelDelete?: () => void;
+  readonly onConfirmDelete?: () => void;
 }
 
 export function DebriefCard({
@@ -29,8 +42,9 @@ export function DebriefCard({
   fresh = false,
   expanded,
   onToggle,
-  confirming,
-  deleting,
+  readOnly = false,
+  confirming = false,
+  deleting = false,
   onAskDelete,
   onCancelDelete,
   onConfirmDelete,
@@ -104,42 +118,46 @@ export function DebriefCard({
             </p>
           </Section>
 
-          {/* La conversation est montée avec le contenu déplié, et démontée
-              avec lui : une page d'historique à vingt debriefs ne déclenche pas
-              vingt chargements de fil. */}
-          <CoachChat debriefId={debrief.id} />
+          {/* L'archive est montée avec le contenu déplié, et démontée avec
+              lui : une page d'historique à vingt debriefs ne déclenche pas
+              vingt chargements. Elle ne rend rien quand ce debrief n'a jamais
+              porté de conversation — c'est-à-dire pour tous ceux générés depuis
+              le fil (SPEC §5 sexies). */}
+          {readOnly ? null : <CoachChatArchive debriefId={debrief.id} />}
 
-          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
-            {confirming ? (
-              <>
-                <p className="mr-auto text-xs text-steel-400">Supprimer définitivement ?</p>
+          {readOnly ? null : (
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
+              {confirming ? (
+                <>
+                  <p className="mr-auto text-xs text-steel-400">Supprimer définitivement ?</p>
+                  <button
+                    type="button"
+                    onClick={onCancelDelete}
+                    disabled={deleting}
+                    className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:text-steel-100 disabled:opacity-50"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onConfirmDelete}
+                    disabled={deleting}
+                    className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
+                  >
+                    {deleting ? "Suppression…" : "Confirmer"}
+                  </button>
+                </>
+              ) : (
                 <button
                   type="button"
-                  onClick={onCancelDelete}
-                  disabled={deleting}
-                  className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:text-steel-100 disabled:opacity-50"
+                  onClick={onAskDelete}
+                  className="ml-auto rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-400 transition-colors hover:border-ember-600 hover:text-ember-400"
                 >
-                  Annuler
+                  Supprimer ce debrief
                 </button>
-                <button
-                  type="button"
-                  onClick={onConfirmDelete}
-                  disabled={deleting}
-                  className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
-                >
-                  {deleting ? "Suppression…" : "Confirmer"}
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={onAskDelete}
-                className="ml-auto rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-400 transition-colors hover:border-ember-600 hover:text-ember-400"
-              >
-                Supprimer ce debrief
-              </button>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
       ) : null}
     </li>

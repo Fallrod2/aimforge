@@ -62,6 +62,13 @@ const TAGS: readonly string[] = [
   "</debrief>",
   "<message_utilisateur>",
   "</message_utilisateur>",
+  // Les balises du fil du coach (`./thread-prompt.ts`, SPEC §5 sexies). Même
+  // règle : un seul neutraliseur, qui connaît toutes les balises employées par
+  // les prompts du coach.
+  "<matchs_recents>",
+  "</matchs_recents>",
+  "<debriefs_recents>",
+  "</debriefs_recents>",
 ];
 
 const NEUTRALIZED = "[balise neutralisée]";

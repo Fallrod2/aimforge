@@ -1,6 +1,15 @@
 /**
- * Vue Coach post-game : coller les stats d'une partie, obtenir un debrief
- * structuré, relire les précédents.
+ * L'**historique des debriefs** : coller les stats d'une partie, obtenir un
+ * debrief structuré, relire les précédents.
+ *
+ * Depuis SPEC §5 sexies, cette vue n'est plus l'onglet Coach — elle en est le
+ * repli, sous le fil (`./CoachThreadView`), et elle n'est montée que lorsqu'on
+ * l'ouvre. Elle garde ce que le fil ne fait pas : le **collage manuel** (les
+ * parties non importées n'ont pas de match à désigner), la relecture, la
+ * suppression, et l'accès aux conversations archivées d'avant le fil.
+ *
+ * Le pré-remplissage depuis un match (`./prefill`) ne la concerne plus : c'est
+ * le champ du fil qu'il alimente désormais.
  *
  * Une seule zone de saisie, libre : les tableaux de stats de Valorant n'ont pas
  * de format stable (client de jeu, Tracker.gg, capture recopiée), donc découper
@@ -35,7 +44,7 @@ import { Notice } from "../components/Notice";
 import { deleteDebrief, listDebriefs } from "../data";
 import { CoachError, requestDebrief } from "./coach-api";
 import { DebriefCard } from "./DebriefCard";
-import { takeCoachDebriefFocus, takeCoachPrefill } from "./prefill";
+import { takeCoachDebriefFocus } from "./prefill";
 
 type History =
   | { readonly status: "loading" }
@@ -127,18 +136,6 @@ export function CoachView({ initialStats }: CoachViewProps = {}) {
   useEffect(() => {
     void load();
   }, [load]);
-
-  // Le pré-remplissage est relevé dans un effet, pas dans l'initialisation de
-  // l'état : `useState(takeCoachPrefill())` serait appelé deux fois en
-  // développement (StrictMode rejoue le rendu), et le second appel trouverait
-  // la boîte déjà vidée par le premier. La boîte est relevée dans tous les cas
-  // — même quand `initialStats` gagne — pour qu'un dépôt orphelin ne
-  // ressurgisse pas au prochain montage de la vue.
-  useEffect(() => {
-    const pending = takeCoachPrefill();
-
-    if (pending !== null && initialStats === undefined) setStats(pending);
-  }, [initialStats]);
 
   const trimmed = stats.trim();
   const tooLong = stats.length > MAX_STATS_LENGTH;

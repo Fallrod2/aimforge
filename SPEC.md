@@ -186,6 +186,33 @@ pas après la sortie de la S6 (une rétro-migration de données réelles).
   jamais versionné comme vraie donnée) démontre qu'un historique S5 affiché
   sous une saison courante S6 garde exactement ses valeurs S5.
 
+## 5 sexies. Tracker v2, coach conversationnel, gating routine (acté 2026-08-10)
+
+Six chantiers actés (V1→V6), lancés par vagues parallèles :
+
+- **V1 — Données Valorant enrichies** : détail complet d'un match à la demande
+  (scoreboard des 10 joueurs, perf par side, rounds) via HenrikDev, mis en
+  cache ; agrégats par période/agent/map (winrate, K/D, HS%, ADR) calculés en
+  modules purs testés.
+- **V2 — Tracker façon tracker.gg** (dépend V1) : vue d'ensemble profil,
+  tendances match après match (RR, HS%, ADR), page de détail par match, pont
+  bench ↔ in-game (énergie Voltaic superposée aux perfs).
+- **V3 — Coach conversationnel** : l'onglet Coach devient UN fil global
+  continu (le coach connaît matchs, bench, profil) ; les debriefs structurés
+  deviennent des cartes générées dans le fil ; questions préconstruites en
+  chips. Les fils par debrief existants migrent ou s'archivent proprement.
+- **V4 — Mini-analyse par match** (dépend V1+V3) : courte analyse générée sur
+  la page d'un match, « Approfondir » ouvre le fil coach contextualisé.
+- **V5 — Routine ancrée dans les données** (dépend V1) : sous 5 matchs récents
+  importés, routine « bench seul » + bandeau explicite ; le modèle CITE les
+  chiffres sources et le serveur vérifie chaque citation contre les vraies
+  données (relance corrective, patron police de scénarios).
+- **V6 — Import KovaaK's sans friction** : compte lié → pull automatique à
+  l'ouverture du tracker (pré-remplissage sans bouton), « Rafraîchir » à la
+  demande, sauvegarde toujours manuelle. Inclut : palier par défaut = dernier
+  bench, message « passe au palier supérieur » quand tout est au plafond,
+  squelette des 9 sous-catégories pendant le chargement.
+
 ## 6. Sécurité
 
 - RLS activé sur toutes les tables, policies testées (un utilisateur A ne voit jamais les données de B).

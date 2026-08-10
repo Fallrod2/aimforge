@@ -1,0 +1,573 @@
+/**
+ * L'onglet Coach : **un fil continu** (SPEC §5 sexies, V3).
+ *
+ * Ce qui change par rapport à la vue précédente n'est pas cosmétique. Le coach
+ * n'est plus une machine à produire des debriefs qu'on relit ensuite : c'est
+ * une conversation qui sait où en est le joueur (profil, bench, matchs
+ * importés, debriefs passés), et les debriefs structurés deviennent des
+ * **cartes générées dans le fil**.
+ *
+ * Quatre décisions portent l'écran, et chacune se paie :
+ *
+ * 1. **les chips envoient, elles ne pré-remplissent pas.** Une question
+ *    préconstruite qu'il faut ensuite valider fait deux gestes pour une
+ *    intention. La contrepartie assumée : un clic consomme un message du quota,
+ *    donc les chips sont désactivées pendant un envoi et le compteur reste
+ *    visible ;
+ * 2. **rien n'est affiché de façon optimiste.** La fonction ne persiste rien
+ *    quand la génération échoue (pas de conversation trouée), donc un message
+ *    ajouté localement puis conservé après une panne serait un mensonge durable.
+ *    Le texte reste dans la zone de saisie, où l'utilisateur peut le renvoyer ;
+ * 3. **la suggestion de debrief est un bouton, pas une génération.** Le modèle
+ *    peut proposer un debrief ; c'est le clic qui dépense le quota `coach`.
+ *    Générer sur la seule décision du modèle serait une double dépense cachée ;
+ * 4. **l'historique des debriefs est un repli sous le fil**, monté seulement
+ *    quand on l'ouvre. Il garde tout ce qui existait (collage manuel,
+ *    suppression, conversations archivées) sans encombrer la conversation, et
+ *    sans payer son chargement pour ceux qui ne l'ouvrent pas.
+ */
+
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { CHAT_DAILY_QUOTA } from "../../shared/coach-chat-contract";
+import type { StoredDebrief } from "../../shared/coach-contract";
+import {
+  type DebriefSuggestion,
+  THREAD_MESSAGE_MAX,
+  type ThreadMessage,
+} from "../../shared/coach-thread-contract";
+import { Notice } from "../components/Notice";
+import { clearThread, lastUndebriefedMatch, listDebriefs, listThreadMessages } from "../data";
+import { CoachView } from "./CoachView";
+import { CoachError, requestDebriefForMatch } from "./coach-api";
+import { DebriefCard } from "./DebriefCard";
+import { appendMessages, planDebriefFocus } from "./focus";
+import { setCoachDebriefFocus, takeCoachDebriefFocus, takeCoachPrefill } from "./prefill";
+import { requestThreadReply, ThreadError } from "./thread-api";
+
+type Thread =
+  | { readonly status: "loading" }
+  | { readonly status: "error"; readonly message: string }
+  | { readonly status: "ready"; readonly messages: readonly ThreadMessage[] };
+
+/** Un échec : quota atteint et panne ne se disent pas pareil. */
+interface Failure {
+  readonly message: string;
+  readonly quota: boolean;
+}
+
+/**
+ * Ce que l'écran sait du quota du jour. Trois états et non un `number | null` :
+ * `null` voudrait dire à la fois « pas encore demandé » et « il n'y a plus rien
+ * à compter » (configuration IA personnelle, SPEC §5 ter).
+ */
+type Quota =
+  | { readonly status: "unknown" }
+  | { readonly status: "lifted" }
+  | { readonly status: "counted"; readonly remaining: number };
+
+const PLACEHOLDER = "Pose ta question au coach…";
+
+/** Les questions préconstruites, dans l'ordre où elles se posent vraiment. */
+const CHIPS = [
+  "Pourquoi je stagne ?",
+  "Que travailler aujourd'hui ?",
+  "Compare mon bench et mes games",
+] as const;
+
+/**
+ * L'intitulé du chip. Le message qui apparaît dans le fil, lui, est écrit par
+ * la fonction (« Analyse ce match. ») : la ligne d'un tour n'est plus rédigée
+ * par le navigateur.
+ */
+const ANALYSE_LAST_MATCH = "Analyse mon dernier match";
+
+const NO_MATCH_TO_DEBRIEF =
+  "Aucun match importé en attente de debrief. Importe une partie depuis le tracker, ou colle tes stats dans l'historique ci-dessous.";
+
+const CARD_NOT_POSTED =
+  "Le debrief est généré, mais sa carte n'a pas pu être posée dans le fil. Il est ouvert dans l'historique, juste en dessous.";
+
+function failureOf(cause: unknown, fallback: string): Failure {
+  if (cause instanceof ThreadError || cause instanceof CoachError) {
+    return { message: cause.message, quota: cause.quotaReached };
+  }
+  return { message: cause instanceof Error ? cause.message : fallback, quota: false };
+}
+
+export function CoachThreadView() {
+  const [thread, setThread] = useState<Thread>({ status: "loading" });
+  const [debriefs, setDebriefs] = useState<readonly StoredDebrief[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  // Un état à annoncer sans que ce soit un échec : « rien à débriefer », « la
+  // carte n'a pas pu être posée ». Le titre voyage avec le texte parce que les
+  // deux cas ne se disent pas pareil.
+  const [notice, setNotice] = useState<{ title: string; body: string } | null>(null);
+  const [quota, setQuota] = useState<Quota>({ status: "unknown" });
+  const [suggestion, setSuggestion] = useState<DebriefSuggestion | null>(null);
+  const [expandedCard, setExpandedCard] = useState<number | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [scrollToCard, setScrollToCard] = useState<number | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  const load = useCallback(async () => {
+    setThread({ status: "loading" });
+    try {
+      // Les debriefs servent aux **cartes** du fil : un message qui porte une
+      // référence est rendu avec le debrief correspondant. Ils sont chargés ici
+      // et pas dans chaque carte, sinon un fil qui en contient cinq
+      // déclencherait cinq requêtes pour la même liste.
+      const [messages, stored] = await Promise.all([listThreadMessages(), listDebriefs()]);
+
+      setThread({ status: "ready", messages });
+      setDebriefs(stored);
+
+      // Le pont depuis le dashboard (« Débriefer » sur un match) : la boîte à
+      // lettres désigne un debrief, le fil décide quoi en faire. Elle est
+      // relevée **ici** et pas dans un effet séparé, parce que la décision a
+      // besoin du fil qu'on vient de charger — sans lui, on ne peut pas savoir
+      // si la carte y est.
+      const plan = planDebriefFocus(messages, takeCoachDebriefFocus());
+
+      if (plan.kind === "card") {
+        setExpandedCard(plan.debriefId);
+        setScrollToCard(plan.debriefId);
+      }
+      if (plan.kind === "history") {
+        // Pas de carte dans le fil : on **repose** l'identifiant dans la boîte
+        // et on ouvre l'historique, qui la relèvera à son montage. Rendre la
+        // boîte à celui qui sait l'honorer vaut mieux que dupliquer sa logique.
+        setCoachDebriefFocus(plan.debriefId);
+        setHistoryOpen(true);
+      }
+    } catch (cause) {
+      setThread({
+        status: "error",
+        message: cause instanceof Error ? cause.message : "Chargement impossible.",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Le pont depuis les matchs (`./prefill`) alimente désormais le champ du fil.
+  // Il est relevé dans un effet et non à l'initialisation de l'état :
+  // `useState(takeCoachPrefill())` serait appelé deux fois en développement
+  // (StrictMode rejoue le rendu) et le second appel trouverait la boîte déjà
+  // vidée par le premier.
+  useEffect(() => {
+    const pending = takeCoachPrefill();
+
+    if (pending !== null) setDraft(pending);
+  }, []);
+
+  const messages = thread.status === "ready" ? thread.messages : [];
+  const count = messages.length;
+
+  // Le fil grandit par le bas : après un aller-retour, c'est la réponse qu'on
+  // veut voir. Rien au premier rendu — faire sauter la page à l'ouverture de
+  // l'onglet serait désagréable.
+  const firstRender = useRef(true);
+
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    if (count === 0) return;
+    endRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [count]);
+
+  // La carte désignée par le pont : on l'amène à l'écran une fois qu'elle est
+  // dépliée. L'ancre est le panneau que `DebriefCard` monte à ce moment-là —
+  // viser la carte repliée ferait remonter l'écran avant que son contenu existe.
+  useEffect(() => {
+    if (scrollToCard === null) return;
+
+    document
+      .getElementById(`debrief-${scrollToCard}-detail`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setScrollToCard(null);
+  }, [scrollToCard]);
+
+  const trimmed = draft.trim();
+  const tooLong = draft.length > THREAD_MESSAGE_MAX;
+  const busy = sending || generating;
+  const canSend = trimmed !== "" && !tooLong && !busy;
+
+  function appended(added: readonly ThreadMessage[]): void {
+    setThread((current) =>
+      current.status === "ready"
+        ? { status: "ready", messages: appendMessages(current.messages, added) }
+        : { status: "ready", messages: added },
+    );
+  }
+
+  /** Un tour de conversation. Le brouillon n'est vidé qu'en cas de succès. */
+  async function send(message: string, clearDraft: boolean): Promise<void> {
+    setSending(true);
+    setFailure(null);
+    setNotice(null);
+    setSuggestion(null);
+    try {
+      const reply = await requestThreadReply(message);
+
+      appended([reply.question, reply.answer]);
+      setSuggestion(reply.suggestion);
+      setQuota(
+        reply.remaining === null
+          ? { status: "lifted" }
+          : { status: "counted", remaining: reply.remaining },
+      );
+      if (clearDraft) setDraft("");
+    } catch (cause) {
+      setFailure(failureOf(cause, "L'envoi a échoué."));
+      if (cause instanceof ThreadError && cause.remaining !== null) {
+        setQuota({ status: "counted", remaining: cause.remaining });
+      }
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function submit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (!canSend) return;
+    await send(trimmed, true);
+  }
+
+  /**
+   * Génère un debrief et le pose dans le fil.
+   *
+   * `matchId` non fourni = le geste part du chip : on cherche d'abord s'il y a
+   * quelque chose à débriefer, pour ne pas envoyer l'utilisateur chercher un
+   * 404. Fourni = il vient de la suggestion du coach, que le serveur a déjà
+   * choisie.
+   */
+  async function generateDebrief(matchId: string | null): Promise<void> {
+    setGenerating(true);
+    setFailure(null);
+    setNotice(null);
+    try {
+      const target = matchId ?? (await lastUndebriefedMatch())?.matchId ?? null;
+
+      if (target === null) {
+        setNotice({ title: "Rien à débriefer.", body: NO_MATCH_TO_DEBRIEF });
+        return;
+      }
+
+      // `thread: true` : c'est la fonction qui pose la carte dans le fil, sous
+      // la service key (migration 0015), et qui la rend ici. Le navigateur ne
+      // peut plus l'écrire — et n'a plus à le faire.
+      const { debrief, thread: posted } = await requestDebriefForMatch(target, { thread: true });
+
+      setDebriefs((current) => [debrief, ...current]);
+      setExpandedCard(debrief.id);
+      setSuggestion(null);
+
+      // Carte absente = sa pose a échoué alors que le debrief, lui, est bien
+      // enregistré et facturé. On ne perd pas le geste : l'historique l'a.
+      if (posted === undefined) {
+        setNotice({ title: "Le fil n'a pas reçu la carte.", body: CARD_NOT_POSTED });
+        setCoachDebriefFocus(debrief.id);
+        setHistoryOpen(true);
+        return;
+      }
+      appended(posted);
+      setScrollToCard(debrief.id);
+    } catch (cause) {
+      setFailure(failureOf(cause, "Le debrief n'a pas pu être généré."));
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function confirmClear(): Promise<void> {
+    setClearing(true);
+    setFailure(null);
+    try {
+      await clearThread();
+      setThread({ status: "ready", messages: [] });
+      setSuggestion(null);
+      setConfirmingClear(false);
+    } catch (cause) {
+      setFailure(failureOf(cause, "Le fil n'a pas pu être effacé."));
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  const byId = new Map(debriefs.map((debrief) => [debrief.id, debrief]));
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-lg font-semibold text-steel-100">Coach</h2>
+          <p className="mt-0.5 text-xs text-steel-500">
+            Une seule conversation, qui connaît tes matchs, ton dernier bench et ton profil.
+          </p>
+        </div>
+
+        {count > 0 && !confirmingClear ? (
+          <button
+            type="button"
+            onClick={() => setConfirmingClear(true)}
+            className="rounded-lg border border-steel-800 px-3 py-1.5 text-xs font-medium text-steel-500 transition-colors hover:border-ember-600 hover:text-ember-400"
+          >
+            Effacer le fil
+          </button>
+        ) : null}
+      </div>
+
+      {confirmingClear ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-steel-800 bg-steel-900/60 px-4 py-3">
+          <p className="mr-auto text-xs text-steel-400">
+            Effacer tout le fil ? Tes debriefs, eux, restent dans l'historique.
+          </p>
+          <button
+            type="button"
+            onClick={() => setConfirmingClear(false)}
+            disabled={clearing}
+            className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:text-steel-100 disabled:opacity-50"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            onClick={() => void confirmClear()}
+            disabled={clearing}
+            className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
+          >
+            {clearing ? "Effacement…" : "Confirmer"}
+          </button>
+        </div>
+      ) : null}
+
+      <section className="flex flex-col gap-3">
+        {thread.status === "loading" ? (
+          <Notice tone="loading" title="Chargement du fil…" />
+        ) : thread.status === "error" ? (
+          <Notice tone="error" title="Le fil n'a pas pu être chargé." onRetry={() => void load()}>
+            {thread.message}
+          </Notice>
+        ) : messages.length === 0 ? (
+          <Notice tone="empty" title="Le fil est vide.">
+            Pose une question, ou lance-toi avec une des propositions ci-dessous : le coach a le
+            contexte de tes parties, de ton bench et de ton profil.
+          </Notice>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {messages.map((message) => {
+              const debrief = message.debriefId === null ? null : byId.get(message.debriefId);
+
+              return debrief === null || debrief === undefined ? (
+                <Bubble key={message.id} message={message} />
+              ) : (
+                <DebriefCard
+                  key={message.id}
+                  debrief={debrief}
+                  readOnly
+                  expanded={expandedCard === debrief.id}
+                  onToggle={() => setExpandedCard(expandedCard === debrief.id ? null : debrief.id)}
+                />
+              );
+            })}
+          </ul>
+        )}
+        <div ref={endRef} />
+
+        {sending ? (
+          <Notice tone="loading" title="Le coach réfléchit…">
+            Quelques secondes. Ne recharge pas la page.
+          </Notice>
+        ) : null}
+
+        {generating ? (
+          <Notice tone="loading" title="Le coach analyse ta partie…">
+            La génération d'un debrief prend quelques secondes.
+          </Notice>
+        ) : null}
+
+        {suggestion !== null && !busy ? (
+          <div className="rounded-xl border border-ember-600/40 bg-ember-600/10 px-4 py-3">
+            {suggestion.matchId === null ? (
+              <p className="text-xs leading-relaxed text-steel-400">{NO_MATCH_TO_DEBRIEF}</p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void generateDebrief(suggestion.matchId)}
+                className="rounded-lg bg-ember-500 px-3 py-2 text-xs font-semibold text-steel-950 transition-colors hover:bg-ember-400"
+              >
+                Générer le debrief de ce match
+              </button>
+            )}
+          </div>
+        ) : null}
+
+        {notice !== null ? (
+          <Notice tone="empty" title={notice.title}>
+            {notice.body}
+          </Notice>
+        ) : null}
+
+        {failure !== null ? (
+          failure.quota ? (
+            <Notice tone="empty" title="Quota du jour atteint.">
+              {failure.message}
+            </Notice>
+          ) : (
+            <Notice tone="error" title="Le coach n'a pas pu répondre.">
+              <p>{failure.message}</p>
+              <p className="mt-1">Ton texte est resté dans la zone de saisie.</p>
+            </Notice>
+          )
+        ) : null}
+      </section>
+
+      <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Chip
+            label={ANALYSE_LAST_MATCH}
+            disabled={busy}
+            onClick={() => void generateDebrief(null)}
+          />
+          {CHIPS.map((chip) => (
+            <Chip key={chip} label={chip} disabled={busy} onClick={() => void send(chip, false)} />
+          ))}
+        </div>
+
+        <label htmlFor="coach-thread-input" className="sr-only">
+          Message au coach
+        </label>
+        <textarea
+          id="coach-thread-input"
+          rows={3}
+          value={draft}
+          disabled={busy}
+          placeholder={PLACEHOLDER}
+          aria-describedby="coach-thread-count"
+          onChange={(event) => setDraft(event.target.value)}
+          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2 text-sm leading-relaxed text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60"
+        />
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <button
+            type="submit"
+            disabled={!canSend}
+            className="rounded-lg bg-ember-500 px-4 py-2 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
+          >
+            {sending ? "Envoi…" : "Envoyer"}
+          </button>
+
+          <p
+            id="coach-thread-count"
+            className={`font-mono text-[11px] tabular-nums ${tooLong ? "text-ember-400" : "text-steel-500"}`}
+          >
+            {draft.length} / {THREAD_MESSAGE_MAX}
+            {tooLong ? " · trop long" : ""}
+          </p>
+
+          <p className="ml-auto text-[11px] text-steel-500">
+            {quota.status === "unknown"
+              ? `${CHAT_DAILY_QUOTA} messages par jour`
+              : quota.status === "lifted"
+                ? "Quota levé · ta configuration IA"
+                : `${quota.remaining} message${quota.remaining > 1 ? "s" : ""} restant${quota.remaining > 1 ? "s" : ""}`}
+          </p>
+        </div>
+      </form>
+
+      <section className="border-t border-steel-800 pt-5">
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(!historyOpen)}
+          aria-expanded={historyOpen}
+          aria-controls="coach-debriefs"
+          className="flex w-full items-center gap-2 text-left text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase transition-colors hover:text-steel-200"
+        >
+          Historique des debriefs
+          <Chevron open={historyOpen} />
+        </button>
+
+        {/* Monté seulement à l'ouverture : replié, il ne charge rien. */}
+        {historyOpen ? (
+          <div id="coach-debriefs" className="mt-4">
+            <CoachView />
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function Chip({
+  label,
+  disabled,
+  onClick,
+}: {
+  readonly label: string;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded-full border border-steel-700 bg-steel-900/60 px-3 py-1.5 text-xs text-steel-300 transition-colors hover:border-ember-600 hover:text-ember-300 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * Un message. Le texte du coach est rendu tel quel, retours à la ligne compris
+ * (`whitespace-pre-line`) : le prompt lui demande du texte simple, pas du
+ * markdown, et interpréter des astérisques ici donnerait un rendu incohérent le
+ * jour où il en écrirait quand même.
+ */
+function Bubble({ message }: { readonly message: ThreadMessage }) {
+  const mine = message.role === "user";
+
+  return (
+    <li className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed whitespace-pre-line sm:max-w-[80%] ${
+          mine ? "bg-steel-800 text-steel-200" : "bg-steel-900/60 text-steel-300"
+        }`}
+      >
+        <span className="mb-0.5 block text-[10px] font-semibold tracking-wide text-steel-500 uppercase">
+          {mine ? "Toi" : "Coach"}
+        </span>
+        {message.content}
+      </div>
+    </li>
+  );
+}
+
+function Chevron({ open }: { readonly open: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 12 12"
+      className={`size-3 shrink-0 text-steel-500 transition-transform ${open ? "rotate-180" : ""}`}
+    >
+      <path
+        d="M2 4.5 6 8.5 10 4.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

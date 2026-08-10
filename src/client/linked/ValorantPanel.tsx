@@ -157,7 +157,11 @@ function Live({ account }: { readonly account: LinkedAccount }) {
     setDebriefing(matchId);
     setDebriefError(null);
     try {
-      const { debrief: created } = await requestDebriefForMatch(matchId);
+      // `thread: true` : le debrief part aussi dans le fil du coach sous forme
+      // de carte (SPEC §5 sexies). Sans ce drapeau, le joueur arrive sur un fil
+      // muet alors que son quota vient d'être consommé — c'est la fonction qui
+      // pose la carte, le navigateur n'y a plus accès (migration 0015).
+      const { debrief: created } = await requestDebriefForMatch(matchId, { thread: true });
 
       setDebriefed((current) => new Map(current).set(matchId, created.id));
       openCoach(created.id);

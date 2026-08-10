@@ -11,6 +11,7 @@
  */
 
 import { z } from "zod";
+import { threadMessageSchema } from "./coach-thread-contract.js";
 
 /**
  * Taille maximale du texte collé par le joueur. Au-delà, la fonction répond
@@ -52,9 +53,27 @@ export const COACH_DAILY_QUOTA = 5;
  * schéma est le bon endroit pour le dire. Un corps qui porte les deux entre
  * par la première branche (`stats`), qui reste le chemin de référence.
  */
+/**
+ * Le drapeau du fil (SPEC §5 sexies), commun aux deux branches.
+ *
+ * `true` = ce debrief est demandé **depuis le fil du coach** (ou depuis un
+ * geste qui y mène, comme « Débriefer » sur un match du dashboard) : la
+ * fonction y pose alors la carte, sous la service key, parce que la migration
+ * 0015 interdit au navigateur d'écrire une ligne `role = 'coach'`.
+ *
+ * Absent ou `false` = le debrief reste dans l'historique et nulle part
+ * ailleurs. C'est le cas du collage manuel : un debrief collé depuis
+ * l'historique n'est pas un tour de conversation.
+ *
+ * Facultatif plutôt qu'obligatoire : un appelant qui l'ignore obtient le
+ * comportement d'avant le fil, ce qui est le bon défaut pour un drapeau
+ * d'affichage.
+ */
+const threadFlag = { thread: z.boolean().optional() };
+
 export const coachRequestSchema = z.union([
-  z.object({ stats: z.string().trim().min(1).max(MAX_STATS_LENGTH) }),
-  z.object({ match_id: z.string().trim().min(1).max(MAX_MATCH_ID_LENGTH) }),
+  z.object({ stats: z.string().trim().min(1).max(MAX_STATS_LENGTH), ...threadFlag }),
+  z.object({ match_id: z.string().trim().min(1).max(MAX_MATCH_ID_LENGTH), ...threadFlag }),
 ]);
 
 export type CoachRequest = z.infer<typeof coachRequestSchema>;
@@ -106,6 +125,20 @@ export type StoredDebrief = z.infer<typeof storedDebriefSchema>;
 /** La réponse de `POST /api/coach` en cas de succès. */
 export const coachResponseSchema = z.object({
   debrief: storedDebriefSchema,
+  /**
+   * Les deux messages posés dans le fil quand la requête portait
+   * `thread: true` : la demande, puis la carte (SPEC §5 sexies).
+   *
+   * Ils reviennent pour que l'écran les affiche **sans recharger** — le
+   * navigateur ne peut plus les écrire lui-même (migration 0015), donc il ne
+   * peut pas non plus les deviner.
+   *
+   * **Facultatif, et l'absence n'est pas un échec** : le debrief est généré,
+   * enregistré et facturé avant que la carte soit posée. Si la pose échoue, la
+   * réponse rend le debrief sans `thread` plutôt que de perdre ce qui a été
+   * payé ; l'écran se rabat alors sur l'historique.
+   */
+  thread: z.array(threadMessageSchema).optional(),
   /**
    * Debriefs restants aujourd'hui, après celui-ci — ou `null` quand il n'y a
    * rien à compter : l'utilisateur a configuré son propre fournisseur (SPEC

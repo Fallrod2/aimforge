@@ -1,26 +1,26 @@
 /**
- * Appel de la fonction serverless `POST /api/coach-chat` (SPEC §5 ter bis).
+ * Appel de la fonction serverless `POST /api/coach-thread` (SPEC §5 sexies).
  *
  * Jumeau de `./coach-api.ts`, pour la même unique raison : la clé du
- * fournisseur ne peut pas exister dans un navigateur. La lecture de la
- * conversation, elle, ne passe pas par ici — elle va directement à Postgres
- * (`../data/coach-messages.ts`), parce qu'elle n'a besoin d'aucun secret.
+ * fournisseur ne peut pas exister dans un navigateur. La lecture du fil, elle,
+ * ne passe pas par ici — elle va directement à Postgres
+ * (`../data/coach-thread.ts`), parce qu'elle n'a besoin d'aucun secret.
  *
  * Le JWT de la session est joint à la main (`Authorization: Bearer`) : la
  * fonction n'est pas Supabase, elle ne reçoit rien automatiquement.
  */
 
 import {
-  type ChatResponse,
-  chatErrorSchema,
-  chatResponseSchema,
-} from "../../shared/coach-chat-contract";
+  type ThreadResponse,
+  threadErrorSchema,
+  threadResponseSchema,
+} from "../../shared/coach-thread-contract";
 import { NO_SESSION_MESSAGE } from "../data/errors";
 import { supabase } from "../supabase/client";
 
 /** Échec d'un message au coach, porteur d'un message destiné à l'écran. */
-export class ChatError extends Error {
-  override readonly name = "ChatError";
+export class ThreadError extends Error {
+  override readonly name = "ThreadError";
   /** Statut HTTP, ou `0` si la requête n'a jamais abouti. */
   readonly status: number;
   /** Messages restants aujourd'hui, quand la fonction l'a dit. */
@@ -41,14 +41,14 @@ export class ChatError extends Error {
 const OFFLINE = "Le coach est injoignable : vérifie ta connexion, puis réessaie.";
 
 const NOT_DEPLOYED =
-  "Le chat n'est pas disponible ici : la fonction `/api/coach-chat` n'est pas servie. En local, lance `bunx vercel dev` plutôt que `bun dev`.";
+  "Le fil n'est pas disponible ici : la fonction `/api/coach-thread` n'est pas servie. En local, lance `bunx vercel dev` plutôt que `bun dev`.";
 
 const UNEXPECTED = "Le coach a renvoyé une réponse inattendue. Réessaie dans un instant.";
 
 /** Le message d'un échec HTTP : celui de la fonction si elle en a donné un. */
 function errorMessage(status: number, body: string): { message: string; remaining: number | null } {
   try {
-    const parsed = chatErrorSchema.safeParse(JSON.parse(body));
+    const parsed = threadErrorSchema.safeParse(JSON.parse(body));
 
     if (parsed.success) {
       return { message: parsed.data.error, remaining: parsed.data.remaining ?? null };
@@ -61,32 +61,32 @@ function errorMessage(status: number, body: string): { message: string; remainin
 }
 
 /**
- * Envoie un message au coach sous un debrief. Lève un `ChatError` déjà rédigé
- * en cas d'échec.
+ * Envoie un message dans le fil. Lève un `ThreadError` déjà rédigé en cas
+ * d'échec.
  *
- * La réponse porte **les deux** messages enregistrés, pas seulement celle du
+ * La réponse porte **les deux** messages enregistrés, pas seulement celui du
  * coach : rien n'est persisté quand la génération échoue, donc l'écran ne peut
  * pas ajouter localement ce qu'il vient d'envoyer — il aurait un message
  * fantôme après chaque panne.
  */
-export async function requestCoachChat(debriefId: number, message: string): Promise<ChatResponse> {
+export async function requestThreadReply(message: string): Promise<ThreadResponse> {
   const { data, error } = await supabase.auth.getSession();
   const token = data.session?.access_token;
 
   if (error !== null || token === undefined) {
-    throw new ChatError(NO_SESSION_MESSAGE, 401, null, error);
+    throw new ThreadError(NO_SESSION_MESSAGE, 401, null, error);
   }
 
   let response: Response;
 
   try {
-    response = await fetch("/api/coach-chat", {
+    response = await fetch("/api/coach-thread", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ debrief_id: debriefId, message }),
+      body: JSON.stringify({ message }),
     });
   } catch (cause) {
-    throw new ChatError(OFFLINE, 0, null, cause);
+    throw new ThreadError(OFFLINE, 0, null, cause);
   }
 
   const body = await response.text();
@@ -94,7 +94,7 @@ export async function requestCoachChat(debriefId: number, message: string): Prom
   if (!response.ok) {
     const failure = errorMessage(response.status, body);
 
-    throw new ChatError(failure.message, response.status, failure.remaining);
+    throw new ThreadError(failure.message, response.status, failure.remaining);
   }
 
   let payload: unknown;
@@ -102,13 +102,13 @@ export async function requestCoachChat(debriefId: number, message: string): Prom
   try {
     payload = JSON.parse(body);
   } catch (cause) {
-    throw new ChatError(UNEXPECTED, response.status, null, cause);
+    throw new ThreadError(UNEXPECTED, response.status, null, cause);
   }
 
-  const parsed = chatResponseSchema.safeParse(payload);
+  const parsed = threadResponseSchema.safeParse(payload);
 
   if (!parsed.success) {
-    throw new ChatError(UNEXPECTED, response.status, null, parsed.error);
+    throw new ThreadError(UNEXPECTED, response.status, null, parsed.error);
   }
   return parsed.data;
 }

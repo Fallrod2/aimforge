@@ -148,9 +148,30 @@ async function postCoach(payload: Record<string, unknown>): Promise<CoachRespons
   return parsed.data;
 }
 
-/** Demande un debrief à partir des stats collées par le joueur. */
-export function requestDebrief(stats: string): Promise<CoachResponse> {
-  return postCoach({ stats });
+/**
+ * Options communes aux deux demandes.
+ *
+ * `thread` dit **d'où vient le geste**, pas ce qu'il faut afficher : depuis le
+ * fil (ou depuis « Débriefer » sur un match, qui y mène), la fonction pose
+ * elle-même la carte dans le fil et la rend dans sa réponse. C'est elle qui
+ * l'écrit et non le navigateur, parce que la migration 0015 réserve les lignes
+ * du coach au serveur.
+ */
+export interface DebriefOptions {
+  readonly thread?: boolean;
+}
+
+/**
+ * Demande un debrief à partir des stats collées par le joueur.
+ *
+ * Sans `thread`, le debrief reste dans l'historique : un collage manuel n'est
+ * pas un tour de conversation.
+ */
+export function requestDebrief(
+  stats: string,
+  { thread = false }: DebriefOptions = {},
+): Promise<CoachResponse> {
+  return postCoach({ stats, thread });
 }
 
 /**
@@ -160,6 +181,9 @@ export function requestDebrief(stats: string): Promise<CoachResponse> {
  * base et le met en texte. Le navigateur n'envoie pas de stats pré-formatées,
  * sinon il suffirait de mentir sur le contenu du match.
  */
-export function requestDebriefForMatch(matchId: string): Promise<CoachResponse> {
-  return postCoach({ match_id: matchId });
+export function requestDebriefForMatch(
+  matchId: string,
+  { thread = false }: DebriefOptions = {},
+): Promise<CoachResponse> {
+  return postCoach({ match_id: matchId, thread });
 }

@@ -27,7 +27,7 @@ import { AppLayout } from "./app/AppLayout";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { AuthView } from "./auth/AuthView";
 import { RecoveryView } from "./auth/RecoveryView";
-import { CoachView } from "./coach/CoachView";
+import { CoachThreadView } from "./coach/CoachThreadView";
 import { DashboardView } from "./dashboard/DashboardView";
 import { LandingView } from "./landing/LandingView";
 import { ProfileView } from "./profile/ProfileView";
@@ -125,7 +125,9 @@ function View({ route, navigate }: ViewProps) {
     case "history":
       return <HistoryView focusRunId={route.runId} onFocusRun={focusRun} />;
     case "coach":
-      return <CoachView />;
+      // L'onglet Coach est le fil (SPEC §5 sexies) ; l'historique des debriefs
+      // vit à l'intérieur, en repli.
+      return <CoachThreadView />;
     case "routine":
       return <RoutineView />;
     case "profile":
