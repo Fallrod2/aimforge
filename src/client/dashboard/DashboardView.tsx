@@ -20,7 +20,7 @@
  */
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { getTier } from "../../lib/energy";
+import { getTierFor } from "../../lib/energy";
 import type { StoredDebrief } from "../../shared/coach-contract";
 import type { StoredRoutine } from "../../shared/routine-contract";
 import { RankBadge } from "../components/RankBadge";
@@ -32,7 +32,7 @@ import {
   listDebriefs,
   listRoutines,
 } from "../data";
-import { rankColorFor } from "../energy-view";
+import { rankColorForSeason } from "../energy-view";
 import { formatEnergy, formatRunDate } from "../format";
 import { LinkInvite } from "../linked/LinkInvite";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
@@ -295,6 +295,9 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
 
   const { run } = bench;
 
+  // Libellé de palier et couleur de rang lus dans la saison **de la passe** :
+  // le dashboard montre la dernière passe, quelle que soit sa saison, et ne
+  // doit pas la repeindre aux couleurs de la saison courante (SPEC §5 quinquies).
   return (
     <a href={historyHash(run.id)} className="flex items-end gap-4">
       <div>
@@ -302,13 +305,13 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
           {run.overall > 0 ? formatEnergy(run.overall) : "—"}
         </p>
         <p className="mt-2 text-xs text-steel-500">
-          {getTier(run.tier).label} · {formatRunDate(run.date)}
+          {getTierFor(run.season, run.tier).label} · {formatRunDate(run.date)}
         </p>
       </div>
       <div className="ml-auto shrink-0">
         <RankBadge
           rank={run.rank}
-          color={rankColorFor(run.tier, run.overall)}
+          color={rankColorForSeason(run.season, run.tier, run.overall)}
           complete={run.complete}
         />
       </div>

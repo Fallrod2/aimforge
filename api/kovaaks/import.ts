@@ -29,6 +29,7 @@ import {
   type KovaaksImportResponse,
   kovaaksImportRequestSchema,
 } from "../../src/client/data/linked-accounts-contract.js";
+import { currentSeason } from "../../src/lib/energy/index.js";
 import { mapBenchmarkProgress } from "../../src/server/kovaaks/benchmark.js";
 import { consumeDailyLimit, kovaaksImportLimit } from "../../src/server/linked/rate-limit.js";
 import {
@@ -103,13 +104,21 @@ export async function POST(request: Request): Promise<Response> {
 
     if (player === null) return fail(unknownPseudo(username), 404);
 
-    const progress = await fetchBenchmarkProgress(player.steamId, tier, budget);
-    const mapped = mapBenchmarkProgress(tier, progress);
+    // L'import sert à remplir une passe qu'on va jouer *maintenant* : c'est la
+    // saison courante qui fournit l'identifiant de benchmark, les noms de
+    // scénarios et, plus tard, les seuils (SPEC §5 quinquies).
+    const season = currentSeason();
+    const progress = await fetchBenchmarkProgress(player.steamId, season, tier, budget);
+    const mapped = mapBenchmarkProgress(season, tier, progress);
 
     if (mapped.unknown.length > 0) {
       // Pas une erreur pour l'utilisateur — mais le signe que le benchmark
       // amont a bougé, et la seule trace qu'on en aura.
-      console.warn("[kovaaks] scénarios non rattachés", { tier, unknown: mapped.unknown });
+      console.warn("[kovaaks] scénarios non rattachés", {
+        season,
+        tier,
+        unknown: mapped.unknown,
+      });
     }
 
     const response: KovaaksImportResponse = {
@@ -128,7 +137,7 @@ export async function POST(request: Request): Promise<Response> {
       // qui n'est pas la même chose qu'un pseudo inconnu.
       if (cause.status === 404) {
         return fail(
-          `« ${username} » n'a aucun score sur le benchmark Voltaic S5 ${tier}. Joue-le une fois sur KovaaK's, ou saisis tes scores à la main.`,
+          `« ${username} » n'a aucun score sur le benchmark Voltaic ${tier} de la saison courante. Joue-le une fois sur KovaaK's, ou saisis tes scores à la main.`,
           404,
         );
       }

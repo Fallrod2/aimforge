@@ -16,7 +16,13 @@
  *    (`BenchRunStore`) — ce chemin d'échec doit être testable sans base.
  */
 
-import { computeBenchRun, scenarioNames, type TierId } from "../../lib/energy";
+import {
+  computeBenchRun,
+  currentSeason,
+  type SeasonId,
+  scenarioNames,
+  type TierId,
+} from "../../lib/energy";
 import { supabase } from "../supabase/client";
 import { DataError, queryError } from "./errors";
 import {
@@ -28,7 +34,7 @@ import {
 import { currentUserId } from "./session";
 import type { BenchRunDetail, BenchRunSummary, BenchSource, SaveBenchRunInput } from "./types";
 
-const RUN_COLUMNS = "id, date, tier, overall, rank, complete, source";
+const RUN_COLUMNS = "id, date, tier, overall, rank, complete, source, season";
 const SCORE_COLUMNS = "scenario, score, energy";
 
 const RUN_NOT_FOUND = "Passe introuvable : elle a peut-être été supprimée.";
@@ -48,6 +54,8 @@ export interface BenchRunStore {
     readonly rank: string | null;
     readonly complete: boolean;
     readonly source: BenchSource;
+    /** Saison Voltaic estampillée à l'écriture ; jamais déduite à la lecture. */
+    readonly season: SeasonId;
   }): Promise<BenchRunRow>;
   /** Insère les scores d'une passe, en un seul lot. */
   insertScores(runId: number, scores: readonly ScenarioScoreRow[]): Promise<void>;
@@ -89,6 +97,10 @@ export async function saveBenchRunTo(
     // Une passe dont personne n'a dit d'où elle vient a été tapée à la main :
     // c'est le seul défaut qui ne surestime pas ce qu'on sait de la donnée.
     source: input.source ?? "manual",
+    // La saison n'est pas un choix de l'appelant : on enregistre ce qui est
+    // joué aujourd'hui, avec les seuils qui ont servi à calculer les énergies
+    // trois lignes plus haut (SPEC §5 quinquies).
+    season: currentSeason(),
   });
 
   try {
@@ -129,6 +141,7 @@ function supabaseStore(userId: string): BenchRunStore {
           rank: run.rank,
           complete: run.complete,
           source: run.source,
+          season: run.season,
         })
         .select(RUN_COLUMNS)
         .single();

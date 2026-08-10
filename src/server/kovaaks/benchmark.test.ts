@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { listScenarios } from "../../lib/energy";
+import { CURRENT_SEASON, getSeason, listScenarios, TIER_IDS } from "../../lib/energy";
 import {
-  KOVAAKS_BENCHMARK_IDS,
   type KovaaksBenchmarkProgress,
+  kovaaksBenchmarkId,
   kovaaksBenchmarkProgressSchema,
   mapBenchmarkProgress,
   normalizeScenarioName,
@@ -43,17 +43,19 @@ describe("voltaicScenarioName", () => {
       expect(official).toHaveLength(18);
       for (const scenario of official) {
         // La forme réellement servie par le Benchmark Tracker.
-        expect(voltaicScenarioName(tier, `${scenario.name} S5`)).toBe(scenario.name);
+        expect(voltaicScenarioName(CURRENT_SEASON, tier, `${scenario.name} S5`)).toBe(
+          scenario.name,
+        );
       }
     }
   });
 
   it("refuse un scénario d'un autre palier", () => {
-    expect(voltaicScenarioName("novice", "VT Pasu Advanced S5")).toBeNull();
+    expect(voltaicScenarioName(CURRENT_SEASON, "novice", "VT Pasu Advanced S5")).toBeNull();
   });
 
   it("refuse un scénario inconnu", () => {
-    expect(voltaicScenarioName("novice", "Tile Frenzy")).toBeNull();
+    expect(voltaicScenarioName(CURRENT_SEASON, "novice", "Tile Frenzy")).toBeNull();
   });
 });
 
@@ -93,6 +95,7 @@ describe("scoreMatchesRank", () => {
 describe("mapBenchmarkProgress", () => {
   it("ramène les centièmes à l'unité du tableur", () => {
     const result = mapBenchmarkProgress(
+      CURRENT_SEASON,
       "novice",
       progress({
         "VT Pasu Novice S5": { score: 68350, scenario_rank: 2, rank_maxes: [555, 660, 745, 800] },
@@ -104,6 +107,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("laisse vide un scénario jamais joué plutôt que d'y écrire 0", () => {
     const result = mapBenchmarkProgress(
+      CURRENT_SEASON,
       "novice",
       progress({ "VT Pasu Novice S5": { score: 0, scenario_rank: 0, rank_maxes: [555, 660] } }),
     );
@@ -114,6 +118,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("rejette un score qui contredit son propre rang", () => {
     const result = mapBenchmarkProgress(
+      CURRENT_SEASON,
       "novice",
       // 96840 centièmes = 968.4, très au-dessus de la tranche du rang 0.
       progress({
@@ -127,6 +132,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("compte les 18 scénarios du palier, renseignés ou non", () => {
     const result = mapBenchmarkProgress(
+      CURRENT_SEASON,
       "novice",
       progress({
         "VT Pasu Novice S5": { score: 68350, scenario_rank: 2, rank_maxes: [555, 660, 745, 800] },
@@ -140,7 +146,11 @@ describe("mapBenchmarkProgress", () => {
   });
 
   it("signale les scénarios qu'il n'a pas su rattacher", () => {
-    const result = mapBenchmarkProgress("novice", progress({ "Tile Frenzy": { score: 12300 } }));
+    const result = mapBenchmarkProgress(
+      CURRENT_SEASON,
+      "novice",
+      progress({ "Tile Frenzy": { score: 12300 } }),
+    );
 
     expect(result.unknown).toEqual(["Tile Frenzy"]);
     expect(result.scores).toEqual({});
@@ -148,6 +158,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("accepte un scénario sans rang ni seuils", () => {
     const result = mapBenchmarkProgress(
+      CURRENT_SEASON,
       "novice",
       progress({ "VT Pasu Novice S5": { score: 68350 } }),
     );
@@ -186,10 +197,18 @@ describe("kovaaksBenchmarkProgressSchema", () => {
   });
 });
 
-describe("KOVAAKS_BENCHMARK_IDS", () => {
+describe("kovaaksBenchmarkId", () => {
   it("désigne un benchmark distinct par palier", () => {
-    const ids = Object.values(KOVAAKS_BENCHMARK_IDS);
+    const ids = TIER_IDS.map((tier) => kovaaksBenchmarkId(CURRENT_SEASON, tier));
 
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("lit les identifiants dans la définition de saison, pas une constante locale", () => {
+    const { benchmarkIds } = getSeason(CURRENT_SEASON).kovaaks;
+
+    for (const tier of TIER_IDS) {
+      expect(kovaaksBenchmarkId(CURRENT_SEASON, tier)).toBe(benchmarkIds[tier]);
+    }
   });
 });

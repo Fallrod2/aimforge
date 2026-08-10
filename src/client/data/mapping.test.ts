@@ -24,6 +24,7 @@ const row: BenchRunRow = {
   rank: "Gold",
   complete: true,
   source: "manual",
+  season: "voltaic-s5",
 };
 
 describe("toBenchRunSummary", () => {
@@ -32,6 +33,7 @@ describe("toBenchRunSummary", () => {
       id: 12,
       date: "2026-03-01T12:00:00.000Z",
       tier: "novice",
+      season: "voltaic-s5",
       overall: 400,
       rank: "Gold",
       complete: true,

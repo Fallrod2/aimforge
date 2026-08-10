@@ -161,6 +161,31 @@ se gérait par variables d'environnement devient géré en base — À L'EXCEPTI
   visibilité UI n'est qu'un confort) ; secrets write-only (privilèges de
   colonne, patron §5 ter) ; lecture des secrets réservée au service role.
 
+## 5 quinquies. Verrou multi-saison (acté 2026-08-10)
+
+Constat (audit technique) : les énergies de sous-catégories et le rang overall
+sont dérivés À LA LECTURE depuis le JSON Voltaic courant, et `bench_runs` ne
+porte aucune saison. Remplacer le JSON par la S6 réinterpréterait
+silencieusement tout l'historique S5. Verrou à poser MAINTENANT (une colonne),
+pas après la sortie de la S6 (une rétro-migration de données réelles).
+
+- `bench_runs.season text not null default 'voltaic-s5'` — toutes les passes
+  existantes sont S5 par définition.
+- La lib d'énergie devient multi-saison : registre de saisons (id → jeu de
+  données), `CURRENT_SEASON` unique, accès aux données TOUJOURS qualifiés par
+  la saison en interne. L'API publique actuelle reste disponible (elle pointe
+  sur la saison courante) pour ne pas réécrire l'UI de saisie ; les chemins de
+  LECTURE d'une passe (historique, dashboard, résumés coach/routine) résolvent
+  les seuils de LA SAISON DE LA PASSE.
+- Le cœur mathématique (`energy.ts`) ne change pas d'un caractère.
+- Les métadonnées d'import KovaaK's par saison (benchmarkIds 432/431/427,
+  suffixe « S5 » des noms de scénarios) rejoignent la définition de saison.
+- Les écritures estampillent `CURRENT_SEASON` ; une passe S5 restera notée
+  S5 pour toujours, avec ses seuils S5.
+- Preuve exigée : un jeu de données S6 FACTICE (fixtures de test uniquement,
+  jamais versionné comme vraie donnée) démontre qu'un historique S5 affiché
+  sous une saison courante S6 garde exactement ses valeurs S5.
+
 ## 6. Sécurité
 
 - RLS activé sur toutes les tables, policies testées (un utilisateur A ne voit jamais les données de B).

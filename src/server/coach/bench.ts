@@ -10,12 +10,23 @@
  * que le coach cite des scénarios : c'est lui qui choisit le catalogue autorisé.
  */
 
-import { computeSubcategories, getTier, type TierId } from "../../lib/energy/index.js";
+import {
+  computeSubcategoriesFor,
+  getTierFor,
+  type SeasonId,
+  type TierId,
+} from "../../lib/energy/index.js";
 import type { CoachBenchSummary, CoachWeakness } from "./prompt.js";
 
 /** La passe telle que la base la rend, avant résumé. */
 export interface BenchRunForCoach {
   readonly tier: TierId;
+  /**
+   * Saison Voltaic de la passe (SPEC §5 quinquies). Les 9 sous-catégories sont
+   * dérivées ici, à la lecture : sans elle, le coach commenterait une passe S5
+   * avec les seuils de la saison courante — et dirait des choses fausses.
+   */
+  readonly season: SeasonId;
   /** Horodatage ISO 8601. */
   readonly date: string;
   readonly overall: number;
@@ -48,11 +59,11 @@ export function summarizeBench(
   count = 3,
 ): CoachBenchSummary {
   const scoreMap = Object.fromEntries(scores.map((row) => [row.scenario, row.score]));
-  const subcategories = computeSubcategories(run.tier, scoreMap);
+  const subcategories = computeSubcategoriesFor(run.season, run.tier, scoreMap);
 
   return {
     tier: run.tier,
-    tierLabel: getTier(run.tier).label,
+    tierLabel: getTierFor(run.season, run.tier).label,
     date: run.date,
     overall: run.overall,
     rank: run.rank,

@@ -73,6 +73,7 @@ export type Database = {
           id: number
           overall: number
           rank: string | null
+          season: string
           source: string
           tier: string
           user_id: string
@@ -84,6 +85,7 @@ export type Database = {
           id?: never
           overall: number
           rank?: string | null
+          season?: string
           source?: string
           tier: string
           user_id: string
@@ -95,6 +97,7 @@ export type Database = {
           id?: never
           overall?: number
           rank?: string | null
+          season?: string
           source?: string
           tier?: string
           user_id?: string

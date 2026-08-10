@@ -6,7 +6,7 @@
  * la seule forme qui tient à la fois sur 390 px et sur un écran large.
  */
 
-import { getTier, listScenarios } from "../../lib/energy";
+import { getTierFor, listScenariosFor } from "../../lib/energy";
 import { EnergyRail } from "../components/EnergyRail";
 import { RankBadge } from "../components/RankBadge";
 import type { BenchRunDetail, BenchRunSummary } from "../data";
@@ -39,7 +39,9 @@ export function RunCard({
   onCancelDelete,
   onConfirmDelete,
 }: RunCardProps) {
-  const tier = getTier(run.tier);
+  // Les libellés, l'échelle et les seuils viennent de la saison **de la
+  // passe** : une passe d'archive ne se relit pas avec les seuils du jour.
+  const tier = getTierFor(run.season, run.tier);
   const color = runRankColor(run);
   const panelId = `run-${run.id}-detail`;
 
@@ -126,7 +128,7 @@ export function RunCard({
 }
 
 function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
-  const tier = getTier(detail.tier);
+  const tier = getTierFor(detail.season, detail.tier);
   const scoreByScenario = new Map(detail.scores.map((row) => [row.scenario, row]));
 
   return (
@@ -139,7 +141,7 @@ function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
           {detail.subcategories.map((sub) => (
             <li key={sub.name} className="grid grid-cols-[7rem_1fr_4.5rem] items-center gap-3">
               <span className="truncate text-xs text-steel-300">{sub.name}</span>
-              <EnergyRail tier={detail.tier} energy={sub.energy} />
+              <EnergyRail tier={detail.tier} season={detail.season} energy={sub.energy} />
               <span className="text-right font-mono text-xs tabular-nums text-steel-200">
                 {sub.energy > 0 ? (
                   formatEnergy(sub.energy)
@@ -154,10 +156,10 @@ function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
 
       <section>
         <h3 className="text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
-          Scénarios ({detail.scores.length}/{listScenarios(detail.tier).length})
+          Scénarios ({detail.scores.length}/{listScenariosFor(detail.season, detail.tier).length})
         </h3>
         <ul className="mt-3 divide-y divide-steel-800/70">
-          {listScenarios(detail.tier).map((scenario) => {
+          {listScenariosFor(detail.season, detail.tier).map((scenario) => {
             const row = scoreByScenario.get(scenario.name);
 
             return (

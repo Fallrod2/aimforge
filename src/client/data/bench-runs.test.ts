@@ -48,6 +48,7 @@ function fakeStore({ failScores = false, failCompensation = false }: FakeOptions
         overall: run.overall,
         rank: run.rank,
         complete: run.complete,
+        season: run.season,
         source: run.source,
       };
 
@@ -125,6 +126,7 @@ describe("saveBenchRunTo — chemin nominal", () => {
           overall: run.overall,
           rank: run.rank,
           complete: run.complete,
+          season: run.season,
           source: run.source,
         };
       },
@@ -213,6 +215,7 @@ describe("saveBenchRunTo — compensation", () => {
           overall: run.overall,
           rank: run.rank,
           complete: run.complete,
+          season: run.season,
           source: run.source,
         };
       },

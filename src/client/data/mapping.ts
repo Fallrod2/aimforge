@@ -12,9 +12,23 @@
  * - `date` est un `timestamptz` que PostgREST rend en `+00:00`. On le
  *   normalise en ISO `Z`, forme sur laquelle l'UI trie lexicographiquement
  *   (`buildSeries`) et que le reste du code a toujours connue.
+ *
+ * Depuis le verrou multi-saison (SPEC §5 quinquies), c'est aussi ici que la
+ * colonne `season` devient un `SeasonId` **validé** : tout ce qui est dérivé à
+ * la lecture (les 9 sous-catégories, l'ordre des scénarios) l'est avec les
+ * seuils de la saison de la passe, jamais avec ceux de la saison courante. Une
+ * saison absente du registre lève (`EnergyError`) : un repli silencieux sur la
+ * courante afficherait des énergies fausses sans le dire.
  */
 
-import { computeSubcategories, listScenarios, TIER_IDS, type TierId } from "../../lib/energy";
+import {
+  computeSubcategoriesFor,
+  listScenariosFor,
+  type SeasonId,
+  TIER_IDS,
+  type TierId,
+  toSeasonId,
+} from "../../lib/energy";
 import { DataError } from "./errors";
 import {
   BENCH_SOURCES,
@@ -33,6 +47,7 @@ export interface BenchRunRow {
   readonly rank: string | null;
   readonly complete: boolean;
   readonly source: string;
+  readonly season: string;
 }
 
 /** Les colonnes de `scenario_scores` lues avec une passe. */
@@ -75,6 +90,10 @@ export function toBenchRunSummary(row: BenchRunRow): BenchRunSummary {
     id: row.id,
     date: toIsoDate(row.date),
     tier: toTierId(row.tier),
+    // `toSeasonId` lève une `EnergyError` sur une saison inconnue du registre.
+    // C'est voulu : mieux vaut une passe qui refuse de s'afficher qu'une passe
+    // affichée avec les seuils d'une autre saison.
+    season: toSeasonId(row.season),
     overall: row.overall,
     rank: row.rank,
     complete: row.complete,
@@ -93,8 +112,14 @@ export function toBenchRunSummaries(rows: readonly BenchRunRow[]): readonly Benc
  * inconnu du palier (dérive de données) ferme la marche plutôt que d'être
  * escamoté.
  */
-function sortScenarios(tier: TierId, scores: readonly ScenarioScore[]): readonly ScenarioScore[] {
-  const order = new Map(listScenarios(tier).map((scenario, index) => [scenario.name, index]));
+function sortScenarios(
+  season: SeasonId,
+  tier: TierId,
+  scores: readonly ScenarioScore[],
+): readonly ScenarioScore[] {
+  const order = new Map(
+    listScenariosFor(season, tier).map((scenario, index) => [scenario.name, index]),
+  );
   const rank = (name: string): number => order.get(name) ?? Number.MAX_SAFE_INTEGER;
 
   return [...scores].sort(
@@ -107,7 +132,8 @@ function sortScenarios(tier: TierId, scores: readonly ScenarioScore[]): readonly
  *
  * Les énergies par scénario sont celles **figées en base** au moment de la
  * saisie ; les énergies par sous-catégorie sont dérivées à la lecture (max des
- * 2 scénarios, moteur d'énergie) car la base ne les stocke pas.
+ * 2 scénarios, moteur d'énergie) car la base ne les stocke pas — d'où
+ * l'obligation de les dériver avec les seuils de `summary.season`.
  */
 export function toBenchRunDetail(
   row: BenchRunRow,
@@ -123,7 +149,7 @@ export function toBenchRunDetail(
 
   return {
     ...summary,
-    scores: sortScenarios(summary.tier, scores),
-    subcategories: computeSubcategories(summary.tier, scoreMap),
+    scores: sortScenarios(summary.season, summary.tier, scores),
+    subcategories: computeSubcategoriesFor(summary.season, summary.tier, scoreMap),
   };
 }

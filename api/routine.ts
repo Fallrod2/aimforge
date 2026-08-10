@@ -47,7 +47,7 @@ import { z } from "zod";
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
-import { TIER_IDS, type TierId } from "../src/lib/energy/index.js";
+import { type SeasonId, TIER_IDS, type TierId, toSeasonId } from "../src/lib/energy/index.js";
 import {
   AiSettingsUnavailableError,
   type AskDeps,
@@ -191,6 +191,19 @@ function toTierId(value: string): TierId | null {
 }
 
 /**
+ * La saison de la passe, ou `null` si le registre ne la connaît pas — même
+ * dégradation que pour un palier inconnu : le bench est du contexte, mais on
+ * refuse de le résumer avec les seuils d'une autre saison (SPEC §5 quinquies).
+ */
+function toSeason(value: string): SeasonId | null {
+  try {
+    return toSeasonId(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Le bench et les debriefs sont du **contexte**, pas des prérequis : une
  * lecture qui échoue dégrade la routine, elle ne doit pas l'annuler après
  * qu'un incrément de quota a déjà été consommé. D'où le repli sur `null` et
@@ -214,7 +227,7 @@ async function loadContext(
 async function loadBench(client: UserClient, userId: string): Promise<RoutineBenchSummary | null> {
   const { data: run, error } = await client
     .from("bench_runs")
-    .select("id, date, tier, overall, rank, complete")
+    .select("id, date, tier, overall, rank, complete, season")
     .eq("user_id", userId)
     .order("date", { ascending: false })
     .order("id", { ascending: false })
@@ -224,8 +237,9 @@ async function loadBench(client: UserClient, userId: string): Promise<RoutineBen
   if (error !== null || run === null) return null;
 
   const tier = toTierId(run.tier);
+  const season = toSeason(run.season);
 
-  if (tier === null) return null;
+  if (tier === null || season === null) return null;
 
   const { data: scores } = await client
     .from("scenario_scores")
@@ -235,6 +249,7 @@ async function loadBench(client: UserClient, userId: string): Promise<RoutineBen
   return summarizeBenchForRoutine(
     {
       tier,
+      season,
       date: run.date,
       overall: run.overall,
       rank: run.rank,

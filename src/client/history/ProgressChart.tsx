@@ -22,21 +22,27 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getTier, type TierId } from "../../lib/energy";
+import { getTierFor, type SeasonId, type TierId } from "../../lib/energy";
 import { formatEnergy } from "../format";
 import { themeColor } from "../theme";
 import type { SeriesPoint } from "./series";
 
 interface ProgressChartProps {
   readonly tier: TierId;
+  /**
+   * Saison des passes tracées. L'axe et les repères en dépendent autant que du
+   * palier : `maxEnergy` et les seuils de rang changent d'une saison à l'autre,
+   * et l'appelant garantit que tous les `points` en viennent (SPEC §5 quinquies).
+   */
+  readonly season: SeasonId;
   readonly points: readonly SeriesPoint[];
   readonly subcategory: string | null;
 }
 
 const OVERALL_LABEL = "Overall";
 
-export function ProgressChart({ tier, points, subcategory }: ProgressChartProps) {
-  const { maxEnergy, overallRanks } = getTier(tier);
+export function ProgressChart({ tier, season, points, subcategory }: ProgressChartProps) {
+  const { label: tierLabel, maxEnergy, overallRanks } = getTierFor(season, tier);
   const axis = themeColor("steel-700");
   const muted = themeColor("steel-400");
   const surface = themeColor("steel-950");
@@ -123,7 +129,7 @@ export function ProgressChart({ tier, points, subcategory }: ProgressChartProps)
         <LegendItem color={overallColor} label={OVERALL_LABEL} />
         {subcategory !== null ? <LegendItem color={subColor} label={subcategory} dashed /> : null}
         <span className="text-steel-500">
-          Repères : rangs {getTier(tier).label} aux couleurs officielles Voltaic.
+          Repères : rangs {tierLabel} aux couleurs officielles Voltaic.
         </span>
       </figcaption>
     </figure>

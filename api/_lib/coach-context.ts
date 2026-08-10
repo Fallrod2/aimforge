@@ -23,7 +23,7 @@
 
 import type { createClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/client/supabase/database-types.js";
-import { TIER_IDS, type TierId } from "../../src/lib/energy/index.js";
+import { type SeasonId, TIER_IDS, type TierId, toSeasonId } from "../../src/lib/energy/index.js";
 import { summarizeBench } from "../../src/server/coach/bench.js";
 import type { CoachBenchSummary, CoachProfile } from "../../src/server/coach/prompt.js";
 
@@ -40,6 +40,22 @@ export const DEFAULT_TIER: TierId = "novice";
 
 function toTierId(value: string): TierId | null {
   return TIER_IDS.find((id) => id === value) ?? null;
+}
+
+/**
+ * La saison de la passe, ou `null` si le registre ne la connaît pas.
+ *
+ * Le bench est du *contexte* : une saison inconnue le fait disparaître du
+ * prompt (comme un palier inconnu), elle ne fait pas échouer un debrief dont le
+ * quota est déjà consommé. Ce qu'on refuse, c'est de résumer une passe avec les
+ * seuils d'une autre saison.
+ */
+function toSeason(value: string): SeasonId | null {
+  try {
+    return toSeasonId(value);
+  } catch {
+    return null;
+  }
 }
 
 export async function loadProfile(
@@ -69,7 +85,7 @@ export async function loadBench(
 ): Promise<CoachBenchSummary | null> {
   const { data: run, error } = await client
     .from("bench_runs")
-    .select("id, date, tier, overall, rank, complete")
+    .select("id, date, tier, overall, rank, complete, season")
     .eq("user_id", userId)
     .order("date", { ascending: false })
     .order("id", { ascending: false })
@@ -79,8 +95,9 @@ export async function loadBench(
   if (error !== null || run === null) return null;
 
   const tier = toTierId(run.tier);
+  const season = toSeason(run.season);
 
-  if (tier === null) return null;
+  if (tier === null || season === null) return null;
 
   const { data: scores } = await client
     .from("scenario_scores")
@@ -90,6 +107,7 @@ export async function loadBench(
   return summarizeBench(
     {
       tier,
+      season,
       date: run.date,
       overall: run.overall,
       rank: run.rank,

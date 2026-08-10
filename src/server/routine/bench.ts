@@ -16,7 +16,7 @@
  * Module **pur** : moteur d'énergie et module du coach, rien d'autre.
  */
 
-import { findRank, getTier, type TierId } from "../../lib/energy/index.js";
+import { getTierFor, type SeasonId, type TierId } from "../../lib/energy/index.js";
 import {
   type BenchRunForCoach,
   type ScenarioScoreForCoach,
@@ -56,10 +56,11 @@ export interface RoutineBenchSummary {
  * sous-catégorie n'est plus le frein.
  */
 export function nextRankAbove(
+  season: SeasonId,
   tier: TierId,
   energy: number,
 ): { readonly name: string; readonly minEnergy: number } | null {
-  const found = getTier(tier).overallRanks.find((rank) => rank.minEnergy > energy);
+  const found = getTierFor(season, tier).overallRanks.find((rank) => rank.minEnergy > energy);
 
   return found === undefined ? null : { name: found.name, minEnergy: found.minEnergy };
 }
@@ -67,9 +68,10 @@ export function nextRankAbove(
 /**
  * Résume le dernier bench pour la routine : faiblesses + écart au rang suivant.
  *
- * `findRank` n'est pas rappelé pour le rang overall — celui-ci est lu tel quel
- * dans la colonne `rank`, comme le fait le coach. Il n'est réutilisé ici que
- * pour vérifier que le palier existe avant de parcourir ses rangs.
+ * Le rang overall n'est pas recalculé — il est lu tel quel dans la colonne
+ * `rank`, comme le fait le coach. Les rangs *parcourus* pour l'écart, eux,
+ * viennent de la saison de la passe : c'est ce qui rend « 99 d'énergie sous
+ * Platinum » vrai plutôt qu'approximatif après un changement de saison.
  */
 export function summarizeBenchForRoutine(
   run: BenchRunForCoach,
@@ -78,9 +80,9 @@ export function summarizeBenchForRoutine(
 ): RoutineBenchSummary {
   const summary = summarizeBench(run, scores, count);
 
-  // Lève tôt (et une seule fois) si le palier est inconnu, plutôt qu'au milieu
-  // de la boucle ci-dessous.
-  findRank(run.tier, 0);
+  // Lève tôt (et une seule fois) si la saison ou le palier est inconnu, plutôt
+  // qu'au milieu de la boucle ci-dessous.
+  getTierFor(run.season, run.tier);
 
   return {
     tier: run.tier,
@@ -90,7 +92,7 @@ export function summarizeBenchForRoutine(
     rank: summary.rank,
     complete: summary.complete,
     weakest: summary.weakest.map((weakness) => {
-      const next = nextRankAbove(run.tier, weakness.energy);
+      const next = nextRankAbove(run.season, run.tier, weakness.energy);
 
       return {
         name: weakness.name,

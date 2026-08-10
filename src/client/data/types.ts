@@ -8,7 +8,12 @@
  * `TierId`. La conversion vit dans `mapping.ts`.
  */
 
-import type { ComputedScenarioScore, ComputedSubcategory, TierId } from "../../lib/energy";
+import type {
+  ComputedScenarioScore,
+  ComputedSubcategory,
+  SeasonId,
+  TierId,
+} from "../../lib/energy";
 
 /**
  * D'où viennent les scores d'une passe (miroir du `check` de la colonne
@@ -26,6 +31,12 @@ export interface BenchRunSummary {
   /** Horodatage ISO 8601 (`timestamptz` rendu par PostgREST). */
   readonly date: string;
   readonly tier: TierId;
+  /**
+   * La saison Voltaic **de la passe** (SPEC §5 quinquies). Elle décide des
+   * seuils avec lesquels la passe se relit : une passe S5 garde ses valeurs S5
+   * après la sortie de la S6. Ce n'est pas une décoration d'affichage.
+   */
+  readonly season: SeasonId;
   /** Moyenne harmonique des 9 sous-catégories ; 0 si le bench est incomplet. */
   readonly overall: number;
   /** Rang overall atteint, `null` sous le premier rang du palier. */

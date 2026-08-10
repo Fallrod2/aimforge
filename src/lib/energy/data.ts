@@ -1,4 +1,24 @@
-import rawData from "../../../voltaic-s5-data.json" with { type: "json" };
+/**
+ * Accès aux données Voltaic, **toujours qualifiés par une saison en interne**
+ * (SPEC §5 quinquies).
+ *
+ * Deux familles d'accesseurs, et il faut savoir laquelle on veut :
+ *
+ * - **qualifiées** (`getTierFor(season, …)`) — les chemins de *lecture* d'une
+ *   passe déjà enregistrée. Ils résolvent les seuils de la saison **de la
+ *   passe** : une passe S5 se relit en S5, même après la sortie de la S6 ;
+ * - **non qualifiées** (`getTier(…)`) — la saisie, l'aperçu live, tout ce qui
+ *   parle du présent. Elles résolvent la saison *active* (la courante, sauf
+ *   pendant un `withSeason`), ce qui laisse `energy.ts` inchangé : le cœur
+ *   mathématique n'a jamais eu à connaître les saisons, et n'a pas à
+ *   l'apprendre.
+ *
+ * Les index (palier → sous-catégories → scénarios) sont construits à la
+ * demande, une fois par saison, et gardés : une saison, c'est ~54 scénarios,
+ * et l'historique en interroge des centaines de fois par affichage.
+ */
+
+import { activeSeason, CURRENT_SEASON, getSeason, type SeasonId } from "./seasons.js";
 import {
   EnergyError,
   type Scenario,
@@ -8,47 +28,81 @@ import {
   type VoltaicData,
 } from "./types.js";
 
-// voltaic-s5-data.json est la source de vérité versionnée du repo : on le type
-// ici plutôt que de le valider au runtime (la lib reste sans dépendance, donc
-// sans Zod). Les invariants de structure sont verrouillés par data.test.ts.
-const data = rawData as unknown as VoltaicData;
-
 export const TIER_IDS = ["novice", "intermediate", "advanced"] as const satisfies readonly TierId[];
 
-/** Les 3 paliers, dans l'ordre de progression. */
-export const TIERS: readonly Tier[] = data.tiers;
+/**
+ * Les 3 paliers de la saison **publiée**, dans l'ordre de progression, et ses
+ * métadonnées. Ce sont des constantes de la saison `CURRENT_SEASON` : pour les
+ * données d'une passe d'archive, passer par `getTierFor(run.season, …)`.
+ */
+export const TIERS: readonly Tier[] = getSeason(CURRENT_SEASON).data.tiers;
 
-export const META = data.meta;
+export const META = getSeason(CURRENT_SEASON).data.meta;
 
-const tiersById = new Map<string, Tier>(TIERS.map((tier) => [tier.id, tier]));
+interface SeasonIndex {
+  readonly tiersById: ReadonlyMap<string, Tier>;
+  readonly subcategoriesByTier: ReadonlyMap<string, ReadonlyMap<string, Subcategory>>;
+  readonly scenariosByTier: ReadonlyMap<string, ReadonlyMap<string, Scenario>>;
+}
 
-const subcategoriesByTier = new Map<string, Map<string, Subcategory>>(
-  TIERS.map((tier) => [
-    tier.id,
-    new Map(
-      tier.categories.flatMap((category) =>
-        category.subcategories.map((sub) => [sub.name, sub] as const),
-      ),
-    ),
-  ]),
-);
+function buildIndex(data: VoltaicData): SeasonIndex {
+  const tiers = data.tiers;
 
-const scenariosByTier = new Map<string, Map<string, Scenario>>(
-  TIERS.map((tier) => [
-    tier.id,
-    new Map(
-      tier.categories.flatMap((category) =>
-        category.subcategories.flatMap((sub) =>
-          sub.scenarios.map((scenario) => [scenario.name, scenario] as const),
+  return {
+    tiersById: new Map(tiers.map((tier) => [tier.id, tier])),
+    subcategoriesByTier: new Map(
+      tiers.map((tier) => [
+        tier.id,
+        new Map(
+          tier.categories.flatMap((category) =>
+            category.subcategories.map((sub) => [sub.name, sub] as const),
+          ),
         ),
-      ),
+      ]),
     ),
-  ]),
-);
+    scenariosByTier: new Map(
+      tiers.map((tier) => [
+        tier.id,
+        new Map(
+          tier.categories.flatMap((category) =>
+            category.subcategories.flatMap((sub) =>
+              sub.scenarios.map((scenario) => [scenario.name, scenario] as const),
+            ),
+          ),
+        ),
+      ]),
+    ),
+  };
+}
 
-/** Le palier demandé. Throw si l'identifiant est inconnu. */
-export function getTier(tierId: TierId): Tier {
-  const tier = tiersById.get(tierId);
+// Clé = la définition de saison elle-même : une saison retirée du registre
+// (fixture de test) laisse partir son index avec elle.
+const indexes = new WeakMap<object, SeasonIndex>();
+
+function indexOf(season: SeasonId): SeasonIndex {
+  const definition = getSeason(season);
+  const cached = indexes.get(definition);
+
+  if (cached !== undefined) return cached;
+
+  const built = buildIndex(definition.data);
+
+  indexes.set(definition, built);
+  return built;
+}
+
+/* ------------------------------------------------------------------ */
+/* Accès qualifiés par saison                                          */
+/* ------------------------------------------------------------------ */
+
+/** Les 3 paliers d'une saison, dans l'ordre de progression. */
+export function listTiersFor(season: SeasonId): readonly Tier[] {
+  return getSeason(season).data.tiers;
+}
+
+/** Le palier d'une saison. Throw si la saison ou l'identifiant est inconnu. */
+export function getTierFor(season: SeasonId, tierId: TierId): Tier {
+  const tier = indexOf(season).tiersById.get(tierId);
 
   if (!tier) {
     throw new EnergyError(`Palier inconnu: "${tierId}" (attendu: ${TIER_IDS.join(", ")})`);
@@ -57,9 +111,13 @@ export function getTier(tierId: TierId): Tier {
 }
 
 /** La sous-catégorie du palier. Throw si le palier ou le nom est inconnu. */
-export function getSubcategory(tierId: TierId, subcategoryName: string): Subcategory {
-  getTier(tierId);
-  const sub = subcategoriesByTier.get(tierId)?.get(subcategoryName);
+export function getSubcategoryFor(
+  season: SeasonId,
+  tierId: TierId,
+  subcategoryName: string,
+): Subcategory {
+  getTierFor(season, tierId);
+  const sub = indexOf(season).subcategoriesByTier.get(tierId)?.get(subcategoryName);
 
   if (!sub) {
     throw new EnergyError(`Sous-catégorie inconnue: "${subcategoryName}" (palier ${tierId})`);
@@ -68,9 +126,9 @@ export function getSubcategory(tierId: TierId, subcategoryName: string): Subcate
 }
 
 /** Le scénario du palier. Throw si le palier ou le nom est inconnu. */
-export function getScenario(tierId: TierId, scenarioName: string): Scenario {
-  getTier(tierId);
-  const scenario = scenariosByTier.get(tierId)?.get(scenarioName);
+export function getScenarioFor(season: SeasonId, tierId: TierId, scenarioName: string): Scenario {
+  getTierFor(season, tierId);
+  const scenario = indexOf(season).scenariosByTier.get(tierId)?.get(scenarioName);
 
   if (!scenario) {
     throw new EnergyError(`Scénario inconnu: "${scenarioName}" (palier ${tierId})`);
@@ -79,13 +137,42 @@ export function getScenario(tierId: TierId, scenarioName: string): Scenario {
 }
 
 /** Les 18 scénarios du palier, dans l'ordre du tableur. */
-export function listScenarios(tierId: TierId): readonly Scenario[] {
-  return getTier(tierId).categories.flatMap((category) =>
+export function listScenariosFor(season: SeasonId, tierId: TierId): readonly Scenario[] {
+  return getTierFor(season, tierId).categories.flatMap((category) =>
     category.subcategories.flatMap((sub) => sub.scenarios),
   );
 }
 
 /** Les 9 sous-catégories du palier, dans l'ordre du tableur. */
+export function listSubcategoriesFor(season: SeasonId, tierId: TierId): readonly Subcategory[] {
+  return getTierFor(season, tierId).categories.flatMap((category) => category.subcategories);
+}
+
+/* ------------------------------------------------------------------ */
+/* Accès à la saison active (API publique historique, inchangée)       */
+/* ------------------------------------------------------------------ */
+
+/** Le palier demandé. Throw si l'identifiant est inconnu. */
+export function getTier(tierId: TierId): Tier {
+  return getTierFor(activeSeason(), tierId);
+}
+
+/** La sous-catégorie du palier. Throw si le palier ou le nom est inconnu. */
+export function getSubcategory(tierId: TierId, subcategoryName: string): Subcategory {
+  return getSubcategoryFor(activeSeason(), tierId, subcategoryName);
+}
+
+/** Le scénario du palier. Throw si le palier ou le nom est inconnu. */
+export function getScenario(tierId: TierId, scenarioName: string): Scenario {
+  return getScenarioFor(activeSeason(), tierId, scenarioName);
+}
+
+/** Les 18 scénarios du palier, dans l'ordre du tableur. */
+export function listScenarios(tierId: TierId): readonly Scenario[] {
+  return listScenariosFor(activeSeason(), tierId);
+}
+
+/** Les 9 sous-catégories du palier, dans l'ordre du tableur. */
 export function listSubcategories(tierId: TierId): readonly Subcategory[] {
-  return getTier(tierId).categories.flatMap((category) => category.subcategories);
+  return listSubcategoriesFor(activeSeason(), tierId);
 }

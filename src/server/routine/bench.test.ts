@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { EnergyError, listScenarios, listSubcategories } from "../../lib/energy";
+import { CURRENT_SEASON, EnergyError, listScenarios, listSubcategories } from "../../lib/energy";
 import { nextRankAbove, summarizeBenchForRoutine } from "./bench";
 
 const RUN = {
   tier: "novice",
+  season: CURRENT_SEASON,
   date: "2026-08-01T18:30:00.000Z",
   overall: 447.36,
   rank: "Gold",
@@ -27,26 +28,35 @@ function scoresWithWeakSubcategory(subcategoryName: string): { scenario: string;
 describe("nextRankAbove", () => {
   it("rend le premier rang du palier dont le seuil dépasse l'énergie", () => {
     // Novice : Iron 100 · Bronze 200 · Silver 300 · Gold 400.
-    expect(nextRankAbove("novice", 0)).toEqual({ name: "Iron", minEnergy: 100 });
-    expect(nextRankAbove("novice", 250)).toEqual({ name: "Silver", minEnergy: 300 });
+    expect(nextRankAbove(CURRENT_SEASON, "novice", 0)).toEqual({ name: "Iron", minEnergy: 100 });
+    expect(nextRankAbove(CURRENT_SEASON, "novice", 250)).toEqual({
+      name: "Silver",
+      minEnergy: 300,
+    });
   });
 
   it("passe au rang suivant dès que le seuil est exactement atteint", () => {
-    expect(nextRankAbove("novice", 300)).toEqual({ name: "Gold", minEnergy: 400 });
+    expect(nextRankAbove(CURRENT_SEASON, "novice", 300)).toEqual({ name: "Gold", minEnergy: 400 });
   });
 
   it("rend null au-dessus du dernier rang du palier", () => {
-    expect(nextRankAbove("novice", 450)).toBeNull();
+    expect(nextRankAbove(CURRENT_SEASON, "novice", 450)).toBeNull();
   });
 
   it("suit les rangs propres à chaque palier", () => {
-    expect(nextRankAbove("intermediate", 401)).toEqual({ name: "Platinum", minEnergy: 500 });
-    expect(nextRankAbove("advanced", 950)).toEqual({ name: "Nova", minEnergy: 1000 });
+    expect(nextRankAbove(CURRENT_SEASON, "intermediate", 401)).toEqual({
+      name: "Platinum",
+      minEnergy: 500,
+    });
+    expect(nextRankAbove(CURRENT_SEASON, "advanced", 950)).toEqual({
+      name: "Nova",
+      minEnergy: 1000,
+    });
   });
 
   it("refuse un palier inconnu", () => {
     // @ts-expect-error palier hors des trois valeurs admises
-    expect(() => nextRankAbove("gold", 100)).toThrow(EnergyError);
+    expect(() => nextRankAbove(CURRENT_SEASON, "gold", 100)).toThrow(EnergyError);
   });
 });
 

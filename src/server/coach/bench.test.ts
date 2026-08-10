@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { listScenarios, listSubcategories } from "../../lib/energy";
+import { CURRENT_SEASON, listScenarios, listSubcategories } from "../../lib/energy";
 import { summarizeBench } from "./bench";
 
 const RUN = {
   tier: "novice",
+  season: CURRENT_SEASON,
   date: "2026-08-01T18:30:00.000Z",
   overall: 447.36,
   rank: "Gold",
