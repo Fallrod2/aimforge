@@ -139,6 +139,41 @@ export type Database = {
           },
         ]
       }
+      coach_thread_messages: {
+        Row: {
+          content: string
+          created_at: string
+          debrief_id: number | null
+          id: number
+          role: string
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          debrief_id?: number | null
+          id?: never
+          role: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          debrief_id?: number | null
+          id?: never
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coach_thread_messages_debrief_id_fkey"
+            columns: ["debrief_id"]
+            isOneToOne: false
+            referencedRelation: "debriefs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       debriefs: {
         Row: {
           axes: Json
@@ -272,6 +307,30 @@ export type Database = {
           riot_mmr?: Json | null
           riot_puuid?: string | null
           riot_region?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      match_details: {
+        Row: {
+          fetched_at: string
+          id: number
+          match_id: string
+          payload: Json
+          user_id: string
+        }
+        Insert: {
+          fetched_at?: string
+          id?: never
+          match_id: string
+          payload?: Json
+          user_id: string
+        }
+        Update: {
+          fetched_at?: string
+          id?: never
+          match_id?: string
+          payload?: Json
           user_id?: string
         }
         Relationships: []

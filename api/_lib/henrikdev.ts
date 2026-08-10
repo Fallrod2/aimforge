@@ -185,3 +185,35 @@ export async function fetchCompetitiveMatches(
   if (!Array.isArray(data)) throw new HenrikError(MALFORMED, 502);
   return data;
 }
+
+/**
+ * Le **détail** d'une partie : scoreboard des dix joueurs, déroulé des rounds
+ * (SPEC §5 sexies, V1). Brut, comme l'historique : la mise en forme appartient
+ * à `src/server/valorant/detail.ts`, qui la teste sans réseau.
+ *
+ * Le 404 est traduit ici parce que le message générique de `getData` parle d'un
+ * *compte* introuvable : sur cette route, c'est le **match** qui manque, et
+ * cela arrive pour une raison banale — les parties trop anciennes sortent de la
+ * fenêtre que la source conserve.
+ */
+export async function fetchMatchDetail(
+  key: string,
+  region: string,
+  matchId: string,
+): Promise<unknown> {
+  try {
+    return await getData(
+      key,
+      `/v4/match/${encodeURIComponent(region)}/${encodeURIComponent(matchId)}`,
+    );
+  } catch (cause) {
+    if (cause instanceof HenrikError && cause.status === 404) {
+      throw new HenrikError(
+        "Le détail de cette partie n'est plus disponible chez la source de données.",
+        404,
+        cause,
+      );
+    }
+    throw cause;
+  }
+}
