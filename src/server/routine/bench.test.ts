@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CURRENT_SEASON, EnergyError, listScenarios, listSubcategories } from "../../lib/energy";
-import { nextRankAbove, summarizeBenchForRoutine } from "./bench";
+import { nextRankAbove, summarizeBenchForRoutine, summarizeTierBenchForRoutine } from "./bench";
 
 const RUN = {
   tier: "novice",
@@ -112,5 +112,27 @@ describe("summarizeBenchForRoutine", () => {
     expect(
       summarizeBenchForRoutine(RUN, scoresWithWeakSubcategory("Precise"), 1).weakest,
     ).toHaveLength(1);
+  });
+});
+
+describe("summarizeTierBenchForRoutine", () => {
+  it("garde les écarts au rang suivant et y ajoute saison et complétude", () => {
+    const summary = summarizeTierBenchForRoutine(RUN, scoresWithWeakSubcategory("Precise"));
+
+    expect(summary.tierLabel).toBe("Novice");
+    expect(summary.season).toBe(CURRENT_SEASON);
+    expect(summary.filled).toBe(18);
+    expect(summary.total).toBe(18);
+    expect(summary.weakest[0]?.nextRank).toBe("Iron");
+  });
+
+  it("compte les scénarios renseignés d'une passe en cours", () => {
+    const summary = summarizeTierBenchForRoutine(
+      { ...RUN, overall: 0, rank: null },
+      scoresWithWeakSubcategory("Precise").slice(0, 4),
+    );
+
+    expect(summary.filled).toBe(4);
+    expect(summary.total).toBe(18);
   });
 });

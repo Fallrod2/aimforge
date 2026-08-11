@@ -84,6 +84,33 @@ export function readResponsesPayload(raw: string): string | null {
   const deltas: string[] = [];
   let complete: string | null = null;
 
+  for (const event of eventsOf(raw)) {
+    const delta = (event as { delta?: unknown } | null)?.delta;
+
+    if (typeof delta === "string") deltas.push(delta);
+
+    const fromResponse = textOfResponse(responseOf(event));
+
+    if (fromResponse !== null) complete = fromResponse;
+  }
+
+  if (complete !== null) return complete;
+
+  const joined = deltas.join("").trim();
+
+  return joined === "" ? null : joined;
+}
+
+/**
+ * Les évènements lisibles d'un flux `data:` — et, à défaut, le corps JSON d'un
+ * seul tenant que certains déploiements rendent sans diffuser.
+ *
+ * Les lignes illisibles sont ignorées plutôt que fatales : le protocole n'est
+ * pas documenté, et un évènement inconnu ne doit pas coûter la réponse entière.
+ */
+function eventsOf(raw: string): readonly unknown[] {
+  const events: unknown[] = [];
+
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
 
@@ -93,37 +120,55 @@ export function readResponsesPayload(raw: string): string | null {
 
     if (data === "" || data === "[DONE]") continue;
 
-    let event: unknown;
-
     try {
-      event = JSON.parse(data);
+      events.push(JSON.parse(data));
     } catch {
-      continue;
+      // Ligne tronquée ou emballage inconnu : le reste du flux vaut mieux.
     }
-
-    const delta = (event as { delta?: unknown } | null)?.delta;
-
-    if (typeof delta === "string") deltas.push(delta);
-
-    const response = (event as { response?: unknown } | null)?.response;
-    const fromResponse = textOfResponse(response);
-
-    if (fromResponse !== null) complete = fromResponse;
   }
 
-  if (complete !== null) return complete;
+  if (events.length > 0) return events;
 
-  const joined = deltas.join("").trim();
-
-  if (joined !== "") return joined;
-
-  // Corps JSON simple (certains déploiements ne diffusent pas) : dernière
-  // chance avant de déclarer la réponse illisible.
   try {
-    return textOfResponse(JSON.parse(raw));
+    return [JSON.parse(raw)];
   } catch {
-    return null;
+    return [];
   }
+}
+
+/**
+ * La réponse portée par un évènement — ou l'évènement lui-même, quand le corps
+ * est le JSON d'un seul tenant, qui n'a pas d'enveloppe.
+ */
+function responseOf(event: unknown): unknown {
+  const wrapped = (event as { response?: unknown } | null)?.response;
+
+  return wrapped === undefined ? event : wrapped;
+}
+
+/**
+ * La génération a-t-elle été **arrêtée au plafond de jetons** ?
+ *
+ * Ce back-end refuse `max_output_tokens` (voir plus bas) : le plafond n'est pas
+ * le nôtre, mais il existe, et une réponse peut revenir `incomplete` avec un
+ * texte lisible qui s'arrête au milieu d'une phrase. `incomplete_details` est
+ * le seul témoin — rien dans le texte ne le dit.
+ *
+ * Fonction pure, et volontairement étroite : un autre motif d'inachèvement
+ * (refus, filtrage) n'est pas une troncature de longueur et ne se rattrape pas
+ * en écrivant plus court.
+ */
+export function readResponsesTruncation(raw: string): boolean {
+  return eventsOf(raw).some((event) => {
+    const response = responseOf(event);
+
+    if (response === null || typeof response !== "object") return false;
+
+    const reason = (response as { incomplete_details?: { reason?: unknown } | null })
+      .incomplete_details?.reason;
+
+    return reason === "max_output_tokens";
+  });
 }
 
 function textOfResponse(response: unknown): string | null {
@@ -420,6 +465,6 @@ export function createChatGptAsk(
     if (text === null) {
       throw new ModelError("malformed", config, "aucun texte dans la réponse", response.status);
     }
-    return text;
+    return { text, truncated: readResponsesTruncation(raw) };
   };
 }

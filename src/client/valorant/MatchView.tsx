@@ -18,13 +18,20 @@
  * 3. **Le debrief est un geste explicite.** Le bouton dépense un quota et une
  *    génération ; la page ne le déclenche jamais toute seule. Un match déjà
  *    débriefé porte un lien vers son debrief, pas un second bouton.
+ *
+ * La **mini-analyse** (V4) suit la même règle que le debrief, en plus léger :
+ * elle s'affiche seule quand elle a déjà été payée (la fonction la rend avec le
+ * détail), et sinon la page n'offre qu'un bouton. C'est la différence qui
+ * compte : une analyse coûte un message de coach, et rien de ce que la page fait
+ * toute seule ne doit coûter quoi que ce soit.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { CoachError, requestDebriefForMatch } from "../coach/coach-api";
-import { setCoachDebriefFocus } from "../coach/prefill";
+import { setCoachDebriefFocus, setCoachPrefill } from "../coach/prefill";
 import { Notice } from "../components/Notice";
 import {
+  analyzeMatch,
   debriefedMatches,
   getMatchDetail,
   type MatchDetail,
@@ -36,6 +43,7 @@ import {
 } from "../data";
 import { formatRunDate } from "../format";
 import { routeHash, viewRoute } from "../route";
+import { coachPrefillForMatch } from "./analysis-prefill";
 import { formatAdr, formatPercent, resultLabel, UNKNOWN } from "./display";
 import { Empty, Section, Skeleton } from "./ui";
 
@@ -67,13 +75,23 @@ export function MatchView({ matchId, onBack }: MatchViewProps) {
   const [debriefId, setDebriefId] = useState<number | null>(null);
   const [debriefing, setDebriefing] = useState(false);
   const [debriefError, setDebriefError] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [remaining, setRemaining] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: "loading" });
+    setAnalysis(null);
+    setAnalysisError(null);
+    setRemaining(null);
     try {
-      const { detail } = await getMatchDetail(matchId);
+      const { detail, analysis: stored } = await getMatchDetail(matchId);
 
       setState({ status: "ready", detail });
+      // L'analyse voyage avec le détail : une partie déjà analysée s'affiche
+      // sans second appel, et le bouton ne réapparaît jamais.
+      setAnalysis(stored);
     } catch (cause) {
       // Une partie inconnue ou une clé absente ne se réessaient pas : proposer
       // « Réessayer » là où rien ne changera est une fausse promesse.
@@ -139,6 +157,30 @@ export function MatchView({ matchId, onBack }: MatchViewProps) {
     }
   }, [matchId]);
 
+  /**
+   * Demande la mini-analyse de la partie.
+   *
+   * Un geste volontaire, et un seul appel : le serveur rend l'analyse déjà en
+   * base sans rien dépenser, donc un second clic (ou un double-clic) ne coûte
+   * rien. `remaining` n'est annoncé que lorsque le serveur l'a compté.
+   */
+  const analyse = useCallback(async () => {
+    setAnalyzing(true);
+    setAnalysisError(null);
+    try {
+      const result = await analyzeMatch(matchId);
+
+      setAnalysis(result.analysis);
+      setRemaining(result.remaining);
+    } catch (cause) {
+      setAnalysisError(
+        cause instanceof Error ? cause.message : "L'analyse n'a pas pu être générée.",
+      );
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [matchId]);
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -174,6 +216,14 @@ export function MatchView({ matchId, onBack }: MatchViewProps) {
             generating={debriefing}
             error={debriefError}
             onDebrief={() => void debrief()}
+          />
+          <Analysis
+            analysis={analysis}
+            detail={state.detail}
+            generating={analyzing}
+            error={analysisError}
+            remaining={remaining}
+            onAnalyze={() => void analyse()}
           />
           <Scoreboard entries={state.detail.scoreboard} />
           <Sides sides={state.detail.sides} />
@@ -253,6 +303,98 @@ function DebriefAction({ debriefId, generating, error, onDebrief }: DebriefActio
         </p>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Mini-analyse                                                        */
+/* ------------------------------------------------------------------ */
+
+interface AnalysisProps {
+  /** Le texte déjà généré, ou `null` tant que personne ne l'a demandé. */
+  readonly analysis: string | null;
+  /** Le détail affiché : il ne sert ici qu'à nommer la partie dans l'amorce. */
+  readonly detail: MatchDetail;
+  readonly generating: boolean;
+  readonly error: string | null;
+  /** Messages de coach restants aujourd'hui, quand le serveur vient de compter. */
+  readonly remaining: number | null;
+  readonly onAnalyze: () => void;
+}
+
+/**
+ * La section « Analyse » : trois états, jamais deux à la fois.
+ *
+ * 1. **rien** — un bouton, et le coût annoncé discrètement. La page ne génère
+ *    jamais d'elle-même : ce serait dépenser le quota de quelqu'un qui a
+ *    seulement ouvert une partie ;
+ * 2. **en cours** — le bouton se désarme et le dit ;
+ * 3. **une analyse** — le texte, puis le pont vers le fil du coach. Le bouton
+ *    disparaît définitivement : le serveur ne regénérera pas, l'offrir serait
+ *    une promesse fausse.
+ *
+ * `Approfondir` est un lien et non un bouton, comme le lien de debrief juste
+ * au-dessus : c'est une navigation, et elle doit s'ouvrir dans un nouvel onglet
+ * comme n'importe quel lien.
+ */
+export function Analysis({
+  analysis,
+  detail,
+  generating,
+  error,
+  remaining,
+  onAnalyze,
+}: AnalysisProps) {
+  return (
+    <Section
+      title="Analyse"
+      caption="Quelques phrases du coach sur cette partie, lues sur le scoreboard et les sides."
+    >
+      {analysis === null ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={generating}
+              onClick={onAnalyze}
+              className="rounded-lg border border-quench-600/50 px-3 py-2 text-xs font-semibold text-quench-500 transition-colors hover:border-quench-500 hover:text-quench-400 disabled:cursor-not-allowed disabled:border-steel-800 disabled:text-steel-500"
+            >
+              {generating ? "Le coach lit ta partie…" : "Analyser ce match"}
+            </button>
+            <p className="text-[11px] text-steel-500">
+              Compte pour un message de coach sur ton quota du jour. Une fois faite, la relecture
+              est gratuite.
+            </p>
+          </div>
+          {generating ? <Skeleton lines={2} /> : null}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm leading-relaxed whitespace-pre-line text-steel-200">{analysis}</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <a
+              href={COACH_HASH}
+              onClick={() => setCoachPrefill(coachPrefillForMatch(detail))}
+              className="rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500"
+            >
+              Approfondir avec le coach →
+            </a>
+            {remaining === null ? null : (
+              <p className="text-[11px] text-steel-500">
+                {remaining === 0
+                  ? "Plus de message de coach aujourd'hui : le compteur repart demain."
+                  : `Il te reste ${remaining} message${remaining > 1 ? "s" : ""} de coach aujourd'hui.`}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {error === null ? null : (
+        <p aria-live="polite" className="text-[11px] leading-relaxed text-ember-400">
+          {error}
+        </p>
+      )}
+    </Section>
   );
 }
 

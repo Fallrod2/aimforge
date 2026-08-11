@@ -73,7 +73,7 @@ import { refundAiUsageWith } from "./_lib/ai-usage.js";
 import {
   type CoachUserClient,
   DEFAULT_TIER,
-  loadBench,
+  loadBenchTiers,
   loadProfile,
 } from "./_lib/coach-context.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
@@ -208,7 +208,11 @@ async function loadHistory(
 function askWith(config: ProviderConfig, deps: AskDeps): AskModel {
   const ask = createAsk(config, { system: COACH_CHAT_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
 
-  return (messages) => ask(messages, MODEL_TIMEOUT_MS);
+  // Seul le texte est retenu : cette réponse n'est pas mise en cache, et le
+  // joueur qui la trouve courte relance la question. Le drapeau de troncature
+  // ne compte que là où la sortie est écrite en base pour toujours
+  // (`api/_lib/match-analysis.ts`).
+  return (messages) => ask(messages, MODEL_TIMEOUT_MS).then((answer) => answer.text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -312,14 +316,16 @@ export async function POST(request: Request): Promise<Response> {
   //    contexte : une lecture en échec dégrade la réponse, elle ne l'annule pas.
   const [profile, bench, history] = await Promise.all([
     loadProfile(userClient, userId),
-    loadBench(userClient, userId),
+    loadBenchTiers(userClient, userId),
     loadHistory(userClient, debriefId),
   ]);
   const context: ChatContext = {
     debrief: found.debrief,
     profile,
     bench,
-    scenarios: scenarioCatalog(bench?.tier ?? DEFAULT_TIER).groups,
+    // Le catalogue suit la passe la plus récente : c'est le palier sur lequel
+    // le joueur s'entraîne, même quand les paliers d'avant sont terminés.
+    scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
     history,
     question,
   };

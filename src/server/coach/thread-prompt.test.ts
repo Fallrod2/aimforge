@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { MatchSummary } from "../../client/data/linked-accounts-contract";
+import { CURRENT_SEASON } from "../../lib/energy";
 import { DEBRIEF_SUGGESTION_MARKER } from "../../shared/coach-thread-contract";
 import { scenarioCatalog } from "../shared/scenarios";
-import type { CoachBenchSummary, CoachProfile } from "./prompt";
+import type { CoachBenchTiers, CoachProfile, CoachTierBench } from "./prompt";
 import {
   buildThreadCorrectionMessages,
   buildThreadMessages,
@@ -22,17 +23,41 @@ const PROFILE: CoachProfile = {
   notesMaps: "Icebox en attaque",
 };
 
-const BENCH: CoachBenchSummary = {
+const NOVICE: CoachTierBench = {
+  tier: "novice",
+  tierLabel: "Novice",
+  season: CURRENT_SEASON,
+  date: "2026-06-12T18:30:00.000Z",
+  overall: 812.4,
+  rank: "Gold",
+  complete: true,
+  filled: 18,
+  total: 18,
+  weakest: [
+    { name: "Precise", energy: 700.1 },
+    { name: "Reactive", energy: 755 },
+  ],
+};
+
+const INTERMEDIATE: CoachTierBench = {
   tier: "intermediate",
   tierLabel: "Intermediate",
+  season: CURRENT_SEASON,
   date: "2026-08-01T18:30:00.000Z",
   overall: 612.3,
   rank: "Diamond",
   complete: false,
+  filled: 18,
+  total: 18,
   weakest: [
     { name: "Precise", energy: 401.2 },
     { name: "Reactive", energy: 455 },
   ],
+};
+
+const BENCH: CoachBenchTiers = {
+  tiers: [NOVICE, INTERMEDIATE],
+  latestTier: "intermediate",
 };
 
 const MATCH: MatchSummary = {
@@ -101,6 +126,24 @@ describe("COACH_THREAD_SYSTEM_PROMPT", () => {
   });
 });
 
+describe("bench du fil", () => {
+  it("porte la dernière passe de chaque palier, avec sa complétude et son rang", () => {
+    const content = contextBlock(context());
+
+    expect(content).toContain("Palier Novice");
+    expect(content).toContain("rang Gold");
+    expect(content).toContain("Palier Intermediate");
+    expect(content).toContain("rang Diamond");
+    expect(content).toContain("18/18 scénarios renseignés");
+  });
+
+  it("dit l'absence de passe plutôt que de laisser un bloc vide", () => {
+    const content = contextBlock(context({ bench: { tiers: [], latestTier: null } }));
+
+    expect(content).toContain("Aucune passe de bench enregistrée");
+  });
+});
+
 describe("formatMatches", () => {
   it("rend une ligne par match, sans champ inventé", () => {
     const line = formatMatches([{ ...MATCH, adr: null, headshotPercent: null }]);
@@ -150,7 +193,7 @@ describe("buildThreadMessages", () => {
 
     expect(messages[0]?.role).toBe("user");
     expect(messages[0]?.content).toContain("<profil>");
-    expect(messages[0]?.content).toContain("<dernier_bench>");
+    expect(messages[0]?.content).toContain("<benchs_par_palier>");
     expect(messages[0]?.content).toContain("<scenarios_autorises>");
     expect(messages[0]?.content).toContain("<matchs_recents>");
     expect(messages[0]?.content).toContain("<debriefs_recents>");

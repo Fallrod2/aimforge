@@ -62,7 +62,7 @@ import {
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
-import { type SeasonId, TIER_IDS, type TierId, toSeasonId } from "../src/lib/energy/index.js";
+import type { TierId } from "../src/lib/energy/index.js";
 import {
   AiSettingsUnavailableError,
   type AskDeps,
@@ -81,7 +81,10 @@ import {
 } from "../src/server/coach/quota.js";
 import { attemptTimeout, startBudget } from "../src/server/kovaaks/budget.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
-import { type RoutineBenchSummary, summarizeBenchForRoutine } from "../src/server/routine/bench.js";
+import {
+  type RoutineBenchTiers,
+  summarizeTierBenchForRoutine,
+} from "../src/server/routine/bench.js";
 import { gateRoutine, type RoutineGate } from "../src/server/routine/gating.js";
 import { type AskModel, generateRoutine } from "../src/server/routine/generate.js";
 import { summarizeIngameForRoutine } from "../src/server/routine/ingame.js";
@@ -96,6 +99,7 @@ import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
+import { loadLatestBenchRuns } from "./_lib/coach-context.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -206,27 +210,10 @@ function readBody(raw: string): BodyResult {
 }
 
 /* ------------------------------------------------------------------ */
-/* Contexte : dernier bench et derniers debriefs, lus sous RLS          */
+/* Contexte : benchs par palier et derniers debriefs, lus sous RLS      */
 /* ------------------------------------------------------------------ */
 
 type UserClient = ReturnType<typeof createClient<Database>>;
-
-function toTierId(value: string): TierId | null {
-  return TIER_IDS.find((id) => id === value) ?? null;
-}
-
-/**
- * La saison de la passe, ou `null` si le registre ne la connaît pas — même
- * dégradation que pour un palier inconnu : le bench est du contexte, mais on
- * refuse de le résumer avec les seuils d'une autre saison (SPEC §5 quinquies).
- */
-function toSeason(value: string): SeasonId | null {
-  try {
-    return toSeasonId(value);
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Le bench, les debriefs et les matchs sont du **contexte**, pas des
@@ -248,11 +235,13 @@ async function loadContext(
   focus: string | null,
 ): Promise<{ readonly context: RoutineContext; readonly gate: RoutineGate }> {
   const [bench, debriefs, matches] = await Promise.all([
-    loadBench(client, userId),
+    loadBenchTiers(client, userId),
     loadDebriefs(client, userId),
     loadMatches(client),
   ]);
-  const catalog = scenarioCatalog(bench?.tier ?? DEFAULT_TIER);
+  // Le catalogue suit la passe la plus récente : c'est le palier que la séance
+  // vise, même quand les paliers d'avant sont terminés et restent affichés.
+  const catalog = scenarioCatalog(bench.latestTier ?? DEFAULT_TIER);
   const gate = gateRoutine(matches);
   // Sous le seuil, le modèle ne voit **aucune** statistique de partie : c'est
   // ce qui rend le mode « bench seul » vrai plutôt que déclaratif.
@@ -313,39 +302,24 @@ async function loadMatches(client: UserClient): Promise<readonly MatchSummary[]>
   });
 }
 
-async function loadBench(client: UserClient, userId: string): Promise<RoutineBenchSummary | null> {
-  const { data: run, error } = await client
-    .from("bench_runs")
-    .select("id, date, tier, overall, rank, complete, season")
-    .eq("user_id", userId)
-    .order("date", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+/**
+ * La dernière passe de **chaque** palier mesuré, résumée pour la routine.
+ *
+ * La lecture est celle du coach (`./_lib/coach-context.ts`) : une seule requête
+ * par palier, écrite une seule fois. Seul le résumé diffère — la routine y
+ * ajoute l'écart au rang suivant, qui est ce qui transforme une énergie en
+ * objectif de séance.
+ *
+ * Une passe qui n'est rapportée par personne (lecture en échec, saison inconnue)
+ * fait perdre un palier, pas la routine : le bench reste du contexte.
+ */
+async function loadBenchTiers(client: UserClient, userId: string): Promise<RoutineBenchTiers> {
+  const { runs, latestTier } = await loadLatestBenchRuns(client, userId);
 
-  if (error !== null || run === null) return null;
-
-  const tier = toTierId(run.tier);
-  const season = toSeason(run.season);
-
-  if (tier === null || season === null) return null;
-
-  const { data: scores } = await client
-    .from("scenario_scores")
-    .select("scenario, score")
-    .eq("run_id", run.id);
-
-  return summarizeBenchForRoutine(
-    {
-      tier,
-      season,
-      date: run.date,
-      overall: run.overall,
-      rank: run.rank,
-      complete: run.complete,
-    },
-    scores ?? [],
-  );
+  return {
+    tiers: runs.map((entry) => summarizeTierBenchForRoutine(entry.run, entry.scores)),
+    latestTier,
+  };
 }
 
 /**
@@ -405,7 +379,11 @@ function askWith(
     if (timeout === null) {
       throw new BudgetExhaustedError("plus assez de temps pour une tentative");
     }
-    return ask(messages, timeout);
+    // Seul le texte est retenu : une routine hors contrat passe déjà par la
+    // relance corrective de `generateRoutine` — un JSON coupé ne parse pas. Le
+    // drapeau de troncature ne compte que là où la sortie est écrite en base
+    // pour toujours (`api/_lib/match-analysis.ts`).
+    return ask(messages, timeout).then((answer) => answer.text);
   };
 }
 
@@ -542,7 +520,7 @@ export async function POST(request: Request): Promise<Response> {
 
   // 6. Contexte (bench, debriefs, parties récentes → mode) puis génération.
   const { context, gate } = await loadContext(userClient, user.id, body.dureeMinutes, body.focus);
-  const allowed = scenarioCatalog(context.bench?.tier ?? DEFAULT_TIER).names;
+  const allowed = scenarioCatalog(context.bench.latestTier ?? DEFAULT_TIER).names;
   const budget = startBudget(BUDGET_TOTAL_MS);
 
   let generated: Awaited<ReturnType<typeof generateRoutine>>;

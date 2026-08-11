@@ -229,7 +229,7 @@ vi.mock("../../src/server/ai/index.js", async (importOriginal) => {
 
       state.asked += 1;
       if (typeof answer === "function") return Promise.resolve().then(answer);
-      return Promise.resolve(answer);
+      return Promise.resolve({ text: answer, truncated: false });
     },
   };
 });

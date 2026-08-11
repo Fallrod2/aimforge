@@ -98,7 +98,7 @@ import {
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
-import { DEFAULT_TIER, loadBench, loadProfile } from "./_lib/coach-context.js";
+import { DEFAULT_TIER, loadBenchTiers, loadProfile } from "./_lib/coach-context.js";
 import { postDebriefCard } from "./_lib/coach-thread-write.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
@@ -350,9 +350,11 @@ async function loadContext(
 ): Promise<CoachContext> {
   const [profile, bench] = await Promise.all([
     loadProfile(client, userId),
-    loadBench(client, userId),
+    loadBenchTiers(client, userId),
   ]);
-  const catalog = scenarioCatalog(bench?.tier ?? DEFAULT_TIER);
+  // Le palier retenu est celui de la passe la plus récente : c'est celui sur
+  // lequel le joueur s'entraîne, donc le seul catalogue qui lui soit utile.
+  const catalog = scenarioCatalog(bench.latestTier ?? DEFAULT_TIER);
 
   return { stats, profile, bench, scenarios: catalog.groups };
 }
@@ -373,7 +375,11 @@ async function loadContext(
 function askWith(config: ProviderConfig, deps: AskDeps): AskModel {
   const ask = createAsk(config, { system: COACH_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
 
-  return (messages) => ask(messages, MODEL_TIMEOUT_MS);
+  // Seul le texte est retenu : un debrief n'est pas mis en cache, et une sortie
+  // coupée retombe déjà dans la relance corrective de `generateDebrief` — un
+  // JSON tronqué ne parse pas. C'est la mini-analyse d'un match, qu'on écrit en
+  // base pour toujours, qui a besoin du drapeau (`api/_lib/match-analysis.ts`).
+  return (messages) => ask(messages, MODEL_TIMEOUT_MS).then((answer) => answer.text);
 }
 
 /* ------------------------------------------------------------------ */

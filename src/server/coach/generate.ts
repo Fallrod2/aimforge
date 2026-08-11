@@ -42,7 +42,14 @@ export function textOf(content: readonly ModelContentBlock[]): string {
     .trim();
 }
 
-/** Le seul contact avec le modèle : une conversation entre, du texte sort. */
+/**
+ * Le seul contact avec le modèle : une conversation entre, du texte sort.
+ *
+ * Du texte, et rien d'autre : ce que rend le debrief, le chat ou le fil n'est
+ * pas gravé, et une réponse ratée se rejoue. La mini-analyse d'un match, elle,
+ * est écrite en base pour toujours et a besoin d'en savoir plus — elle a son
+ * propre port (`AskAnalysis`, `./analysis.ts`).
+ */
 export type AskModel = (messages: readonly CoachMessage[]) => Promise<string>;
 
 export type GenerateResult =

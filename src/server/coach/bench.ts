@@ -14,9 +14,10 @@ import {
   computeSubcategoriesFor,
   getTierFor,
   type SeasonId,
+  scenarioNamesFor,
   type TierId,
 } from "../../lib/energy/index.js";
-import type { CoachBenchSummary, CoachWeakness } from "./prompt.js";
+import type { CoachBenchSummary, CoachTierBench, CoachWeakness } from "./prompt.js";
 
 /** La passe telle que la base la rend, avant résumé. */
 export interface BenchRunForCoach {
@@ -69,5 +70,34 @@ export function summarizeBench(
     rank: run.rank,
     complete: run.complete,
     weakest: weakest(subcategories, count),
+  };
+}
+
+/**
+ * Le même résumé, plus la saison de la passe et sa **complétude**.
+ *
+ * C'est la forme que le coach lit quand il regarde les paliers ensemble : sans
+ * « 4 scénarios sur 18 », une passe en cours et un palier effondré s'écrivent de
+ * la même façon (overall 0, aucun rang), et le modèle choisit mal lequel des
+ * deux il raconte.
+ *
+ * Les scénarios comptés sont ceux **du palier de la passe** : un score d'un
+ * autre palier, ou deux lignes pour le même scénario, ne gonflent pas le compte.
+ */
+export function summarizeTierBench(
+  run: BenchRunForCoach,
+  scores: readonly ScenarioScoreForCoach[],
+  count = 3,
+): CoachTierBench {
+  const catalog = scenarioNamesFor(run.season, run.tier);
+  const filled = new Set(
+    scores.flatMap((row) => (catalog.has(row.scenario) ? [row.scenario] : [])),
+  );
+
+  return {
+    ...summarizeBench(run, scores, count),
+    season: run.season,
+    filled: filled.size,
+    total: catalog.size,
   };
 }

@@ -42,7 +42,7 @@ const INVENTED = JSON.stringify({
 const CONTEXT: RoutineContext = {
   dureeMinutes: 45,
   focus: null,
-  bench: null,
+  bench: { tiers: [], latestTier: null },
   debriefs: [],
   ingame: null,
   scenarios: CATALOG.groups,

@@ -70,7 +70,7 @@ import { refundAiUsageWith } from "./_lib/ai-usage.js";
 import {
   type CoachUserClient,
   DEFAULT_TIER,
-  loadBench,
+  loadBenchTiers,
   loadProfile,
 } from "./_lib/coach-context.js";
 import {
@@ -112,7 +112,10 @@ function askWith(config: ProviderConfig, deps: AskDeps): AskModel {
     deps,
   );
 
-  return (messages) => ask(messages, MODEL_TIMEOUT_MS);
+  // Seul le texte est retenu : un tour de fil se rejoue en reposant la
+  // question. Le drapeau de troncature ne compte que là où la sortie est écrite
+  // en base pour toujours (`api/_lib/match-analysis.ts`).
+  return (messages) => ask(messages, MODEL_TIMEOUT_MS).then((answer) => answer.text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -211,7 +214,7 @@ export async function POST(request: Request): Promise<Response> {
   //    aucune de ces lectures n'est un prérequis : un échec dégrade la réponse.
   const [profile, bench, matches, debriefs, history] = await Promise.all([
     loadProfile(userClient, userId),
-    loadBench(userClient, userId),
+    loadBenchTiers(userClient, userId),
     loadRecentMatches(userClient, userId),
     loadRecentDebriefs(userClient, userId),
     loadThreadHistory(userClient, userId),
@@ -219,7 +222,9 @@ export async function POST(request: Request): Promise<Response> {
   const context: ThreadContext = {
     profile,
     bench,
-    scenarios: scenarioCatalog(bench?.tier ?? DEFAULT_TIER).groups,
+    // Le catalogue suit la passe la plus récente : c'est le palier sur lequel
+    // le joueur s'entraîne, même quand les paliers d'avant sont terminés.
+    scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
     matches: matches.summaries,
     debriefs,
     history,

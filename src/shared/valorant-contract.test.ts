@@ -82,10 +82,48 @@ describe("matchDetailSchema", () => {
   });
 
   it("valide une réponse complète de la fonction", () => {
-    expect(matchDetailResponseSchema.safeParse({ cached: true, detail: DETAIL }).success).toBe(
+    const response = { cached: true, detail: DETAIL, analysis: null, remaining: null };
+
+    expect(matchDetailResponseSchema.safeParse(response).success).toBe(true);
+    expect(matchDetailResponseSchema.safeParse({ detail: DETAIL }).success).toBe(false);
+  });
+
+  /**
+   * `analysis` et `remaining` ne sont pas optionnels (SPEC §5 sexies, V4) : c'est
+   * `analysis` qui décide si l'écran montre un texte ou un bouton, et une
+   * réponse qui l'omettrait — un serveur d'une version antérieure — ferait
+   * proposer « Analyser ce match » sur une partie déjà analysée, donc payée deux
+   * fois. Mieux vaut refuser la réponse que la deviner.
+   */
+  it("exige l'analyse et le quota, quitte à les recevoir nuls", () => {
+    const complete = {
+      cached: false,
+      detail: DETAIL,
+      analysis: "Tu meurs trop tôt en post-plant.",
+      remaining: 7,
+    };
+
+    expect(matchDetailResponseSchema.safeParse(complete).success).toBe(true);
+    expect(
+      matchDetailResponseSchema.safeParse({ cached: true, detail: DETAIL, remaining: null })
+        .success,
+    ).toBe(false);
+    expect(
+      matchDetailResponseSchema.safeParse({ cached: true, detail: DETAIL, analysis: null }).success,
+    ).toBe(false);
+    // Une analyse vide n'est pas une analyse : la colonne l'interdit, le contrat
+    // aussi (`null` est la seule façon de dire « pas encore analysé »).
+    expect(matchDetailResponseSchema.safeParse({ ...complete, analysis: "" }).success).toBe(false);
+  });
+
+  it("accepte le drapeau d'analyse, et refuse tout ce qui n'est pas un booléen", () => {
+    expect(matchDetailRequestSchema.safeParse({ match_id: "m-1" }).success).toBe(true);
+    expect(matchDetailRequestSchema.safeParse({ match_id: "m-1", analyze: true }).success).toBe(
       true,
     );
-    expect(matchDetailResponseSchema.safeParse({ detail: DETAIL }).success).toBe(false);
+    expect(matchDetailRequestSchema.safeParse({ match_id: "m-1", analyze: "oui" }).success).toBe(
+      false,
+    );
   });
 });
 

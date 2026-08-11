@@ -15,7 +15,7 @@ const CONTEXT: ChatContext = {
     focus: "Viseur à hauteur de tête.",
   },
   profile: null,
-  bench: null,
+  bench: { tiers: [], latestTier: null },
   scenarios: scenarioCatalog("intermediate").groups,
   history: [],
   question: "Que faire pour l'axe 1 ?",

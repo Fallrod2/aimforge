@@ -48,6 +48,7 @@ export {
 } from "./codex-link.js";
 export {
   type Ask,
+  type ModelAnswer,
   ModelError,
   type ModelMessage,
   type ModelRequest,

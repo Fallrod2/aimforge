@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CURRENT_SEASON } from "../../lib/energy";
 import { scenarioCatalog } from "../shared/scenarios";
 import {
   buildChatCorrectionMessages,
@@ -7,7 +8,7 @@ import {
   type ChatDebrief,
   COACH_CHAT_SYSTEM_PROMPT,
 } from "./chat-prompt";
-import type { CoachBenchSummary, CoachProfile } from "./prompt";
+import type { CoachBenchTiers, CoachProfile, CoachTierBench } from "./prompt";
 
 const PROFILE: CoachProfile = {
   pseudo: "Fallrod",
@@ -18,17 +19,41 @@ const PROFILE: CoachProfile = {
   notesMaps: "Icebox en attaque",
 };
 
-const BENCH: CoachBenchSummary = {
+const NOVICE: CoachTierBench = {
+  tier: "novice",
+  tierLabel: "Novice",
+  season: CURRENT_SEASON,
+  date: "2026-06-12T18:30:00.000Z",
+  overall: 812.4,
+  rank: "Gold",
+  complete: true,
+  filled: 18,
+  total: 18,
+  weakest: [
+    { name: "Precise", energy: 700.1 },
+    { name: "Reactive", energy: 755 },
+  ],
+};
+
+const INTERMEDIATE: CoachTierBench = {
   tier: "intermediate",
   tierLabel: "Intermediate",
+  season: CURRENT_SEASON,
   date: "2026-08-01T18:30:00.000Z",
   overall: 612.3,
   rank: "Diamond",
   complete: false,
+  filled: 18,
+  total: 18,
   weakest: [
     { name: "Precise", energy: 401.2 },
     { name: "Reactive", energy: 455 },
   ],
+};
+
+const BENCH: CoachBenchTiers = {
+  tiers: [NOVICE, INTERMEDIATE],
+  latestTier: "intermediate",
 };
 
 const DEBRIEF: ChatDebrief = {
@@ -88,7 +113,7 @@ describe("buildChatMessages", () => {
     expect(messages).toHaveLength(2);
     expect(messages[0]?.role).toBe("user");
     expect(messages[0]?.content).toContain("<profil>");
-    expect(messages[0]?.content).toContain("<dernier_bench>");
+    expect(messages[0]?.content).toContain("<benchs_par_palier>");
     expect(messages[0]?.content).toContain("<debrief>");
     // La consigne est le dernier mot : c'est la position où elle pèse le plus.
     expect(messages.at(-1)?.role).toBe("user");
@@ -173,8 +198,20 @@ describe("buildChatMessages", () => {
     expect(content.split("</debrief>")).toHaveLength(2);
   });
 
+  it("porte la dernière passe de chaque palier, avec sa complétude et son rang", () => {
+    const content = buildChatMessages(context())[0]?.content ?? "";
+
+    expect(content).toContain("Palier Novice");
+    expect(content).toContain("rang Gold");
+    expect(content).toContain("Palier Intermediate");
+    expect(content).toContain("rang Diamond");
+    expect(content).toContain("18/18 scénarios renseignés");
+  });
+
   it("tient sans profil ni bench : le contexte est facultatif", () => {
-    const content = buildChatMessages(context({ profile: null, bench: null }))[0]?.content ?? "";
+    const content =
+      buildChatMessages(context({ profile: null, bench: { tiers: [], latestTier: null } }))[0]
+        ?.content ?? "";
 
     expect(content).toContain("Profil non renseigné.");
     expect(content).toContain("Aucune passe de bench enregistrée");

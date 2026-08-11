@@ -313,9 +313,11 @@ async function runTest(input: AiSettingsInput, userId: string): Promise<AiTestRe
     );
     const answer = await ask([{ role: "user", content: "ok" }], TEST_TIMEOUT_MS);
 
+    // Un test de connexion ne juge pas la sortie : qu'elle ait été coupée au
+    // plafond prouve justement que le modèle répond.
     return {
       ok: true,
-      message: `Connexion réussie : ${spec.label} a répondu avec « ${input.model} » (${answer.slice(0, 40)}).`,
+      message: `Connexion réussie : ${spec.label} a répondu avec « ${input.model} » (${answer.text.slice(0, 40)}).`,
     };
   } catch (cause) {
     if (cause instanceof ModelError) {

@@ -16,6 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type {
   LinkedAccount,
+  MatchDetail,
   ScoreboardEntry,
   StatBreakdown,
   StatTotals,
@@ -25,7 +26,7 @@ import type { LinkedAccountsState } from "../linked/useLinkedAccounts";
 import { ValorantPanel } from "../linked/ValorantPanel";
 import { BreakdownTables } from "./BreakdownTables";
 import { MatchList } from "./MatchList";
-import { Rounds, Scoreboard, Sides } from "./MatchView";
+import { Analysis, Rounds, Scoreboard, Sides } from "./MatchView";
 import { Overview } from "./Overview";
 
 /** Le texte visible du rendu : les assertions parlent de ce qu'on lit. */
@@ -389,5 +390,86 @@ describe("rounds", () => {
     expect(textOf(renderToStaticMarkup(<Rounds rounds={[]} />))).toContain(
       "n'a pas renvoyé le déroulé des rounds",
     );
+  });
+});
+
+describe("mini-analyse", () => {
+  const DETAIL: MatchDetail = {
+    matchId: "m-1",
+    playedAt: "2026-08-09T18:12:00.000Z",
+    map: "Ascent",
+    mode: "Competitive",
+    team: "bleue",
+    result: "defaite",
+    roundsWon: 11,
+    roundsLost: 13,
+    scoreboard: [],
+    rounds: [],
+    sides: [],
+  };
+
+  function analysisMarkup(overrides: Partial<Parameters<typeof Analysis>[0]> = {}): string {
+    return renderToStaticMarkup(
+      <Analysis
+        analysis={null}
+        detail={DETAIL}
+        generating={false}
+        error={null}
+        remaining={null}
+        onAnalyze={() => {}}
+        {...overrides}
+      />,
+    );
+  }
+
+  /** Rien ne se génère tout seul : ouvrir une partie ne coûte pas un quota. */
+  it("n'offre qu'un bouton tant qu'aucune analyse n'existe, et annonce son coût", () => {
+    const text = textOf(analysisMarkup());
+
+    expect(text).toContain("Analyser ce match");
+    expect(text).toContain("un message de coach");
+    expect(text).toContain("la relecture est gratuite");
+    expect(text).not.toContain("Approfondir");
+  });
+
+  it("désarme le bouton et le dit pendant la génération", () => {
+    const markup = analysisMarkup({ generating: true });
+
+    expect(textOf(markup)).toContain("Le coach lit ta partie");
+    expect(markup).toContain("disabled");
+  });
+
+  /**
+   * Le bouton disparaît définitivement : le serveur ne regénérera pas, et
+   * l'offrir serait une promesse fausse.
+   */
+  it("affiche l'analyse et le pont vers le coach, sans rouvrir le bouton", () => {
+    const text = textOf(analysisMarkup({ analysis: "Tu meurs trop tôt en post-plant." }));
+
+    expect(text).toContain("Tu meurs trop tôt en post-plant.");
+    expect(text).toContain("Approfondir avec le coach");
+    expect(text).not.toContain("Analyser ce match");
+  });
+
+  it("annonce le quota restant seulement quand le serveur vient de compter", () => {
+    expect(textOf(analysisMarkup({ analysis: "Court.", remaining: 7 }))).toContain(
+      "Il te reste 7 messages de coach aujourd'hui.",
+    );
+    expect(textOf(analysisMarkup({ analysis: "Court.", remaining: 1 }))).toContain(
+      "Il te reste 1 message de coach aujourd'hui.",
+    );
+    expect(textOf(analysisMarkup({ analysis: "Court.", remaining: 0 }))).toContain(
+      "Plus de message de coach aujourd'hui",
+    );
+    expect(textOf(analysisMarkup({ analysis: "Court.", remaining: null }))).not.toContain(
+      "Il te reste",
+    );
+  });
+
+  it("montre l'erreur du serveur telle qu'elle, quota atteint compris", () => {
+    const markup = analysisMarkup({ error: "Quota atteint : 20 messages de coach par jour." });
+
+    expect(textOf(markup)).toContain("Quota atteint");
+    expect(markup).toContain('aria-live="polite"');
   });
 });

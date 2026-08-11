@@ -240,8 +240,43 @@ describe("api/valorant/match", () => {
 
     expect(response.status).toBe(200);
     expect(body.cached).toBe(true);
+    expect(body.analysis).toBeNull();
     expect(state.fetched).toBe(0);
     expect(state.upserts).toHaveLength(0);
+  });
+
+  /**
+   * L'analyse (V4) voyage avec le détail, sans qu'on l'ait demandée : c'est ce
+   * qui permet à l'écran d'afficher une analyse déjà payée sans second appel, et
+   * de n'offrir le bouton que lorsqu'il n'y a réellement rien à montrer.
+   */
+  it("rend l'analyse déjà enregistrée avec le détail", async () => {
+    state.cached = {
+      payload: {
+        matchId: MATCH_ID,
+        playedAt: "2026-08-09T18:12:00.000Z",
+        map: "Ascent",
+        mode: "Competitive",
+        team: "bleue",
+        result: "defaite",
+        roundsWon: 11,
+        roundsLost: 13,
+        scoreboard: [],
+        rounds: [],
+        sides: [],
+      },
+      analysis: "Tu meurs trop tôt en post-plant.",
+    };
+
+    const { POST } = await import("../valorant/match.js");
+    const response = await POST(matchRequest({ match_id: MATCH_ID }));
+    const body = await bodyOf(response);
+
+    expect(response.status).toBe(200);
+    expect(body.analysis).toBe("Tu meurs trop tôt en post-plant.");
+    // Une lecture ne décompte rien : le quota ne s'annonce que quand il a servi.
+    expect(body.remaining).toBeNull();
+    expect(state.fetched).toBe(0);
   });
 
   it("ignore une ligne de cache hors contrat et repasse par la source", async () => {

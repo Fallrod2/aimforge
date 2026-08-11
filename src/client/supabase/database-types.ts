@@ -313,6 +313,7 @@ export type Database = {
       }
       match_details: {
         Row: {
+          analysis: string | null
           fetched_at: string
           id: number
           match_id: string
@@ -320,6 +321,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          analysis?: string | null
           fetched_at?: string
           id?: never
           match_id: string
@@ -327,6 +329,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          analysis?: string | null
           fetched_at?: string
           id?: never
           match_id?: string

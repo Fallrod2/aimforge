@@ -11,6 +11,7 @@ import {
   chatEndpoint,
   connectBudget,
   createChatAsk,
+  cutAtCap,
   type FetchLike,
   readChatCompletion,
   spentOnReasoning,
@@ -58,6 +59,14 @@ function recorder(responses: readonly Response[]): Recorder {
 
 function completion(text: string, status = 200): Response {
   return new Response(JSON.stringify({ choices: [{ message: { content: text } }] }), { status });
+}
+
+/** Une complétion coupée au plafond de jetons : du texte, et `length` au bout. */
+function cutCompletion(text: string): Response {
+  return new Response(
+    JSON.stringify({ choices: [{ message: { content: text }, finish_reason: "length" }] }),
+    { status: 200 },
+  );
 }
 
 function body(call: { init: RequestInit }): Record<string, unknown> {
@@ -140,11 +149,60 @@ describe("createChatAsk — la requête", () => {
     ]);
   });
 
-  it("rend le texte de la réponse, détouré", async () => {
+  it("rend le texte de la réponse, détouré, et ne la dit pas coupée", async () => {
     const fake = recorder([completion('  {"resume":"ok"}  ')]);
     const ask = createChatAsk(MISTRAL, REQUEST, fake.fetch);
 
-    await expect(ask([{ role: "user", content: "x" }], 5000)).resolves.toBe('{"resume":"ok"}');
+    await expect(ask([{ role: "user", content: "x" }], 5000)).resolves.toEqual({
+      text: '{"resume":"ok"}',
+      truncated: false,
+    });
+  });
+});
+
+/**
+ * Une sortie coupée au plafond n'est ni vide ni malformée : elle est
+ * **plausible**. Le seul témoin est `finish_reason`, et il ne se déduit de rien
+ * d'autre — d'où sa remontée jusqu'aux polices.
+ */
+describe("createChatAsk — sortie coupée au plafond", () => {
+  it("reconnaît `length` sur un contenu non vide", () => {
+    expect(
+      cutAtCap({
+        choices: [{ message: { content: "une phrase en pl" }, finish_reason: "length" }],
+      }),
+    ).toBe(true);
+  });
+
+  it("ne signale rien sur une génération terminée", () => {
+    expect(cutAtCap({ choices: [{ message: { content: "fini" }, finish_reason: "stop" }] })).toBe(
+      false,
+    );
+    expect(cutAtCap({ choices: [] })).toBe(false);
+    expect(cutAtCap(null)).toBe(false);
+  });
+
+  it("remonte la troncature avec le texte, sans en faire une erreur", async () => {
+    const fake = recorder([cutCompletion("Tu meurs trop tôt en post-plant, replace-toi der")]);
+    const ask = createChatAsk(MISTRAL, REQUEST, fake.fetch);
+    const answer = await ask([{ role: "user", content: "x" }], 5000);
+
+    expect(answer.text).toContain("post-plant");
+    expect(answer.truncated).toBe(true);
+  });
+
+  it("laisse le contenu vide au diagnostic de raisonnement, qui reste une erreur", async () => {
+    const fake = recorder([
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: "" }, finish_reason: "length" }] }),
+        { status: 200 },
+      ),
+    ]);
+    const ask = createChatAsk(MISTRAL, REQUEST, fake.fetch);
+
+    await expect(ask([{ role: "user", content: "x" }], 5000)).rejects.toMatchObject({
+      kind: "reasoning_budget",
+    });
   });
 });
 
@@ -255,7 +313,9 @@ describe("createChatAsk — `max_completion_tokens`", () => {
     const fake = recorder([refusal, completion("{}")]);
     const ask = createChatAsk(MISTRAL, REQUEST, fake.fetch);
 
-    await expect(ask([{ role: "user", content: "x" }], 5000)).resolves.toBe("{}");
+    await expect(ask([{ role: "user", content: "x" }], 5000)).resolves.toMatchObject({
+      text: "{}",
+    });
     expect(fake.calls).toHaveLength(2);
     expect(body(fake.calls[0] as { init: RequestInit })).toHaveProperty("max_tokens");
 

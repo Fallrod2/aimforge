@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CURRENT_SEASON, listScenarios, listSubcategories } from "../../lib/energy";
-import { summarizeBench } from "./bench";
+import { summarizeBench, summarizeTierBench } from "./bench";
 
 const RUN = {
   tier: "novice",
@@ -64,5 +64,46 @@ describe("summarizeBench", () => {
   it("respecte le nombre demandé", () => {
     expect(summarizeBench(RUN, scoresWithDip(""), 1).weakest).toHaveLength(1);
     expect(summarizeBench(RUN, scoresWithDip(""), 0).weakest).toHaveLength(0);
+  });
+});
+
+describe("summarizeTierBench", () => {
+  it("garde le résumé du coach et y ajoute la saison de la passe", () => {
+    const summary = summarizeTierBench(RUN, scoresWithDip(""));
+
+    expect(summary.tierLabel).toBe("Novice");
+    expect(summary.rank).toBe("Gold");
+    expect(summary.season).toBe(CURRENT_SEASON);
+    expect(summary.weakest).toHaveLength(3);
+  });
+
+  it("compte les scénarios renseignés sur le total du palier", () => {
+    const complete = summarizeTierBench(RUN, scoresWithDip(""));
+
+    expect(complete.filled).toBe(18);
+    expect(complete.total).toBe(18);
+
+    const partial = summarizeTierBench(RUN, scoresWithDip("").slice(0, 7));
+
+    expect(partial.filled).toBe(7);
+    expect(partial.total).toBe(18);
+  });
+
+  it("ne compte ni les doublons ni les scénarios d'un autre palier", () => {
+    const first = scoresWithDip("")[0];
+    const scores = [
+      { scenario: first?.scenario ?? "", score: 100 },
+      { scenario: first?.scenario ?? "", score: 200 },
+      { scenario: "VT Pasu Advanced", score: 300 },
+    ];
+
+    expect(summarizeTierBench(RUN, scores).filled).toBe(1);
+  });
+
+  it("compte zéro scénario sur une passe vide", () => {
+    const summary = summarizeTierBench({ ...RUN, overall: 0, rank: null }, []);
+
+    expect(summary.filled).toBe(0);
+    expect(summary.total).toBe(18);
   });
 });

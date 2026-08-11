@@ -31,6 +31,25 @@ export async function getMatchDetail(matchId: string): Promise<MatchDetailRespon
 }
 
 /**
+ * Le détail **et** la mini-analyse de la partie (SPEC §5 sexies, V4).
+ *
+ * Même surface que `getMatchDetail`, avec `analyze` en plus : c'est la fonction
+ * serverless qui décide s'il y a quelque chose à générer. Une partie déjà
+ * analysée rend son texte sans rien dépenser — le geste est donc *idempotent du
+ * point de vue du quota*, ce qui compte quand un double-clic part deux fois.
+ *
+ * `remaining` n'est renseigné que lorsqu'une génération vient d'être comptée sur
+ * la clé de la plateforme ; ailleurs il vaut `null`, et l'écran n'annonce alors
+ * aucun décompte plutôt que d'en inventer un.
+ */
+export async function analyzeMatch(matchId: string): Promise<MatchDetailResponse> {
+  return callValorant(MATCH_PATH, matchDetailResponseSchema, {
+    match_id: matchId,
+    analyze: true,
+  });
+}
+
+/**
  * Les types du contrat, resservis ici : les vues n'importent que la couche
  * données (`src/client/data`), jamais `src/shared` directement — c'est la règle
  * du module `index.ts`, et elle vaut aussi pour les types.

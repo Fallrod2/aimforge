@@ -159,7 +159,7 @@ vi.mock("../../src/server/ai/index.js", async (importOriginal) => {
       const answer = state.answers[state.asked] ?? "";
 
       state.asked += 1;
-      return Promise.resolve(answer);
+      return Promise.resolve({ text: answer, truncated: false });
     },
   };
 });

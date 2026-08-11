@@ -179,7 +179,7 @@ vi.mock("../../src/server/ai/index.js", async (importOriginal) => {
   return {
     ...actual,
     resolveModelFor: () => Promise.resolve(state.resolution),
-    createAsk: () => () => Promise.resolve(state.answer),
+    createAsk: () => () => Promise.resolve({ text: state.answer, truncated: false }),
   };
 });
 

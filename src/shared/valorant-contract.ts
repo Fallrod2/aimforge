@@ -56,9 +56,27 @@ export const MATCH_ID_MAX = 100;
 export const matchDetailRequestSchema = z.object({
   /** `snake_case` comme `api/coach` : c'est la convention des corps de requête. */
   match_id: z.string().trim().min(1).max(MATCH_ID_MAX),
+  /**
+   * Demande en plus la **mini-analyse** de la partie (SPEC §5 sexies, V4).
+   *
+   * Facultatif, et faux par défaut : ouvrir une partie ne doit jamais dépenser
+   * un quota. C'est le clic sur « Analyser ce match » qui pose ce drapeau, et
+   * lui seul.
+   */
+  analyze: z.boolean().optional(),
 });
 
 export type MatchDetailRequest = z.infer<typeof matchDetailRequestSchema>;
+
+/**
+ * Longueur maximale acceptée pour une mini-analyse.
+ *
+ * Le prompt demande deux à quatre phrases (300 à 500 caractères) et le budget
+ * de jetons borne déjà la sortie : cette borne-ci n'attrape qu'une réponse
+ * manifestement hors format. Elle est **la même** que la contrainte de colonne
+ * (migration 0016), pour qu'un texte accepté ici soit toujours enregistrable.
+ */
+export const MATCH_ANALYSIS_MAX = 800;
 
 /**
  * Une ligne du scoreboard.
@@ -144,6 +162,20 @@ export const matchDetailResponseSchema = z.object({
   /** `true` quand la réponse vient de `match_details` (aucun appel sortant). */
   cached: z.boolean(),
   detail: matchDetailSchema,
+  /**
+   * La mini-analyse déjà enregistrée pour cette partie, ou `null` (V4).
+   *
+   * Elle voyage avec le détail **même sans `analyze`** : c'est ce qui permet à
+   * l'écran de match d'afficher une analyse déjà payée sans second appel, et de
+   * n'offrir le bouton que lorsqu'il n'y a réellement rien à montrer.
+   */
+  analysis: z.string().min(1).nullable(),
+  /**
+   * Messages de coach restants aujourd'hui, quand une génération vient d'être
+   * comptée sur la clé de la plateforme. `null` partout ailleurs — une lecture
+   * ne décompte rien, et une clé personnelle n'a pas de compteur.
+   */
+  remaining: z.number().int().min(0).nullable(),
 });
 
 export type MatchDetailResponse = z.infer<typeof matchDetailResponseSchema>;

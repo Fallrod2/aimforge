@@ -76,7 +76,7 @@ export type {
   SidePerformance,
   Team,
 } from "./valorant-match";
-export { getMatchDetail } from "./valorant-match";
+export { analyzeMatch, getMatchDetail } from "./valorant-match";
 export type {
   StatBreakdown,
   StatPeriods,

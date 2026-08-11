@@ -27,13 +27,29 @@ export interface ModelRequest {
 }
 
 /**
+ * Ce qu'un adaptateur rend : le texte, et le fait que le fournisseur ait dit
+ * l'avoir **coupé** au plafond de jetons.
+ *
+ * `truncated` n'est pas une statistique. Une sortie coupée est plausible — elle
+ * n'est ni vide, ni trop longue, ni malformée — et aucune police en aval ne
+ * saurait la reconnaître à partir du seul texte : seul le fournisseur sait
+ * qu'il écrivait encore. Là où la sortie est mise en cache à vie (la
+ * mini-analyse d'un match), perdre ce renseignement revient à graver un conseil
+ * amputé sans jamais pouvoir le rattraper.
+ */
+export interface ModelAnswer {
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
+/**
  * Un appel au modèle, borné dans le temps.
  *
  * Le délai est un **paramètre**, pas un réglage de l'adaptateur : la routine
  * partage un budget décroissant entre ses deux tentatives (`budget.ts`), et un
  * adaptateur qui déciderait seul de son délai casserait ce calcul.
  */
-export type Ask = (messages: readonly ModelMessage[], timeoutMs: number) => Promise<string>;
+export type Ask = (messages: readonly ModelMessage[], timeoutMs: number) => Promise<ModelAnswer>;
 
 /**
  * La configuration effective d'un appel, une fois la résolution faite.

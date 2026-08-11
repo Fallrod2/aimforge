@@ -21,6 +21,7 @@ import {
   type BenchRunForCoach,
   type ScenarioScoreForCoach,
   summarizeBench,
+  summarizeTierBench,
 } from "../coach/bench.js";
 
 /** Une sous-catégorie faible, et ce qui la sépare du rang suivant. */
@@ -45,6 +46,30 @@ export interface RoutineBenchSummary {
   readonly complete: boolean;
   /** Les sous-catégories les plus basses, de la plus basse à la moins basse. */
   readonly weakest: readonly RoutineWeakness[];
+}
+
+/** La dernière passe d'un palier, vue par la routine. */
+export interface RoutineTierBench extends RoutineBenchSummary {
+  /** Saison de la passe : chaque palier garde la sienne. */
+  readonly season: SeasonId;
+  /** Scénarios renseignés dans la passe. */
+  readonly filled: number;
+  /** Scénarios du palier (18 sur le benchmark Voltaic). */
+  readonly total: number;
+}
+
+/**
+ * Les benchs du joueur : la dernière passe de chaque palier mesuré.
+ *
+ * La routine en a besoin pour la même raison que le coach, mais elle en fait un
+ * autre usage : c'est ce qui lui permet de **viser le bon palier** — travailler
+ * celui qui est en cours sans oublier qu'un palier terminé plafonne déjà.
+ */
+export interface RoutineBenchTiers {
+  /** Du palier le plus bas au plus haut ; seuls ceux qui ont une passe. */
+  readonly tiers: readonly RoutineTierBench[];
+  /** Le palier de la passe la plus récente ; `null` sans aucune passe. */
+  readonly latestTier: TierId | null;
 }
 
 /**
@@ -101,5 +126,28 @@ export function summarizeBenchForRoutine(
         gap: next === null ? null : next.minEnergy - weakness.energy,
       };
     }),
+  };
+}
+
+/**
+ * Le même résumé, plus la saison et la complétude de la passe.
+ *
+ * Il complète `summarizeBenchForRoutine` au lieu de le refaire : la complétude
+ * et la saison sont comptées par le module du coach (`summarizeTierBench`), les
+ * écarts au rang suivant restent ici. Une passe se résume donc d'une seule
+ * façon, quel que soit celui des deux prompts qui la lit.
+ */
+export function summarizeTierBenchForRoutine(
+  run: BenchRunForCoach,
+  scores: readonly ScenarioScoreForCoach[],
+  count = 3,
+): RoutineTierBench {
+  const tierSummary = summarizeTierBench(run, scores, count);
+
+  return {
+    ...summarizeBenchForRoutine(run, scores, count),
+    season: tierSummary.season,
+    filled: tierSummary.filled,
+    total: tierSummary.total,
   };
 }

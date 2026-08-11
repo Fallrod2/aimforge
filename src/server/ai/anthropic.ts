@@ -90,7 +90,9 @@ export function createAnthropicAsk(config: ProviderConfig, request: ModelRequest
       if (text === "") {
         throw new ModelError("malformed", config, "réponse sans texte");
       }
-      return text;
+      // `max_tokens` est le seul motif d'arrêt qui laisse une phrase en plan :
+      // le modèle écrivait encore quand le plafond est tombé.
+      return { text, truncated: message.stop_reason === "max_tokens" };
     } catch (cause) {
       if (cause instanceof ModelError) throw cause;
       throw translate(config, cause);

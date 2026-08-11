@@ -21,7 +21,7 @@ const JSON_TEXT = JSON.stringify(DEBRIEF);
 const CONTEXT: CoachContext = {
   stats: "Ascent 13-11",
   profile: null,
-  bench: null,
+  bench: { tiers: [], latestTier: null },
   // Sans bench, le palier du joueur est inconnu : c'est la liste Novice qui
   // fait foi, exactement comme dans `api/coach.ts`.
   scenarios: scenarioCatalog("novice").groups,

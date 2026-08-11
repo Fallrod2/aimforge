@@ -6,7 +6,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { createChatGptAsk, isUnsupportedModelRefusal, readResponsesPayload } from "./chatgpt";
+import {
+  createChatGptAsk,
+  isUnsupportedModelRefusal,
+  readResponsesPayload,
+  readResponsesTruncation,
+} from "./chatgpt";
 import { OAUTH_TOKEN_URL } from "./codex-oauth";
 import {
   ModelError,
@@ -89,6 +94,63 @@ describe("readResponsesPayload", () => {
   it("rend null quand il n'y a rien à lire", () => {
     expect(readResponsesPayload("")).toBeNull();
     expect(readResponsesPayload("data: [DONE]\n")).toBeNull();
+  });
+});
+
+/**
+ * Ce back-end n'accepte pas de plafond de notre part, mais il a le sien : une
+ * réponse peut donc revenir `incomplete`, avec un texte lisible et une phrase
+ * en l'air. Le seul témoin est cet `incomplete_details`.
+ */
+describe("readResponsesTruncation", () => {
+  const CUT =
+    'data: {"type":"response.completed","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output_text":"une phrase en pl"}}\n';
+
+  it("reconnaît une génération arrêtée au plafond de jetons", () => {
+    expect(readResponsesTruncation(CUT)).toBe(true);
+    expect(readResponsesPayload(CUT)).toBe("une phrase en pl");
+  });
+
+  it("accepte aussi un corps JSON d'un seul tenant", () => {
+    expect(
+      readResponsesTruncation(
+        JSON.stringify({
+          status: "incomplete",
+          incomplete_details: { reason: "max_output_tokens" },
+          output_text: "coupé",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("ne signale rien sur une génération terminée, ni sur un flux muet", () => {
+    expect(
+      readResponsesTruncation(
+        'data: {"type":"response.completed","response":{"output_text":"complet"}}\n',
+      ),
+    ).toBe(false);
+    expect(readResponsesTruncation('data: {"delta":"utile"}\n')).toBe(false);
+    expect(readResponsesTruncation("")).toBe(false);
+  });
+
+  it("remonte la troncature avec le texte, sans en faire une erreur", async () => {
+    const ask = createChatGptAsk(CONFIG, REQUEST, { fetchImpl: async () => new Response(CUT) });
+
+    await expect(ask([{ role: "user", content: "x" }], 5000)).resolves.toEqual({
+      text: "une phrase en pl",
+      truncated: true,
+    });
+  });
+
+  it("rend une réponse entière sans drapeau", async () => {
+    const ask = createChatGptAsk(CONFIG, REQUEST, {
+      fetchImpl: async () => new Response('data: {"delta":"complet"}\n'),
+    });
+
+    await expect(ask([{ role: "user", content: "x" }], 5000)).resolves.toEqual({
+      text: "complet",
+      truncated: false,
+    });
   });
 });
 
@@ -291,7 +353,7 @@ describe("createChatGptAsk — rafraîchissement des jetons", () => {
       },
     });
 
-    expect(await ask([{ role: "user", content: "x" }], 5000)).toBe("ok");
+    expect(await ask([{ role: "user", content: "x" }], 5000)).toMatchObject({ text: "ok" });
     expect(routes.calls.oauth).toBe(1);
     expect(authorization).not.toBe("Bearer acces-en-cours");
 
@@ -341,7 +403,7 @@ describe("createChatGptAsk — rafraîchissement des jetons", () => {
       fetchImpl: routes.fetchImpl,
     });
 
-    expect(await ask([{ role: "user", content: "x" }], 5000)).toBe("ok");
+    expect(await ask([{ role: "user", content: "x" }], 5000)).toMatchObject({ text: "ok" });
     expect(routes.calls.backend).toBe(1);
   });
 
@@ -378,6 +440,6 @@ describe("createChatGptAsk — rafraîchissement des jetons", () => {
       },
     });
 
-    expect(await ask([{ role: "user", content: "x" }], 5000)).toBe("ok");
+    expect(await ask([{ role: "user", content: "x" }], 5000)).toMatchObject({ text: "ok" });
   });
 });

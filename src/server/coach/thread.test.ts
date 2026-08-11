@@ -12,7 +12,7 @@ const ALLOWED = [...CATALOG.names];
 function context(): ThreadContext {
   return {
     profile: null,
-    bench: null,
+    bench: { tiers: [], latestTier: null },
     scenarios: CATALOG.groups,
     matches: [],
     debriefs: [],

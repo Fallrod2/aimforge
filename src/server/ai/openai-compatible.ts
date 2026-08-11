@@ -168,6 +168,29 @@ export function spentOnReasoning(body: unknown): boolean {
   return reasoned || choice?.finish_reason === "length";
 }
 
+/**
+ * La sortie a-t-elle été **coupée au plafond de jetons** ?
+ *
+ * Même indice que ci-dessus (`finish_reason: "length"`), lu sur l'autre moitié
+ * du cas : un contenu **non vide**. Le modèle a écrit, puis le plafond est
+ * tombé au milieu — la phrase s'arrête, et rien dans le texte ne le dit. Les
+ * deux lectures ne se recouvrent pas : `spentOnReasoning` ne parle que d'un
+ * contenu vide, celle-ci que d'un contenu qui existe.
+ *
+ * Pas une erreur d'adaptateur : le texte est rendu tel quel, avec le drapeau.
+ * C'est la police d'en haut qui sait si sa sortie sera mise en cache, donc si
+ * une phrase amputée est rattrapable ou définitive.
+ */
+export function cutAtCap(body: unknown): boolean {
+  const choices = (body as { choices?: unknown } | null)?.choices;
+
+  if (!Array.isArray(choices) || choices.length === 0) return false;
+
+  const choice = choices[0] as { readonly finish_reason?: unknown } | null;
+
+  return choice?.finish_reason === "length" && readChatCompletion(body) !== null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Appel                                                               */
 /* ------------------------------------------------------------------ */
@@ -440,7 +463,7 @@ export function createChatAsk(
               )
             : new ModelError("malformed", config, "aucun texte dans la réponse", response.status);
         }
-        return text;
+        return { text, truncated: cutAtCap(payload) };
       } finally {
         deadline.done();
       }
