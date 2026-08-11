@@ -25,3 +25,35 @@ désambiguïsé par jointure. Ajouter une colonne `benchmark_id` sur
 parente. Décision : pas de colonne dupliquée ; les requêtes « meilleur score par
 scénario » joignent `bench_runs` (l'index existant `scenario_scores_run` +
 `bench_runs_user_season_date` suffisent à l'échelle mono-utilisateur actuelle).
+
+## D4 — Le registre de benchmarks est l'évolution du registre de saisons
+`src/lib/energy/seasons.ts` fait déjà tout ce que demande le registre cible
+(identifiant → jeu de données complet, verrou de relecture, résolution
+qualifiée). On le généralise en registre de **benchmarks** (`benchmarks.ts`) au
+lieu de construire un second système à côté : `SeasonDefinition` devient
+`BenchmarkDefinition` avec les métadonnées produit (nom, éditeur, statut
+stable/beta/incomplet, source, date de version, aim trainer) et une
+`energyFormula` branchable. Le cœur mathématique Voltaic (`energy.ts`, audité)
+n'est PAS réécrit : il devient l'implémentation de la formule `voltaic-anchors`,
+sélectionnée par le registre.
+
+## D5 — `TierId` cesse d'être une union fermée
+`"novice" | "intermediate" | "advanced"` est une structure Voltaic. Un autre
+benchmark peut avoir d'autres paliers (ou un seul). `TierId` devient un string
+validé contre les paliers du benchmark de la passe — même patron que
+`toSeasonId`. La contrainte SQL `tier in (...)` est relâchée en conséquence
+(migration), les valeurs existantes restent valides.
+
+## D6 — Sélection du benchmark actif : colonne `profiles.active_benchmark`
+Le benchmark actif est une préférence durable de l'utilisateur (le tracker,
+l'historique, le coach la suivent) : elle vit dans `profiles`, pas dans le
+localStorage (elle doit suivre l'utilisateur d'un appareil à l'autre et être
+lisible par les endpoints serveur pour le contexte du coach). Défaut :
+`voltaic-s5`. Même migration pour `profiles.game` (vocabulaire, D7).
+
+## D7 — Couche jeu = vocabulaire uniquement
+`profiles.game` (valorant | cs2 | apex | overwatch | autre) pilote : les
+libellés/placeholders du profil (« agent principal » → « perso/rôle »), la
+phrase d'identité des 5 prompts système et le vocabulaire in-game qu'ils
+emploient. Aucune logique, aucun écran par jeu. Les stats Riot/Valorant ne
+s'affichent que si un compte Riot est lié, indépendamment du champ.
