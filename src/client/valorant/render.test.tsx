@@ -97,7 +97,7 @@ describe("carte Valorant du dashboard", () => {
     const state: LinkedAccountsState = { status: "ready", accounts: [] };
     const text = textOf(renderToStaticMarkup(<ValorantPanel state={state} />));
 
-    expect(text).toContain("Suis ton rang sans rien saisir");
+    expect(text).toContain("Ton rang peut se suivre tout seul");
     expect(text).toContain("Lier un compte");
   });
 

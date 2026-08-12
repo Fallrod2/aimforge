@@ -71,9 +71,11 @@ export function ValorantPanel({ state }: { readonly state: LinkedAccountsState }
 
   if (account === null) {
     return (
-      <LinkInvite title="Suis ton rang sans rien saisir">
-        Lie ton Riot ID : ton rang, ton RR et tes dernières parties classées apparaîtront ici, et le
-        coach pourra débriefer un match sans que tu colles quoi que ce soit.
+      <LinkInvite title="Ton rang peut se suivre tout seul">
+        Lie ton Riot ID une fois : ton rang, ton RR et tes dernières parties classées se chargent
+        ici, et le coach peut débriefer un match sans que tu colles quoi que ce soit. Les chiffres
+        viennent d'un service tiers : quand il ne répond pas — ou tant que sa clé n'est pas posée —,
+        l'écran le dit, et coller tes stats au coach reste possible.
       </LinkInvite>
     );
   }
@@ -181,6 +183,12 @@ function Live({ account }: { readonly account: LinkedAccount }) {
       {notice === null ? null : (
         <p aria-live="polite" className="text-[11px] leading-relaxed text-steel-500">
           {notice}
+          {/* Dire ce qui reste vrai à l'écran, et seulement quand ça l'est :
+              promettre « les derniers chiffres connus » au-dessus d'un panneau
+              vide serait une consolation mensongère. */}
+          {mmr === null && matches.length === 0
+            ? " Rien n'a encore été importé pour ce compte."
+            : " Ce qui est affiché reste le dernier import connu."}
         </p>
       )}
     </div>

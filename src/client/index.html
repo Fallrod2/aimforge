@@ -4,6 +4,55 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AimForge</title>
+
+    <!--
+      Métadonnées de partage (vague 3.7).
+
+      Elles sont écrites ici, en dur, et non posées par le JavaScript : les
+      robots d'aperçu (Discord, Slack, iMessage, Twitter) lisent le HTML servi,
+      jamais le DOM après montage. Une application entièrement rendue côté
+      client ne peut donc décrire que sa page d'entrée — ce qui tombe bien,
+      c'est la seule adresse publique (tout le reste est derrière une session).
+
+      Les chemins d'images sont **absolus** : un aperçu partagé depuis
+      `#/connexion` ou `#/mentions-legales` doit résoudre la même image, et une
+      URL relative se résoudrait contre la route affichée.
+    -->
+    <meta
+      name="description"
+      content="Suis ta progression à l'aim, benchmark par benchmark : énergie calculée en direct, debriefs de tes parties et routine du jour sur tes vraies faiblesses."
+    />
+    <!-- Le fond réel du body (`--color-steel-950` dans index.css) : la barre
+         d'adresse mobile doit prolonger la page, pas la souligner. -->
+    <meta name="theme-color" content="#0b0d10" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="AimForge" />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:url" content="https://aimforge.alexabriel.com" />
+    <meta property="og:title" content="AimForge — mesure ton aim, comprends tes parties" />
+    <meta
+      property="og:description"
+      content="Suis ta progression à l'aim, benchmark par benchmark : énergie calculée en direct, debriefs de tes parties et routine du jour sur tes vraies faiblesses."
+    />
+    <meta property="og:image" content="https://aimforge.alexabriel.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Le panneau de synthèse d'AimForge : énergie overall 733,33, rang Jade, 18 scénarios sur 18 saisis."
+    />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AimForge — mesure ton aim, comprends tes parties" />
+    <meta
+      name="twitter:description"
+      content="Suis ta progression à l'aim, benchmark par benchmark : énergie calculée en direct, debriefs de tes parties et routine du jour sur tes vraies faiblesses."
+    />
+    <meta name="twitter:image" content="https://aimforge.alexabriel.com/og.png" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
   <body>
     <div id="root"></div>

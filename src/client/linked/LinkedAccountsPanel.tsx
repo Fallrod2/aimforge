@@ -29,6 +29,7 @@ import {
   setPrimaryAccount,
   unlinkAccount,
 } from "../data";
+import { routeHash } from "../route";
 import type { LinkedAccountsHandle } from "./useLinkedAccounts";
 
 const CONTROL_CLASSES =
@@ -50,6 +51,17 @@ const GHOST_BUTTON =
 function message(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
 }
+
+/**
+ * Le repli, en dur, quand la liaison KovaaK's n'aboutit pas.
+ *
+ * Les messages du serveur disent déjà « saisis tes scores à la main » quand ils
+ * viennent de la source (`api/_lib/kovaaks.ts`), mais pas quand ils viennent de
+ * chez nous — compteur d'imports indisponible, frein quotidien, service non
+ * configuré. Or c'est exactement là que l'utilisateur risque de croire qu'il n'y
+ * a plus de chemin : le lien ci-dessous en montre un, quelle que soit la cause.
+ */
+const TRACKER_HASH = routeHash({ view: "perfs", tab: "saisie" });
 
 /** Ce qu'un formulaire de liaison est en train de vivre. */
 type LinkStatus =
@@ -88,7 +100,8 @@ export function LinkedAccountsPanel({ state, reload }: LinkedAccountsHandle) {
         <h2 className="text-lg font-semibold text-steel-100">Comptes liés</h2>
         <p className="mt-1 text-xs leading-relaxed text-steel-500">
           Lie tes comptes une fois : la saisie se pré-remplit depuis tes scores KovaaK's, et le
-          tableau de bord suit ton rang Valorant sans que tu aies à ressaisir quoi que ce soit.
+          tableau de bord suit ton rang Valorant. Les deux données viennent de services tiers —
+          quand l'un ne répond pas, l'écran le dit et la saisie manuelle prend le relais.
         </p>
       </div>
 
@@ -164,6 +177,18 @@ function KovaaksSection({ accounts, onChanged }: SectionProps) {
             </button>
           </div>
           <StatusLine status={status} />
+          {status.kind === "error" || status.kind === "unavailable" ? (
+            <p className="text-[11px] leading-relaxed text-steel-500">
+              Sans compte lié, rien n'est perdu :{" "}
+              <a
+                href={TRACKER_HASH}
+                className="text-steel-300 underline-offset-2 transition-colors hover:text-steel-100 hover:underline"
+              >
+                saisis tes scores à la main
+              </a>{" "}
+              et le bench se calcule pareil.
+            </p>
+          ) : null}
         </form>
       )}
     </Block>

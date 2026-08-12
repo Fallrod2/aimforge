@@ -443,7 +443,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   );
 }
 
-interface ImportPanelProps {
+export interface ImportPanelProps {
   /** Le compte KovaaK's lié, ou `null` s'il n'y en a pas. */
   readonly account: LinkedAccount | null;
   /** Les comptes liés ne sont pas encore connus : ne rien affirmer. */
@@ -473,8 +473,12 @@ interface ImportPanelProps {
  * rend compte (« Récupération… », le bilan, ce qui manque) et garde un
  * « Rafraîchir » discret pour rejouer le palier — un bouton d'action primaire
  * n'a plus de sens pour quelque chose que l'écran fait de lui-même.
+ *
+ * Exporté pour le rendu statique des tests : ce qu'il promet quand rien n'est
+ * lié, et ce qu'il laisse comme issue quand l'import échoue, sont les deux
+ * phrases que la vue entière ne permet pas de vérifier sans session.
  */
-function ImportPanel({
+export function ImportPanel({
   account,
   loading,
   state,
@@ -492,8 +496,9 @@ function ImportPanel({
     return (
       <LinkInvite title="Tes scores peuvent se remplir tout seuls">
         Lie ton pseudo KovaaK's une fois : le tracker ira chercher tes scores du benchmark{" "}
-        {benchmark.name} et remplira les {scenarioCount} champs pour toi. D'ici là, la saisie à la
-        main ci-dessous fait le travail.
+        {benchmark.name} et remplira les champs qu'il trouve — les {scenarioCount} si tu as joué
+        tout le palier. D'ici là, et chaque fois que la source ne répond pas, la saisie à la main
+        ci-dessous fait le travail.
       </LinkInvite>
     );
   }

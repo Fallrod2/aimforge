@@ -14,9 +14,10 @@
  *
  * Sur un compte neuf, l'emplacement « dernier bench » ne montre pas un vide
  * mais **le chemin le plus court vers une passe** : lier son pseudo KovaaK's,
- * qui remplit les 18 scores tout seuls (SPEC §5 bis). La saisie manuelle vient
- * juste derrière — elle marche toujours, et redevient le seul chemin dès qu'un
- * compte est lié.
+ * qui va chercher les scénarios déjà joués (SPEC §5 bis). Ce qu'il promet est
+ * borné à ce que la source rend — un palier entamé revient incomplet, et
+ * l'invitation le dit. La saisie manuelle vient juste derrière : elle marche
+ * toujours, et reste le seul chemin pour ce que l'import n'a pas ramené.
  *
  * La routine affichée est celle **du jour et pas encore faite**
  * (`../routine/today.ts`) : le dashboard répond à « qu'est-ce que je fais
@@ -250,14 +251,19 @@ function Card({ title, action, children }: CardProps) {
   );
 }
 
-interface LastBenchProps {
+export interface LastBenchProps {
   readonly bench: Bench;
   /** Un compte KovaaK's est-il lié ? `null` tant qu'on ne sait pas. */
   readonly kovaaksLinked: boolean | null;
   readonly onRetry: () => void;
 }
 
-function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
+/**
+ * L'emplacement « dernier bench », exporté pour le rendu statique des tests :
+ * c'est lui qui porte l'invitation à lier KovaaK's, donc la promesse d'import
+ * de l'accueil — et la page entière demanderait une session pour être rendue.
+ */
+export function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
   if (bench.status === "loading") return <Skeleton />;
 
   if (bench.status === "empty") {
@@ -284,15 +290,20 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
     }
 
     // Compte neuf, aucun pseudo KovaaK's lié : le chemin premier est la
-    // liaison, qui remplit les 18 scores d'un coup. Le tracker reste offert
-    // juste dessous, en second — c'est le seul chemin quand rien n'est lié à
-    // aller chercher, et il ne doit jamais disparaître.
+    // liaison, qui remplit d'un coup les scénarios déjà joués. Le tracker reste
+    // offert juste dessous, en second — c'est le seul chemin quand rien n'est
+    // lié à aller chercher, et il ne doit jamais disparaître.
     if (kovaaksLinked === false) {
       return (
         <div className="flex flex-col gap-3">
-          <LinkInvite title="Tes 18 scores peuvent arriver tout seuls" action="Lier KovaaK's">
-            Lie ton pseudo kovaaks.com une fois : la saisie ira chercher tes scores du benchmark
-            Voltaic, tu vérifies, tu enregistres.
+          {/* Le titre ne promet pas dix-huit chiffres : l'import ne ramène que
+              les scénarios déjà joués, et un palier entamé en rend la moitié.
+              Annoncer « tes 18 scores » ferait passer le cas fréquent — un
+              import partiel, complété à la main — pour une panne. */}
+          <LinkInvite title="Tes scores peuvent arriver tout seuls" action="Lier KovaaK's">
+            Lie ton pseudo kovaaks.com une fois : la saisie ira chercher les scénarios du benchmark
+            Voltaic que tu as déjà joués, tu vérifies, tu enregistres. Ce que la source ne rend pas
+            se tape à la main, dans la même grille.
           </LinkInvite>
           <a
             href={TRACKER_HASH}
@@ -308,7 +319,7 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
       <div className="flex flex-col items-start gap-3">
         <Placeholder
           headline="Aucune passe enregistrée."
-          detail="Ouvre la saisie des perfs : tes scores KovaaK's s'y importent en un clic, et la saisie manuelle reste là pour les corriger."
+          detail="Ouvre la saisie des perfs : l'import de tes scores KovaaK's y part tout seul, et la saisie manuelle reste là pour compléter ce qu'il n'a pas ramené ou corriger le reste."
         />
         <a href={TRACKER_HASH} className={PRIMARY_ACTION}>
           Saisir une passe
