@@ -138,6 +138,26 @@ complet + prerender/SSG de la landing (le `<head>` OG/description est déjà
 statique dans index.html, les crawlers modernes exécutent le JS — la perte
 SEO immédiate est faible).
 
+## D18 — Partage coach↔élève : conception (non implémenté, comme demandé)
+Modèle proposé : une table `coach_links (id, coach_user_id, student_user_id,
+status invited|active|revoked, scopes jsonb, created_at)` créée par
+INVITATION de l'élève (l'élève génère un code/URL à durée courte, le coach
+l'accepte : le consentement appartient toujours au propriétaire des données).
+RLS : les policies existantes (`user_id = auth.uid()`) restent la règle ;
+le partage s'exprime par des policies SELECT additionnelles du type
+`exists (select 1 from coach_links l where l.student_user_id = user_id and
+l.coach_user_id = auth.uid() and l.status = 'active' and l.scopes ? 'bench')`
+sur `bench_runs`/`scenario_scores` (jointure par la passe), et `routines` si
+le scope l'inclut. JAMAIS de partage de `ai_settings` (clés), `profiles`
+partiel (vue restreinte aux champs de jeu), ni des fils de coach IA par
+défaut. Écriture : aucune — le coach lit, commente ailleurs (hors périmètre).
+Révocation à un clic côté élève (status = revoked, immédiat par RLS).
+Points durs identifiés : les endpoints serverless qui lisent « le profil de
+l'appelant » devront distinguer « moi » de « mon élève » (paramètre explicite
++ vérification du lien actif côté serveur, pas de confiance au client) ; les
+quotas IA restent ceux du COACH quand il génère sur les données d'un élève ;
+l'anonymisation des pseudos tiers dans les données partagées est à trancher.
+
 ## D9 — Piège d'outillage : gabarit d'environnement masqué par le sandbox
 Le sandbox de la session refuse la lecture des fichiers d'environnement à la
 racine : git voit alors le gabarit d'exemple comme « supprimé » alors qu'il
