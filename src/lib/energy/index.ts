@@ -80,6 +80,7 @@ export {
 } from "./energy.js";
 export { type EnergyFormula, formulaFor, getEnergyFormula, VOLTAIC_ANCHORS } from "./formulas.js";
 export { normalizedScenarioKey, scenarioDisplayName, scenarioMarkerRegex } from "./naming.js";
+export { type PartialEnergy, partialEnergy } from "./partial.js";
 export {
   type BenchmarkData,
   type BenchmarkMeta,

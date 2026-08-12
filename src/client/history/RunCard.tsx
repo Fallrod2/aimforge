@@ -7,15 +7,24 @@
  */
 
 import { getTierFor, listScenariosFor } from "../../lib/energy";
+import { DeltaBadge } from "../components/Delta";
 import { EnergyRail } from "../components/EnergyRail";
 import { RankBadge } from "../components/RankBadge";
 import type { BenchRunDetail, BenchRunSummary } from "../data";
 import { formatEnergy, formatRunDate, formatScore, scenarioLabel } from "../format";
+import { deltaOf, subcategoryDeltas } from "../run-delta";
 import { runRankColor } from "./series";
 
 interface RunCardProps {
   readonly run: BenchRunSummary;
   readonly detail: BenchRunDetail | undefined;
+  /**
+   * Le détail de la passe **précédente** du même palier et du même benchmark
+   * (§4.4), `undefined` tant qu'il n'est pas chargé — ou pour toujours s'il
+   * s'agit de la première passe. Les écarts sont alors simplement absents :
+   * aucun zéro trompeur, aucun « ▲ +447 » tiré d'une passe qui n'existe pas.
+   */
+  readonly previous: BenchRunDetail | undefined;
   readonly detailError: string | null;
   readonly expanded: boolean;
   readonly onToggle: () => void;
@@ -30,6 +39,7 @@ interface RunCardProps {
 export function RunCard({
   run,
   detail,
+  previous,
   detailError,
   expanded,
   onToggle,
@@ -87,7 +97,7 @@ export function RunCard({
           ) : detail === undefined ? (
             <p className="text-xs text-steel-500">Chargement du détail…</p>
           ) : (
-            <RunDetailBody detail={detail} />
+            <RunDetailBody detail={detail} previous={previous} />
           )}
 
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
@@ -127,27 +137,62 @@ export function RunCard({
   );
 }
 
-function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
+function RunDetailBody({
+  detail,
+  previous,
+}: {
+  readonly detail: BenchRunDetail;
+  readonly previous: BenchRunDetail | undefined;
+}) {
   const tier = getTierFor(detail.benchmarkId, detail.tier);
   const scoreByScenario = new Map(detail.scores.map((row) => [row.scenario, row]));
+  // Deux benchs incomplets ont tous deux un overall à 0 : leur « écart nul »
+  // ne dirait rien de la progression réelle. On ne compare que des overalls.
+  const overallDelta =
+    previous === undefined || detail.overall === 0 || previous.overall === 0
+      ? null
+      : deltaOf(detail.overall, previous.overall);
+  const deltas = new Map(
+    subcategoryDeltas(detail.subcategories, previous?.subcategories ?? []).map((entry) => [
+      entry.name,
+      entry.delta,
+    ]),
+  );
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      {previous === undefined ? null : (
+        <p className="flex flex-wrap items-baseline gap-2 text-xs text-steel-500 lg:col-span-2">
+          <span>vs passe du {formatRunDate(previous.date)} :</span>
+          {overallDelta === null ? (
+            <span className="text-steel-400">écart d'overall indisponible (bench incomplet)</span>
+          ) : (
+            <DeltaBadge delta={overallDelta} label="Énergie overall" />
+          )}
+        </p>
+      )}
+
       <section>
         <h3 className="text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
           Sous-catégories
         </h3>
         <ul className="mt-3 space-y-2.5">
           {detail.subcategories.map((sub) => (
-            <li key={sub.name} className="grid grid-cols-[7rem_1fr_4.5rem] items-center gap-3">
+            <li key={sub.name} className="grid grid-cols-[7rem_1fr_5.5rem] items-center gap-3">
               <span className="truncate text-xs text-steel-300">{sub.name}</span>
               <EnergyRail tier={detail.tier} benchmarkId={detail.benchmarkId} energy={sub.energy} />
-              <span className="text-right font-mono text-xs tabular-nums text-steel-200">
-                {sub.energy > 0 ? (
-                  formatEnergy(sub.energy)
-                ) : (
-                  <span className="text-steel-600">—</span>
-                )}
+              {/* L'écart s'empile sous l'énergie plutôt que d'ouvrir une
+                  quatrième colonne : sur 390 px, celle-ci prenait sa place à la
+                  jauge, qui est justement ce qui rend la ligne lisible. */}
+              <span className="flex flex-col items-end">
+                <span className="font-mono text-xs tabular-nums text-steel-200">
+                  {sub.energy > 0 ? (
+                    formatEnergy(sub.energy)
+                  ) : (
+                    <span className="text-steel-600">—</span>
+                  )}
+                </span>
+                <DeltaBadge delta={deltas.get(sub.name) ?? null} label={sub.name} size="sm" />
               </span>
             </li>
           ))}

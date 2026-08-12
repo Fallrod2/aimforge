@@ -26,6 +26,7 @@ export {
   deleteBenchRun,
   getBenchRunDetail,
   listBenchRuns,
+  listScenarioScores,
   saveBenchRun,
 } from "./bench-runs";
 export { listCoachMessages } from "./coach-messages";
@@ -62,6 +63,7 @@ export {
   setActiveBenchmark,
   updateProfile,
 } from "./profile";
+export { bestByScenario, listPersonalBests, type PersonalBests } from "./records";
 export { deleteRoutine, listRoutines, setRoutineDone } from "./routines";
 export type {
   BenchRunDetail,

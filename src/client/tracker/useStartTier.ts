@@ -19,7 +19,21 @@ import { startTier } from "./start-tier";
 
 export type StartTierState =
   | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly tier: TierId };
+  | {
+      readonly status: "ready";
+      readonly tier: TierId;
+      /**
+       * Le compte a-t-il au moins une passe ? Lu de la **même** requête que le
+       * palier de départ : c'est ce qui commande le bandeau d'accueil (§4.1c),
+       * et une seconde lecture de l'historique pour compter des lignes déjà
+       * chargées serait un appel réseau pour rien.
+       *
+       * `null` quand la lecture a échoué : on ne sait pas, et un « non »
+       * inventé afficherait le bandeau des premiers pas à quelqu'un qui a
+       * cinquante passes derrière lui et un réseau capricieux.
+       */
+      readonly hasRuns: boolean | null;
+    };
 
 export function useStartTier(): StartTierState {
   const [state, setState] = useState<StartTierState>({ status: "loading" });
@@ -31,9 +45,9 @@ export function useStartTier(): StartTierState {
       try {
         const runs = await listBenchRuns();
 
-        if (alive) setState({ status: "ready", tier: startTier(runs) });
+        if (alive) setState({ status: "ready", tier: startTier(runs), hasRuns: runs.length > 0 });
       } catch {
-        if (alive) setState({ status: "ready", tier: startTier([]) });
+        if (alive) setState({ status: "ready", tier: startTier([]), hasRuns: null });
       }
     })();
 

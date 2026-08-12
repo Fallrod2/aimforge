@@ -41,6 +41,7 @@ import {
   getTier,
   getTierFor,
   listScenarios,
+  partialEnergy,
   type TierId,
   tierIdsFor,
 } from "../../lib/energy";
@@ -68,6 +69,8 @@ import {
   setScoreInput,
   tierDraft,
 } from "./draft";
+import { GoalPanel } from "./GoalPanel";
+import { goalProgress, readGoal, writeGoal } from "./goal";
 import {
   applyImportedScores,
   clearImportState,
@@ -82,6 +85,7 @@ import {
   NO_IMPORTS,
   withImportState,
 } from "./import";
+import { browserStore } from "./local-store";
 import {
   isManualOpen,
   type ManualTiers,
@@ -90,8 +94,11 @@ import {
   opensManualGrid,
   toggleManual,
 } from "./manual";
+import { OnboardingBanner } from "./OnboardingBanner";
+import { dismissOnboarding, isOnboardingDismissed, showsOnboarding } from "./onboarding";
 import { ScenarioRow } from "./ScenarioRow";
 import { SummaryPanel } from "./SummaryPanel";
+import { usePersonalBests } from "./usePersonalBests";
 import { useStartTier } from "./useStartTier";
 
 interface TrackerViewProps {
@@ -147,6 +154,17 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<BenchRunSummary | null>(null);
+  /**
+   * Le stockage des préférences d'écran (objectif de rang, bandeau refermé).
+   *
+   * Résolu **une fois par montage** : `browserStore()` sonde `localStorage` à
+   * chaque appel, et le refaire à chaque rendu ferait une écriture-lecture par
+   * caractère tapé.
+   */
+  const [prefs] = useState(browserStore);
+  const [dismissed, setDismissed] = useState(() => isOnboardingDismissed(prefs));
+  /** Les records personnels du palier, chargés une fois — pas à chaque frappe. */
+  const personalBests = usePersonalBests(benchmarkId, tier);
 
   const linked = useLinkedAccounts();
   const accountsKnown = linked.state.status !== "loading";
@@ -210,6 +228,41 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   const scenarios = useMemo(() => listScenarios(tier), [tier, benchmarkId]);
   // Lu à chaque rendu, donc déjà aligné sur le benchmark affiché.
   const tierData = getTier(tier);
+  /**
+   * L'énergie partielle de la saisie en cours (§4.1a).
+   *
+   * Elle n'a d'usage que tant que l'overall vaut 0 : au-delà, les deux sont
+   * égales par construction (même moyenne harmonique, mêmes neuf termes).
+   */
+  const partial = useMemo(
+    () =>
+      computed.subcategories.length === 0
+        ? null
+        : partialEnergy(computed.subcategories.map((sub) => sub.energy)),
+    [computed],
+  );
+  const showPartial = computed.overall === 0 && partial !== null;
+
+  /** L'objectif de rang du palier, relu à chaque changement de palier (§4.5). */
+  const [goal, setGoal] = useState<string | null>(null);
+
+  useEffect(() => {
+    setGoal(readGoal(prefs, benchmarkId, tier));
+  }, [prefs, benchmarkId, tier]);
+
+  const changeGoal = useCallback(
+    (rank: string | null) => {
+      writeGoal(prefs, benchmarkId, tier, rank);
+      setGoal(rank);
+    },
+    [prefs, benchmarkId, tier],
+  );
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `goalProgress` lit les seuils du benchmark courant, que React ne voit pas.
+  const goalState = useMemo(
+    () => (goal === null ? null : goalProgress(tier, goal, scores)),
+    [tier, goal, scores, benchmarkId],
+  );
 
   const update = useCallback(
     (scenario: string, raw: string) => {
@@ -331,6 +384,14 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           onTierChange={setChosenTier}
         />
 
+        <GoalPanel
+          tier={tier}
+          tierLabel={tierData.label}
+          goal={goal}
+          progress={goalState}
+          onGoalChange={changeGoal}
+        />
+
         <div className="hidden flex-col gap-3 lg:flex">
           <SaveActions
             canSave={canSave}
@@ -344,6 +405,23 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
       </aside>
 
       <div className="flex flex-col gap-8 lg:order-1">
+        {/* Les trois étapes, une seule fois, à un compte qui n'a ni passe ni
+            saisie en cours. Elles passent **avant** l'import : c'est la seule
+            chose à lire quand on ne sait pas encore d'où viennent les scores. */}
+        {showsOnboarding({
+          hasRuns: start.status === "ready" ? start.hasRuns : null,
+          hasDraft: !tierEmpty,
+          dismissed,
+        }) ? (
+          <OnboardingBanner
+            benchmark={benchmark}
+            onDismiss={() => {
+              dismissOnboarding(prefs);
+              setDismissed(true);
+            }}
+          />
+        ) : null}
+
         <ImportPanel
           account={kovaaks}
           loading={!accountsKnown}
@@ -372,7 +450,23 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
                   <span className="h-px flex-1 bg-steel-800" />
                 </div>
 
-                <div className="flex flex-col gap-3">
+                {/* Sur grand écran, les sous-catégories se rangent en colonnes
+                    (§4.1b) : la saisie mobile fait environ 3 400 px de haut, et
+                    l'empilement d'une colonne unique obligeait à faire défiler
+                    tout l'écran pour relire une ligne saisie trois minutes plus
+                    tôt. Le téléphone, lui, ne change pas.
+
+                    **Deux** colonnes et pas trois : la coque plafonne à
+                    `max-w-5xl` et le panneau latéral prend 20 rem, ce qui laisse
+                    environ 630 px à la grille. Une troisième colonne y ferait
+                    des cartes de 200 px — plus étroites que le champ de saisie
+                    qu'elles contiennent. Le nombre de colonnes suit la place
+                    réelle, pas la largeur de la fenêtre.
+
+                    Chaque carte est d'ailleurs un **conteneur** : c'est sa
+                    largeur, et non celle de la fenêtre, qui décide de la mise en
+                    page de ses lignes (cf. `ScenarioRow`). */}
+                <div className="flex flex-col gap-3 lg:grid lg:grid-cols-2">
                   {category.subcategories.map((subcategory) => {
                     const energy =
                       computed.subcategories.find((sub) => sub.name === subcategory.name)?.energy ??
@@ -381,7 +475,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
                     return (
                       <div
                         key={subcategory.name}
-                        className="rounded-xl border border-steel-800 bg-steel-900/60 px-4 py-3"
+                        className="@container rounded-xl border border-steel-800 bg-steel-900/60 px-4 py-3"
                       >
                         <div className="flex items-baseline justify-between gap-3 border-b border-steel-800 pb-2">
                           <h3 className="text-sm font-medium text-steel-100">{subcategory.name}</h3>
@@ -401,6 +495,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
                                 computed.scores.find((row) => row.scenario === scenario.name)
                                   ?.energy ?? 0
                               }
+                              personalBest={personalBests.get(scenario.name)}
                               onChange={(raw) => update(scenario.name, raw)}
                             />
                           ))}
@@ -416,15 +511,42 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
       {/* Sur téléphone, les 18 champs défilent : l'overall et l'action restent
           accessibles en bas d'écran plutôt qu'en haut de page.
           `bottom-16` = la hauteur de la barre de navigation du pouce
-          (`BOTTOM_BAR_HEIGHT` dans `AppLayout`) : les deux s'empilent. */}
+          (`BOTTOM_BAR_HEIGHT` dans `AppLayout`) : les deux s'empilent.
+
+          La barre portait « X/18 · SANS RANG » et un tiret à la place du
+          chiffre : sur un bench en cours — c'est-à-dire pendant tout le temps
+          où l'on tape — elle n'affichait donc aucune énergie. Elle montre
+          désormais l'overall dès qu'il existe, et l'énergie **partielle**
+          étiquetée avant cela (§4.7), recalculée à chaque frappe comme le reste
+          de l'écran. */}
       <div className="fixed inset-x-0 bottom-16 z-10 border-t border-steel-800 bg-steel-950/95 px-4 py-3 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <div className="min-w-0 flex-1">
-            <p className="font-mono text-xl leading-none font-semibold tabular-nums">
-              {computed.overall > 0 ? formatEnergy(computed.overall) : "—"}
+            <p className="flex items-baseline gap-1.5">
+              <span
+                className={`font-mono text-xl leading-none font-semibold tabular-nums ${
+                  showPartial ? "text-steel-300" : ""
+                }`}
+              >
+                {computed.overall > 0
+                  ? formatEnergy(computed.overall)
+                  : showPartial
+                    ? formatEnergy(partial.energy)
+                    : "—"}
+              </span>
+              {/* L'étiquette est collée au chiffre, pas reléguée en légende :
+                  c'est elle qui empêche de lire une énergie partielle comme un
+                  overall. Le badge de rang reste à sa place et continue
+                  d'annoncer « Sans rang » — aucun rang ne sort d'un partiel. */}
+              {showPartial ? (
+                <span className="text-[10px] font-medium tracking-wide text-steel-500 uppercase">
+                  Partiel
+                </span>
+              ) : null}
             </p>
             <p className="mt-1 truncate text-[11px] text-steel-500">
               {computed.scores.length}/{scenarios.length} scénarios
+              {showPartial ? ` · ${partial.counted}/${partial.total} sous-catégories` : ""}
             </p>
           </div>
           <RankBadge

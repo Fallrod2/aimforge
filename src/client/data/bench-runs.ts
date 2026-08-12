@@ -254,6 +254,43 @@ export async function getBenchRunDetail(id: number): Promise<BenchRunDetail> {
   return toBenchRunDetail(run.data, scores.data ?? []);
 }
 
+/**
+ * Les scores de plusieurs passes, en **une** requête (export CSV, §4.8).
+ *
+ * L'alternative aurait été d'appeler `getBenchRunDetail` par passe : sur un
+ * historique de cinquante passes, cela fait cent requêtes pour un bouton. Ici,
+ * un seul `in (…)`, et le regroupement se fait au retour. Les énergies ne sont
+ * pas lues : l'export porte les scores, l'énergie s'y recalcule (et l'overall,
+ * lui, est déjà sur la passe).
+ *
+ * Rien n'est dérivé de ces lignes — ni sous-catégorie, ni rang : c'est pourquoi
+ * elles ne passent pas par `mapping.ts`, qui construit un `BenchRunDetail`
+ * complet à partir d'une passe et de ses scores.
+ */
+export async function listScenarioScores(
+  runIds: readonly number[],
+): Promise<ReadonlyMap<number, Readonly<Record<string, number>>>> {
+  const byRun = new Map<number, Record<string, number>>();
+
+  if (runIds.length === 0) return byRun;
+
+  const { data, error } = await supabase
+    .from("scenario_scores")
+    .select("run_id, scenario, score")
+    .in("run_id", [...runIds]);
+
+  if (error !== null || data === null) {
+    throw queryError(error, "Les scores des passes n'ont pas pu être lus.");
+  }
+  for (const row of data) {
+    const scores = byRun.get(row.run_id) ?? {};
+
+    scores[row.scenario] = row.score;
+    byRun.set(row.run_id, scores);
+  }
+  return byRun;
+}
+
 /** Supprime une passe. Les `scenario_scores` partent en cascade (contrainte FK). */
 export async function deleteBenchRun(id: number): Promise<void> {
   const { data, error } = await supabase.from("bench_runs").delete().eq("id", id).select("id");

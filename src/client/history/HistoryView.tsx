@@ -26,6 +26,7 @@ import {
   firstTierFor,
   getTier,
   getTierFor,
+  listScenariosFor,
   listSubcategories,
   type TierId,
   tierIdsFor,
@@ -34,7 +35,9 @@ import { useActiveBenchmark } from "../app/active-benchmark";
 import { BenchmarkNote } from "../components/BenchmarkNote";
 import { Notice } from "../components/Notice";
 import { Segmented } from "../components/Segmented";
-import { type BenchRunSummary, deleteBenchRun, listBenchRuns } from "../data";
+import { type BenchRunSummary, deleteBenchRun, listBenchRuns, listScenarioScores } from "../data";
+import { previousRun } from "../run-delta";
+import { benchRunsCsv, type CsvRun, csvFileName } from "./csv";
 import { ProgressChart } from "./ProgressChart";
 import { RunCard } from "./RunCard";
 import { buildSeries } from "./series";
@@ -67,6 +70,22 @@ function failureMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
 }
 
+/**
+ * Déclenche le téléchargement d'un texte, côté navigateur.
+ *
+ * L'`URL` objet est révoquée juste après : sans cela, chaque export garderait
+ * son fichier en mémoire jusqu'au rechargement de l'onglet.
+ */
+function downloadText(content: string, fileName: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
   const { benchmarkId, benchmark } = useActiveBenchmark();
   const tierOptions = useMemo(() => tierOptionsFor(benchmarkId), [benchmarkId]);
@@ -76,6 +95,8 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // `focusRunId` ne sert au chargement qu'à choisir le palier initial. Le
   // passer en dépendance relancerait la liste à chaque dépliage de passe : on
@@ -145,13 +166,31 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
   );
   const otherTierCount = benchmarkRuns.length - tierRuns.length;
 
+  /**
+   * La passe qui précède celle qu'on a dépliée (§4.4).
+   *
+   * Elle est cherchée dans **toutes** les passes chargées, pas dans `tierRuns` :
+   * `previousRun` applique lui-même le cadrage palier + benchmark, et le lui
+   * laisser évite qu'un filtre d'affichage devienne la définition de « la passe
+   * précédente ».
+   */
+  const focusPrevious = useMemo(() => {
+    const current = tierRuns.find((run) => run.id === focusRunId);
+
+    return current === undefined ? null : previousRun(runs, current);
+  }, [runs, tierRuns, focusRunId]);
+
   const neededIds = useMemo(() => {
     const ids = new Set<number>();
 
     if (focusRunId !== null) ids.add(focusRunId);
+    // Le détail de la précédente est chargé avec celui de la passe ouverte :
+    // les écarts par sous-catégorie ne se lisent pas dans le résumé, qui ne
+    // porte que l'overall.
+    if (focusPrevious !== null) ids.add(focusPrevious.id);
     if (subcategory !== null) for (const run of tierRuns) ids.add(run.id);
     return [...ids].sort((a, b) => a - b);
-  }, [focusRunId, subcategory, tierRuns]);
+  }, [focusRunId, focusPrevious, subcategory, tierRuns]);
 
   const details = useRunDetails(neededIds);
   const points = useMemo(
@@ -164,6 +203,49 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
     setConfirmingId(null);
     setDeleteError(null);
     onFocusRun(null);
+  }
+
+  /**
+   * L'export CSV du benchmark actif (§4.8).
+   *
+   * Toutes ses passes, tous paliers confondus — l'historique en filtre un à
+   * l'écran, mais un fichier qu'on ouvre dans un tableur n'a aucune raison
+   * d'être amputé. Les colonnes de scénario, elles, sont celles du palier
+   * affiché : ce sont les seules qui se remplissent, et les passes des autres
+   * paliers y laissent des cases vides plutôt qu'un score sous une mauvaise
+   * étiquette.
+   *
+   * Une seule requête pour les scores (`listScenarioScores`), même sur cinquante
+   * passes. Le fichier, lui, est fabriqué et téléchargé sans quitter le
+   * navigateur : rien de tout cela ne repasse par le serveur.
+   */
+  async function exportCsv(): Promise<void> {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const scoresByRun = await listScenarioScores(benchmarkRuns.map((run) => run.id));
+      const rows: readonly CsvRun[] = benchmarkRuns.map((run) => ({
+        date: run.date,
+        tierLabel: getTierFor(run.benchmarkId, run.tier).label,
+        overall: run.overall,
+        rank: run.rank,
+        complete: run.complete,
+        // Le garde-fou du cadrage : une passe d'un autre palier n'apporte aucun
+        // score aux colonnes affichées, même si un benchmark venait à nommer
+        // deux scénarios de paliers différents de la même façon.
+        scores: run.tier === activeTier ? (scoresByRun.get(run.id) ?? {}) : {},
+      }));
+      const columns = listScenariosFor(benchmarkId, activeTier).map((scenario) => scenario.name);
+
+      downloadText(
+        benchRunsCsv(rows, columns),
+        csvFileName(benchmarkId, getTier(activeTier).label, new Date()),
+      );
+    } catch (cause) {
+      setExportError(failureMessage(cause, "L'export n'a pas pu être généré."));
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function confirmDelete(id: number): Promise<void> {
@@ -211,13 +293,33 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
               lui qui décide des seuils, donc des énergies affichées ci-dessous. */}
           <BenchmarkNote benchmark={benchmark} />
         </div>
-        <Segmented
-          label="Palier de l'historique"
-          options={tierOptions}
-          value={activeTier}
-          onChange={changeTier}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            label="Palier de l'historique"
+            options={tierOptions}
+            value={activeTier}
+            onChange={changeTier}
+          />
+          {/* L'export n'a de sens que s'il y a quelque chose à exporter : sans
+              passe dans ce barème, le bouton produirait un fichier d'en-têtes. */}
+          {benchmarkRuns.length === 0 ? null : (
+            <button
+              type="button"
+              onClick={() => void exportCsv()}
+              disabled={exporting}
+              className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
+            >
+              {exporting ? "Export…" : "Exporter (CSV)"}
+            </button>
+          )}
+        </div>
       </div>
+
+      {exportError === null ? null : (
+        <Notice tone="error" title="Export impossible.">
+          {exportError}
+        </Notice>
+      )}
 
       {tierRuns.length === 0 ? (
         <Notice tone="empty" title={`Aucune passe en ${getTier(activeTier).label}.`}>
@@ -277,6 +379,11 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
                 key={run.id}
                 run={run}
                 detail={details.byId.get(run.id)}
+                previous={
+                  focusRunId === run.id && focusPrevious !== null
+                    ? details.byId.get(focusPrevious.id)
+                    : undefined
+                }
                 detailError={focusRunId === run.id ? details.error : null}
                 expanded={focusRunId === run.id}
                 onToggle={() => {

@@ -27,9 +27,10 @@
  */
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { getTierFor } from "../../lib/energy";
+import { getTierFor, partialEnergy } from "../../lib/energy";
 import type { StoredDebrief } from "../../shared/coach-contract";
 import type { StoredRoutine } from "../../shared/routine-contract";
+import { DeltaBadge } from "../components/Delta";
 import { RankBadge } from "../components/RankBadge";
 import {
   accountsOf,
@@ -48,6 +49,7 @@ import { ValorantPanel } from "../linked/ValorantPanel";
 import { type RouteTarget, routeHash } from "../route";
 import { formatDuration } from "../routine/duration";
 import { routineOfToday } from "../routine/today";
+import { deltaOf, previousRun, subcategoryDeltas } from "../run-delta";
 import { ValorantInsightsPanel } from "../valorant/InsightsPanel";
 import { latestRun, weakestSubcategories } from "./summary";
 
@@ -55,7 +57,17 @@ type Bench =
   | { readonly status: "loading" }
   /** Aucune passe, ou base injoignable : dans les deux cas, rien à montrer. */
   | { readonly status: "empty"; readonly reason: string | null }
-  | { readonly status: "ready"; readonly run: BenchRunDetail };
+  | {
+      readonly status: "ready";
+      readonly run: BenchRunDetail;
+      /**
+       * La passe précédente du même palier et du même benchmark (§4.4), `null`
+       * quand c'est la première — ou quand son détail n'a pas pu être lu. Un
+       * écart est un supplément : son absence ne doit jamais empêcher la carte
+       * d'afficher la passe elle-même.
+       */
+      readonly previous: BenchRunDetail | null;
+    };
 
 /**
  * L'état de la routine du jour. `empty` couvre les deux cas où il n'y a rien à
@@ -159,13 +171,24 @@ export function DashboardView() {
   const load = useCallback(async () => {
     setBench({ status: "loading" });
     try {
-      const last = latestRun(await listBenchRuns());
+      const runs = await listBenchRuns();
+      const last = latestRun(runs);
 
       if (last === null) {
         setBench({ status: "empty", reason: null });
         return;
       }
-      setBench({ status: "ready", run: await getBenchRunDetail(last.id) });
+      // La passe précédente est choisie sur la **liste** (une lecture déjà
+      // faite) ; seul son détail coûte une requête de plus, et cette requête est
+      // facultative : un échec la ramène à `null`, l'écart disparaît, la carte
+      // reste.
+      const earlier = previousRun(runs, last);
+      const [run, previous] = await Promise.all([
+        getBenchRunDetail(last.id),
+        earlier === null ? null : getBenchRunDetail(earlier.id).catch(() => null),
+      ]);
+
+      setBench({ status: "ready", run, previous });
     } catch (cause) {
       // Le dashboard n'est pas le bon endroit pour crier : il annonce
       // l'absence de données et laisse le tracker traiter l'erreur en détail.
@@ -328,7 +351,22 @@ export function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
     );
   }
 
-  const { run } = bench;
+  const { run, previous } = bench;
+  /**
+   * L'énergie partielle de la passe (§4.1a), quand son overall vaut 0 : une
+   * passe enregistrée incomplète affichait un tiret, exactement comme une
+   * absence de passe. Elle n'est ni enregistrée ni classée — c'est une lecture
+   * des sous-catégories déjà dérivées à la lecture (`mapping.ts`).
+   */
+  const partial =
+    run.overall > 0 ? null : partialEnergy(run.subcategories.map((sub) => sub.energy));
+  // L'écart ne se calcule que sur des overalls réels : comparer deux benchs
+  // incomplets (0 contre 0) afficherait « stable » pour deux passes qui n'ont
+  // rien mesuré.
+  const delta =
+    previous === null || run.overall === 0 || previous.overall === 0
+      ? null
+      : deltaOf(run.overall, previous.overall);
 
   // Libellé de palier et couleur de rang lus dans la saison **de la passe** :
   // le dashboard montre la dernière passe, quelle que soit sa saison, et ne
@@ -336,8 +374,25 @@ export function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
   return (
     <a href={historyHash(run.id)} className="flex items-end gap-4">
       <div>
-        <p className="font-mono text-3xl leading-none font-semibold tabular-nums text-steel-100">
-          {run.overall > 0 ? formatEnergy(run.overall) : "—"}
+        <p className="flex items-baseline gap-2">
+          <span
+            className={`font-mono text-3xl leading-none font-semibold tabular-nums ${
+              partial === null ? "text-steel-100" : "text-steel-300"
+            }`}
+          >
+            {run.overall > 0
+              ? formatEnergy(run.overall)
+              : partial
+                ? formatEnergy(partial.energy)
+                : "—"}
+          </span>
+          {partial === null ? (
+            <DeltaBadge delta={delta} label="Énergie overall" />
+          ) : (
+            <span className="text-[10px] font-medium tracking-wide text-steel-500 uppercase">
+              Partiel {partial.counted}/{partial.total}
+            </span>
+          )}
         </p>
         <p className="mt-2 text-xs text-steel-500">
           {getTierFor(run.benchmarkId, run.tier).label} · {formatRunDate(run.date)}
@@ -464,6 +519,20 @@ function Weaknesses({ bench }: { readonly bench: Bench }) {
   }
 
   const weakest = weakestSubcategories(bench.run.subcategories);
+  /**
+   * L'écart par sous-catégorie vs la passe précédente (§4.4).
+   *
+   * C'est ici qu'il a le plus de sens, et pas seulement parce que c'est ici que
+   * les sous-catégories sont affichées : une faiblesse qui progresse et une
+   * faiblesse qui stagne demandent deux décisions d'entraînement différentes, et
+   * le chiffre seul ne les distingue pas.
+   */
+  const deltas = new Map(
+    subcategoryDeltas(bench.run.subcategories, bench.previous?.subcategories ?? []).map((entry) => [
+      entry.name,
+      entry.delta,
+    ]),
+  );
 
   return (
     <ul className="flex flex-col gap-2">
@@ -473,8 +542,11 @@ function Weaknesses({ bench }: { readonly bench: Bench }) {
           className="flex items-baseline justify-between gap-3 rounded-lg bg-steel-950/60 px-3 py-2"
         >
           <span className="min-w-0 truncate text-sm text-steel-200">{sub.name}</span>
-          <span className="shrink-0 font-mono text-sm tabular-nums text-steel-400">
-            {sub.energy > 0 ? formatEnergy(sub.energy) : "—"}
+          <span className="flex shrink-0 items-baseline gap-2">
+            <DeltaBadge delta={deltas.get(sub.name) ?? null} label={sub.name} size="sm" />
+            <span className="font-mono text-sm tabular-nums text-steel-400">
+              {sub.energy > 0 ? formatEnergy(sub.energy) : "—"}
+            </span>
           </span>
         </li>
       ))}

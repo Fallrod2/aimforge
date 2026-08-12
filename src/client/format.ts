@@ -4,7 +4,27 @@
  * scénarios est lue dans la définition du benchmark plutôt que réécrite.
  */
 
-import { type BenchmarkId, currentBenchmark, scenarioDisplayName } from "../lib/energy";
+import {
+  type AimTrainer,
+  type BenchmarkId,
+  currentBenchmark,
+  scenarioDisplayName,
+} from "../lib/energy";
+
+/**
+ * Le nom d'un aim trainer tel qu'on l'écrit à l'écran.
+ *
+ * L'apostrophe de « KovaaK's » et la casse de « Aim Labs » sont celles de leurs
+ * éditeurs : les retaper dans chaque phrase, c'est se tromper une fois sur deux.
+ */
+const TRAINER_NAMES: Readonly<Record<AimTrainer, string>> = {
+  kovaaks: "KovaaK's",
+  aimlabs: "Aim Labs",
+};
+
+export function aimTrainerName(trainer: AimTrainer): string {
+  return TRAINER_NAMES[trainer];
+}
 
 const energyFormat = new Intl.NumberFormat("fr-FR", {
   minimumFractionDigits: 2,
@@ -26,6 +46,16 @@ export function formatScore(score: number): string {
 /** Un écart signé, pour « il te manque X » ou « +X au prochain palier ». */
 export function formatDelta(delta: number): string {
   return `${delta > 0 ? "+" : ""}${scoreFormat.format(delta)}`;
+}
+
+/**
+ * Un écart d'énergie signé, à 2 décimales comme les énergies (« +12,40 »).
+ *
+ * Le signe positif est explicite : sans lui, « 12,40 » se lit comme une valeur
+ * et non comme un mouvement. Le signe négatif, lui, vient du formatage.
+ */
+export function formatEnergyDelta(delta: number): string {
+  return `${delta > 0 ? "+" : ""}${energyFormat.format(delta)}`;
 }
 
 /** Date d'une passe, format court avec l'heure (ex. « 1 mars 2026, 13:00 »). */
