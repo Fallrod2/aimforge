@@ -95,6 +95,7 @@ import {
   routineSystemPrompt,
 } from "../src/server/routine/prompt.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
+import { aiQuotaReachedMessage } from "../src/shared/ai-quota-contract.js";
 import { coachAxeSchema } from "../src/shared/coach-contract.js";
 import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
@@ -530,7 +531,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!quota.allowed) {
       return json(
         {
-          error: `Quota atteint : ${limit} routines par jour. Le compteur repart demain (heure UTC).`,
+          error: aiQuotaReachedMessage("routine", limit),
           remaining: quota.remaining,
         },
         429,

@@ -29,13 +29,9 @@
  */
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import {
-  DUREE_PRESETS,
-  MAX_FOCUS_LENGTH,
-  ROUTINE_DAILY_QUOTA,
-  type StoredRoutine,
-} from "../../shared/routine-contract";
+import { DUREE_PRESETS, MAX_FOCUS_LENGTH, type StoredRoutine } from "../../shared/routine-contract";
 import { Notice } from "../components/Notice";
+import { QuotaNote } from "../components/QuotaNote";
 import { deleteRoutine, listRoutines, setRoutineDone } from "../data";
 import { formatDuration, normalizeFocus, parseDuration } from "./duration";
 import { RoutineCard } from "./RoutineCard";
@@ -70,27 +66,19 @@ function failureOf(cause: unknown): Failure {
   };
 }
 
-/**
- * Ce que l'écran sait du quota du jour.
- *
- * Trois états et non un `number | null`, parce que `null` voudrait dire deux
- * choses opposées : « pas encore demandé » et « il n'y a plus rien à compter »
- * (SPEC §5 ter — l'utilisateur a configuré son propre fournisseur). Les
- * confondre afficherait « 5 routines par jour » à quelqu'un qui n'a plus de
- * limite.
- */
-type Quota =
-  | { readonly status: "unknown" }
-  | { readonly status: "lifted" }
-  | { readonly status: "counted"; readonly remaining: number };
-
 export function RoutinePanel() {
   const [choice, setChoice] = useState<DureeChoice>({ kind: "preset", minutes: DEFAULT_MINUTES });
   const [libre, setLibre] = useState("");
   const [focus, setFocus] = useState("");
   const [generating, setGenerating] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
-  const [quota, setQuota] = useState<Quota>({ status: "unknown" });
+  /**
+   * Ce que la dernière réponse de `/api/routine` a dit du restant : `undefined`
+   * tant qu'il n'y en a pas eu, `null` quand elle n'a rien compté (SPEC §5 ter).
+   * La limite et l'heure de réinitialisation appartiennent à `QuotaNote`, qui
+   * les tient du serveur — l'écran n'a pas à les connaître.
+   */
+  const [remaining, setRemaining] = useState<number | null | undefined>(undefined);
   const [history, setHistory] = useState<History>({ status: "loading" });
   const [freshId, setFreshId] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -155,13 +143,13 @@ export function RoutinePanel() {
       );
       setFreshId(routine.id);
       setExpandedId(routine.id);
-      setQuota(left === null ? { status: "lifted" } : { status: "counted", remaining: left });
+      setRemaining(left);
     } catch (cause) {
       const next = failureOf(cause);
 
       setFailure(next);
       if (cause instanceof RoutineApiError && cause.remaining !== null) {
-        setQuota({ status: "counted", remaining: cause.remaining });
+        setRemaining(cause.remaining);
       }
     } finally {
       setGenerating(false);
@@ -363,13 +351,7 @@ export function RoutinePanel() {
               {generating ? "Génération…" : "Générer ma routine"}
             </button>
 
-            <p className="ml-auto text-xs text-steel-500">
-              {quota.status === "unknown"
-                ? `${ROUTINE_DAILY_QUOTA} routines par jour`
-                : quota.status === "lifted"
-                  ? "Quota levé · ta configuration IA"
-                  : `${quota.remaining} routine${quota.remaining > 1 ? "s" : ""} restante${quota.remaining > 1 ? "s" : ""} aujourd'hui`}
-            </p>
+            <QuotaNote kind="routine" remaining={remaining} className="ml-auto text-xs" />
           </div>
 
           {generating ? (

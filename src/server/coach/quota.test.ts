@@ -24,6 +24,36 @@ describe("evaluateQuota", () => {
     expect(evaluateQuota(2, 2)).toEqual({ allowed: true, remaining: 0 });
     expect(evaluateQuota(3, 2)).toEqual({ allowed: false, remaining: 0 });
   });
+
+  /**
+   * La propriété qui rend le décompte sûr sans verrou applicatif, et qu'aucun
+   * test ne nommait jusqu'ici.
+   *
+   * `increment_ai_usage` (migrations 0003 et 0011) fait l'upsert, l'incrément et
+   * la lecture dans **une seule instruction** :
+   *
+   * ```sql
+   * insert … on conflict (user_id, day) do update set … returning …
+   * ```
+   *
+   * `on conflict do update` prend le verrou de ligne sur la clé primaire : deux
+   * requêtes simultanées sur le dernier debrief disponible ne peuvent pas lire
+   * la même valeur, elles reçoivent `limit` et `limit + 1`. Le verdict étant
+   * rendu **après** l'incrément et sur la valeur reçue, la seconde est refusée —
+   * sans qu'aucun verrou n'ait à être posé côté fonction serverless.
+   *
+   * Le test ne peut pas jouer la concurrence (elle est en base) ; il fixe ce
+   * dont elle dépend : deux compteurs distincts ⇒ au plus un passage.
+   */
+  it("ne laisse pas deux requêtes simultanées passer sur la dernière unité", () => {
+    const limit = COACH_DAILY_QUOTA;
+    // Les deux valeurs que l'incrément atomique rend à deux appels concurrents
+    // arrivés alors que le compteur valait `limit - 1`.
+    const verdicts = [evaluateQuota(limit, limit), evaluateQuota(limit + 1, limit)];
+
+    expect(verdicts.filter((verdict) => verdict.allowed)).toHaveLength(1);
+    expect(verdicts.map((verdict) => verdict.remaining)).toEqual([0, 0]);
+  });
 });
 
 /**

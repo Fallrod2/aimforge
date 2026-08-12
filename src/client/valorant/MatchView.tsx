@@ -31,6 +31,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CoachError, requestDebriefForMatch } from "../coach/coach-api";
 import { setCoachDebriefFocus, setCoachPrefill } from "../coach/prefill";
 import { Notice } from "../components/Notice";
+import { QuotaNote } from "../components/QuotaNote";
 import {
   analyzeMatch,
   debriefedMatches,
@@ -366,6 +367,11 @@ export function Analysis({
               Compte pour un message de coach sur ton quota du jour. Une fois faite, la relecture
               est gratuite.
             </p>
+            {/*
+              Le compteur avant la dépense, dans la même phrase que partout
+              ailleurs : le coût annoncé sans le solde laissait deviner.
+            */}
+            <QuotaNote kind="chat" remaining={remaining ?? undefined} className="text-[11px]" />
           </div>
           {generating ? <Skeleton lines={2} /> : null}
         </div>
@@ -380,13 +386,13 @@ export function Analysis({
             >
               Approfondir avec le coach →
             </a>
-            {remaining === null ? null : (
-              <p className="text-[11px] text-steel-500">
-                {remaining === 0
-                  ? "Plus de message de coach aujourd'hui : le compteur repart demain."
-                  : `Il te reste ${remaining} message${remaining > 1 ? "s" : ""} de coach aujourd'hui.`}
-              </p>
-            )}
+            {/*
+              `null` ne veut pas dire « quota levé » ici, mais « rien compté
+              cette fois » — l'analyse était déjà en base, donc gratuite. On le
+              traduit en « rien de neuf » (`undefined`) pour que la note garde
+              l'état qu'elle a lu au montage, qui est le vrai.
+            */}
+            <QuotaNote kind="chat" remaining={remaining ?? undefined} className="text-[11px]" />
           </div>
         </div>
       )}

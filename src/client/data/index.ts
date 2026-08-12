@@ -15,6 +15,7 @@ export {
 export {
   AiSettingsError,
   deleteAiSettings,
+  getAiQuota,
   getAiSettings,
   pollChatGptLink,
   saveAiSettings,

@@ -95,6 +95,7 @@ import {
 } from "../src/server/coach/quota.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
+import { aiQuotaReachedMessage } from "../src/shared/ai-quota-contract.js";
 import {
   coachRequestSchema,
   MAX_STATS_LENGTH,
@@ -535,7 +536,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!quota.allowed) {
       return json(
         {
-          error: `Quota atteint : ${limit} debriefs par jour. Le compteur repart demain (heure UTC).`,
+          error: aiQuotaReachedMessage("coach", limit),
           remaining: quota.remaining,
         },
         429,

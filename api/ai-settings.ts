@@ -35,6 +35,16 @@
  * existante — il faut relire des jetons que seul `service_role` peut lire. Sans
  * elle, le test le dit franchement au lieu d'échouer en 42501.
  *
+ * `GET` joint en outre **l'état des quotas du jour** (Vague 3.4). Ce n'est pas
+ * un mélange de genres : « le quota est-il levé ? » n'est rien d'autre que
+ * « une configuration personnelle est-elle en place ? » (SPEC §5 ter), et cette
+ * fonction vient de répondre. Le reste — compteur du jour, limite réellement
+ * appliquée, heure de réinitialisation — ne peut venir que du serveur, parce
+ * que `platform_settings` n'est lisible que sous service role et que l'écran
+ * recopiait jusqu'ici une constante compilée qui pouvait démentir le serveur.
+ * La clé de service y reste facultative : sans elle, les limites servies sont
+ * les constantes des contrats, c'est-à-dire celles qui seront appliquées.
+ *
  * Les trois verbes sont exportés nommément (`GET`, `POST`, `DELETE`) : c'est
  * la forme que le runtime Node de Vercel reconnaît comme gestionnaire web. Les
  * autres méthodes n'ont pas d'export, la plateforme y répond 405 toute seule.
@@ -52,17 +62,20 @@ import {
   storedBaseUrl,
   toPublicSettings,
 } from "../src/server/ai/index.js";
+import type { AiQuotaResponse } from "../src/shared/ai-quota-contract.js";
 import {
   type AiLinkPollResponse,
   type AiLinkStartResponse,
   type AiSettingsInput,
   type AiSettingsResponse,
+  type AiSettingsView,
   type AiTestResponse,
   aiSettingsRequestSchema,
   isLinkProvider,
   providerSchema,
   providerSpec,
 } from "../src/shared/ai-settings-contract.js";
+import { aiQuotaLimits, readAiQuotas } from "./_lib/ai-quota.js";
 import {
   deleteSettings,
   linkChatGptSettings,
@@ -72,7 +85,8 @@ import {
   readSettings,
   saveSettings,
 } from "./_lib/ai-settings.js";
-import { authenticate, fail, json, readBody } from "./_lib/request.js";
+import { loadPlatformSettings } from "./_lib/platform-settings.js";
+import { type Authenticated, authenticate, fail, json, readBody } from "./_lib/request.js";
 import { serviceClient } from "./_lib/service.js";
 
 /**
@@ -155,7 +169,51 @@ export async function GET(request: Request): Promise<Response> {
     console.error("[ai-settings] lecture en échec", read.reason);
     return fail(STORE_FAILED, 503);
   }
-  return json(present(read.value), 200);
+
+  const settings = present(read.value);
+
+  return json(
+    {
+      ...settings,
+      quota: await quotaOf(auth, settings.settings !== null),
+    } satisfies AiSettingsView,
+    200,
+  );
+}
+
+/**
+ * L'état des quotas du jour, joint à la lecture des réglages.
+ *
+ * `lifted` ne se relit pas : il **est** le verdict qu'on vient d'établir —
+ * une configuration personnelle exploitable, donc rien à compter chez nous
+ * (SPEC §5 ter). `present` a déjà écarté les lignes hors contrat, qui font de
+ * toute façon échouer la génération en 409 plutôt que de lever un quota.
+ *
+ * Les limites viennent de `platform_settings`, donc de la clé de service —
+ * absente ou illisible, `loadPlatformSettings` retombe sur les constantes des
+ * contrats, exactement comme les fonctions de génération. La limite affichée
+ * est ainsi toujours celle qui sera appliquée, y compris quand rien n'est
+ * configuré.
+ *
+ * Les compteurs sont lus même sur un quota levé : ils ne coûtent qu'une
+ * requête, et ils redeviennent la vérité à la seconde où l'utilisateur retire
+ * sa clé — sans qu'il ait à recharger l'écran du coach.
+ */
+async function quotaOf(
+  auth: Authenticated & { ok: true },
+  lifted: boolean,
+): Promise<AiQuotaResponse> {
+  const platform = await loadPlatformSettings(serviceClient());
+  const quotas = await readAiQuotas(
+    auth.client,
+    auth.userId,
+    aiQuotaLimits(platform.limits),
+    new Date(),
+  );
+
+  // Copie mutable : le contrat décrit ce qui part sur le fil, pas la promesse
+  // d'immuabilité que `readAiQuotas` tient de son côté.
+  return { lifted, quotas: [...quotas] };
 }
 
 export async function POST(request: Request): Promise<Response> {

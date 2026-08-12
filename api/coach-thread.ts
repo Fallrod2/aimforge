@@ -57,6 +57,7 @@ import { generateThreadAnswer } from "../src/server/coach/thread.js";
 import { coachThreadSystemPrompt, type ThreadContext } from "../src/server/coach/thread-prompt.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
+import { aiQuotaReachedMessage } from "../src/shared/ai-quota-contract.js";
 import { CHAT_DAILY_QUOTA } from "../src/shared/coach-chat-contract.js";
 import {
   type DebriefSuggestion,
@@ -195,7 +196,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!quota.allowed) {
       return json(
         {
-          error: `Quota atteint : ${CHAT_DAILY_QUOTA} messages par jour. Le compteur repart demain (heure UTC).`,
+          error: aiQuotaReachedMessage("chat", CHAT_DAILY_QUOTA),
           remaining: quota.remaining,
         },
         429,

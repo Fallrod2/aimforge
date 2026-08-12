@@ -28,7 +28,6 @@
  */
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { CHAT_DAILY_QUOTA } from "../../shared/coach-chat-contract";
 import type { StoredDebrief } from "../../shared/coach-contract";
 import {
   type DebriefSuggestion,
@@ -36,6 +35,7 @@ import {
   type ThreadMessage,
 } from "../../shared/coach-thread-contract";
 import { Notice } from "../components/Notice";
+import { QuotaNote } from "../components/QuotaNote";
 import { clearThread, lastUndebriefedMatch, listDebriefs, listThreadMessages } from "../data";
 import { CoachView } from "./CoachView";
 import { CoachError, requestDebriefForMatch } from "./coach-api";
@@ -54,16 +54,6 @@ interface Failure {
   readonly message: string;
   readonly quota: boolean;
 }
-
-/**
- * Ce que l'écran sait du quota du jour. Trois états et non un `number | null` :
- * `null` voudrait dire à la fois « pas encore demandé » et « il n'y a plus rien
- * à compter » (configuration IA personnelle, SPEC §5 ter).
- */
-type Quota =
-  | { readonly status: "unknown" }
-  | { readonly status: "lifted" }
-  | { readonly status: "counted"; readonly remaining: number };
 
 const PLACEHOLDER = "Pose ta question au coach…";
 
@@ -105,7 +95,13 @@ export function CoachThreadView() {
   // carte n'a pas pu être posée ». Le titre voyage avec le texte parce que les
   // deux cas ne se disent pas pareil.
   const [notice, setNotice] = useState<{ title: string; body: string } | null>(null);
-  const [quota, setQuota] = useState<Quota>({ status: "unknown" });
+  /**
+   * Ce que la dernière réponse du fil a dit du restant : `undefined` tant qu'il
+   * n'y en a pas eu, `null` quand elle n'a rien compté (SPEC §5 ter). La limite
+   * et l'heure de réinitialisation appartiennent à `QuotaNote`, qui les tient
+   * du serveur — l'écran n'a pas à les connaître.
+   */
+  const [remaining, setRemaining] = useState<number | null | undefined>(undefined);
   const [suggestion, setSuggestion] = useState<DebriefSuggestion | null>(null);
   const [expandedCard, setExpandedCard] = useState<number | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
@@ -220,16 +216,12 @@ export function CoachThreadView() {
 
       appended([reply.question, reply.answer]);
       setSuggestion(reply.suggestion);
-      setQuota(
-        reply.remaining === null
-          ? { status: "lifted" }
-          : { status: "counted", remaining: reply.remaining },
-      );
+      setRemaining(reply.remaining);
       if (clearDraft) setDraft("");
     } catch (cause) {
       setFailure(failureOf(cause, "L'envoi a échoué."));
       if (cause instanceof ThreadError && cause.remaining !== null) {
-        setQuota({ status: "counted", remaining: cause.remaining });
+        setRemaining(cause.remaining);
       }
     } finally {
       setSending(false);
@@ -477,13 +469,7 @@ export function CoachThreadView() {
             {tooLong ? " · trop long" : ""}
           </p>
 
-          <p className="ml-auto text-[11px] text-steel-500">
-            {quota.status === "unknown"
-              ? `${CHAT_DAILY_QUOTA} messages par jour`
-              : quota.status === "lifted"
-                ? "Quota levé · ta configuration IA"
-                : `${quota.remaining} message${quota.remaining > 1 ? "s" : ""} restant${quota.remaining > 1 ? "s" : ""}`}
-          </p>
+          <QuotaNote kind="chat" remaining={remaining} className="ml-auto text-[11px]" />
         </div>
       </form>
 

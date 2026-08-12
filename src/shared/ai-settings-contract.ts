@@ -17,6 +17,7 @@
  */
 
 import { z } from "zod";
+import { aiQuotaResponseSchema } from "./ai-quota-contract.js";
 
 /* ------------------------------------------------------------------ */
 /* Fournisseurs                                                        */
@@ -364,12 +365,33 @@ export const aiSettingsSchema = z.object({
 
 export type AiSettings = z.infer<typeof aiSettingsSchema>;
 
-/** `GET`, `POST action=save` et `DELETE` rendent tous la même chose. */
+/** `GET`, `POST action=save` et `DELETE` rendent tous au moins ceci. */
 export const aiSettingsResponseSchema = z.object({
   settings: aiSettingsSchema.nullable(),
 });
 
 export type AiSettingsResponse = z.infer<typeof aiSettingsResponseSchema>;
+
+/**
+ * Ce que `GET` rend **en plus** : l'état des quotas du jour.
+ *
+ * Il est joint ici, et pas servi par une route à lui, parce que cette fonction
+ * répond déjà à la moitié de la question : « le quota est-il levé ? » est
+ * exactement « une configuration personnelle est-elle en place ? » (SPEC §5
+ * ter). Le reste — le compteur du jour et la limite réellement appliquée — ne
+ * peut venir que du serveur : `platform_settings` n'est lisible que sous
+ * service role, et l'écran recopiait jusqu'ici une constante compilée qui
+ * pouvait démentir le serveur.
+ *
+ * Les deux écritures (`POST action=save`, `DELETE`) ne le portent pas : elles
+ * changent qui paie, pas ce qui a été consommé, et l'écran qui les appelle
+ * n'affiche pas de compteur. D'où deux schémas et non un champ facultatif.
+ */
+export const aiSettingsViewSchema = aiSettingsResponseSchema.extend({
+  quota: aiQuotaResponseSchema,
+});
+
+export type AiSettingsView = z.infer<typeof aiSettingsViewSchema>;
 
 /**
  * Le verdict d'un test de connexion.

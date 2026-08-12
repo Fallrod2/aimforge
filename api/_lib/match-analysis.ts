@@ -63,6 +63,7 @@ import {
 } from "../../src/server/coach/quota.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../../src/server/platform/settings.js";
 import { scenarioCatalog } from "../../src/server/shared/scenarios.js";
+import { aiQuotaReachedMessage } from "../../src/shared/ai-quota-contract.js";
 import { CHAT_DAILY_QUOTA } from "../../src/shared/coach-chat-contract.js";
 import type { MatchDetail, MatchDetailResponse } from "../../src/shared/valorant-contract.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./ai-settings.js";
@@ -195,7 +196,7 @@ export async function analyzeMatch(input: AnalyzeMatchInput): Promise<Response> 
     if (!quota.allowed) {
       return json(
         {
-          error: `Quota atteint : ${CHAT_DAILY_QUOTA} messages de coach par jour, analyses comprises. Le compteur repart demain (heure UTC).`,
+          error: aiQuotaReachedMessage("chat", CHAT_DAILY_QUOTA, "analyses comprises"),
           remaining: quota.remaining,
         },
         429,
