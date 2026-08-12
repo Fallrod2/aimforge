@@ -17,9 +17,11 @@
  * 1. **le registre** `BENCHMARKS` — un identifiant → une définition complète
  *    (métadonnées produit, grammaire de nommage, formule d'énergie, seuils,
  *    métadonnées d'import KovaaK's) ;
- * 2. **le benchmark courant** — celui qu'estampillent les écritures. Un seul à
- *    la fois : la sélection par l'utilisateur est un autre chantier
- *    (DECISIONS.md D6), ici il y a le benchmark publié et l'historique ;
+ * 2. **le benchmark courant** — celui qu'estampillent les écritures et celui
+ *    dont les accesseurs non qualifiés servent les données. Il suit le
+ *    benchmark actif de l'utilisateur (`profiles.active_benchmark`,
+ *    DECISIONS.md D6) : le boot applicatif et le sélecteur l'alignent par
+ *    `setCurrentBenchmark`, réexporté sous le nom `syncCurrentBenchmark` ;
  * 3. **le benchmark actif en résolution** (`withBenchmark`) — celui dont les
  *    accesseurs non qualifiés de `data.ts` servent les données pendant un
  *    calcul. C'est l'unique moyen de faire tourner le cœur mathématique
@@ -41,8 +43,8 @@ import { type BenchmarkData, EnergyError, type EnergyFormulaId, type TierId } fr
  * Identifiant d'un benchmark (`voltaic-s5`, `viscose-…`).
  *
  * Marqué pour qu'un `string` quelconque ne s'y glisse pas : une valeur brute
- * (colonne `bench_runs.season`, cf. la migration 0017) doit passer par
- * `toBenchmarkId`, qui la valide.
+ * (colonne `bench_runs.benchmark_id`, ou `profiles.active_benchmark`, cf. les
+ * migrations 0017 et 0019) doit passer par `toBenchmarkId`, qui la valide.
  */
 declare const benchmarkBrand: unique symbol;
 
@@ -185,8 +187,8 @@ const VOLTAIC_S5: BenchmarkDefinition = {
 /**
  * Le registre. Mutable parce qu'un test doit pouvoir y déposer un benchmark
  * factice le temps d'une assertion (cf. `registerBenchmark`) — le code
- * applicatif, lui, n'a accès qu'aux lectures : `index.ts` n'exporte ni
- * `registerBenchmark` ni `setCurrentBenchmark`.
+ * applicatif, lui, n'a accès qu'aux lectures et à l'alignement du courant :
+ * `index.ts` n'exporte pas `registerBenchmark`.
  */
 const BENCHMARKS = new Map<string, BenchmarkDefinition>([[DEFAULT_BENCHMARK_ID, VOLTAIC_S5]]);
 
@@ -306,7 +308,7 @@ export function withBenchmark<T>(benchmarkId: BenchmarkId, fn: () => T): T {
 }
 
 /* ------------------------------------------------------------------ */
-/* Crochets de test — jamais réexportés par index.ts                   */
+/* Alignement du courant, et crochet de test                           */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -327,8 +329,16 @@ export function registerBenchmark(benchmark: BenchmarkDefinition): () => void {
 }
 
 /**
- * Force le benchmark courant et rend de quoi rétablir le précédent.
- * **Réservé aux tests** : en production, le courant est `DEFAULT_BENCHMARK_ID`.
+ * Aligne le benchmark courant et rend de quoi rétablir le précédent.
+ *
+ * **Réservé au boot applicatif et au sélecteur de benchmark** (et aux tests,
+ * qui s'en servent pour prouver le verrou). `index.ts` le réexporte sous le nom
+ * `syncCurrentBenchmark`, qui dit ce qu'il fait : le benchmark actif est une
+ * préférence du profil (DECISIONS.md D6), et tout ce qui parle du « présent »
+ * sans nommer de benchmark — la saisie du tracker, l'aperçu live, les rails
+ * d'énergie — passe par les accesseurs non qualifiés, donc par ce pointeur.
+ * L'appeler ailleurs qu'au chargement du profil ou sur un changement de
+ * sélecteur ferait diverger l'écran de la préférence enregistrée.
  */
 export function setCurrentBenchmark(benchmarkId: BenchmarkId): () => void {
   const previous = currentBenchmarkId;

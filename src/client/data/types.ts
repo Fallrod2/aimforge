@@ -14,6 +14,7 @@ import type {
   ComputedSubcategory,
   TierId,
 } from "../../lib/energy";
+import type { GameId } from "../../shared/game-vocab";
 
 /**
  * D'où viennent les scores d'une passe (miroir du `check` de la colonne
@@ -37,9 +38,8 @@ export interface BenchRunSummary {
    * ses valeurs S5 quel que soit le benchmark courant. Ce n'est pas une
    * décoration d'affichage.
    *
-   * Il vient de la colonne `bench_runs.season`, que la migration `0017` est en
-   * train de renommer `benchmark_id` (expand/contract) : la traduction se fait
-   * dans `mapping.ts`, et nulle part ailleurs.
+   * Il vient de la colonne `bench_runs.benchmark_id` (migration `0017`) : la
+   * traduction se fait dans `mapping.ts`, et nulle part ailleurs.
    */
   readonly benchmarkId: BenchmarkId;
   /** Moyenne harmonique des 9 sous-catégories ; 0 si le bench est incomplet. */
@@ -71,14 +71,38 @@ export interface SaveBenchRunInput {
   readonly date?: string;
   /** Provenance des scores ; « saisis à la main » par défaut. */
   readonly source?: BenchSource;
+  /**
+   * Le benchmark estampillé. Par défaut le benchmark **courant** de la lib, que
+   * le provider de benchmark actif tient aligné sur `profiles.active_benchmark`
+   * (DECISIONS.md D6) : le tracker le passe explicitement, parce qu'il l'a sous
+   * la main et que le dire vaut mieux que de le supposer.
+   */
+  readonly benchmarkId?: BenchmarkId;
 }
 
-/** Le profil joueur, tel que l'édite la page Profil. */
-export interface Profile {
+/**
+ * Ce que la page Profil enregistre : les six champs libres et le jeu.
+ *
+ * Le jeu ne pilote que du vocabulaire (DECISIONS.md D7) : les colonnes qui
+ * portent ces champs gardent leurs noms (`rang_valorant`, `main_agent`), seuls
+ * les libellés affichés changent.
+ */
+export interface ProfileInput {
   readonly pseudo: string | null;
   readonly rangValorant: string | null;
   readonly peak: string | null;
   readonly mainAgent: string | null;
   readonly objectif: string | null;
   readonly notesMaps: string | null;
+  readonly game: GameId;
+}
+
+/** Le profil joueur relu, préférence de benchmark comprise. */
+export interface Profile extends ProfileInput {
+  /**
+   * Le benchmark que l'utilisateur a choisi de jouer (`profiles.active_benchmark`,
+   * DECISIONS.md D6). Il n'est pas écrit par le formulaire : le sélecteur de
+   * benchmark l'écrit seul (`setActiveBenchmark`).
+   */
+  readonly activeBenchmark: BenchmarkId;
 }

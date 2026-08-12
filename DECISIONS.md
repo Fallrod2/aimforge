@@ -57,3 +57,21 @@ libellés/placeholders du profil (« agent principal » → « perso/rôle »), 
 phrase d'identité des 5 prompts système et le vocabulaire in-game qu'ils
 emploient. Aucune logique, aucun écran par jeu. Les stats Riot/Valorant ne
 s'affichent que si un compte Riot est lié, indépendamment du champ.
+
+## D8 — Viscose : intégré en `incomplete`, masqué, données vérifiées versionnées
+Les seuils Viscose S2/Entry/S1 sont complets et vérifiés (API officielle
+KovaaK's `player-progress-rank-benchmark`, recoupée avec le spreadsheet S1),
+mais la formule officielle d'agrégation du rang global n'est documentée nulle
+part (l'« énergie » d'evxl est la logique de leur tracker, pas celle de
+Viscose). Règle d'honnêteté : pas de formule inventée → l'entrée existe dans le
+registre en `status: 'incomplete'` (donc invisible dans l'UI), avec les seuils
+vérifiés versionnés et un TODO listant ce qui manque (formule officielle, noms
+des groupes S2, resynchronisation des seuils susceptibles d'équilibrage).
+
+## D9 — Piège d'outillage : gabarit d'environnement masqué par le sandbox
+Le sandbox de la session refuse la lecture des fichiers d'environnement à la
+racine : git voit alors le gabarit d'exemple comme « supprimé » alors qu'il
+existe sur disque (vérifié par listage du répertoire). Conséquence : ne JAMAIS
+`git add -A` à la racine pendant ces sessions (la fausse suppression serait
+commitée) ; tous les adds sont scopés par chemin. Fausse alerte de revue
+classée, fichier intact.

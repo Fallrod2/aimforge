@@ -49,9 +49,10 @@ import {
   type ChatContext,
   type ChatDebrief,
   type ChatTurn,
-  COACH_CHAT_SYSTEM_PROMPT,
+  coachChatSystemPrompt,
 } from "../src/server/coach/chat-prompt.js";
 import type { AskModel } from "../src/server/coach/generate.js";
+import { identityOf, type PromptIdentity } from "../src/server/coach/prompt.js";
 import {
   createQuotaRefund,
   evaluateQuota,
@@ -72,9 +73,10 @@ import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
 import {
   type CoachUserClient,
-  DEFAULT_TIER,
+  defaultTierFor,
   loadBenchTiers,
   loadProfile,
+  preferencesOf,
 } from "./_lib/coach-context.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { authenticate, fail, json, readBody } from "./_lib/request.js";
@@ -205,8 +207,12 @@ async function loadHistory(
 /* Appel au modèle                                                     */
 /* ------------------------------------------------------------------ */
 
-function askWith(config: ProviderConfig, deps: AskDeps): AskModel {
-  const ask = createAsk(config, { system: COACH_CHAT_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
+function askWith(config: ProviderConfig, identity: PromptIdentity, deps: AskDeps): AskModel {
+  const ask = createAsk(
+    config,
+    { system: coachChatSystemPrompt(identity), maxTokens: MAX_TOKENS },
+    deps,
+  );
 
   // Seul le texte est retenu : cette réponse n'est pas mise en cache, et le
   // joueur qui la trouve courte relance la question. Le drapeau de troncature
@@ -314,9 +320,15 @@ export async function POST(request: Request): Promise<Response> {
 
   // 7. Contexte puis génération. Le profil, le bench et l'historique sont du
   //    contexte : une lecture en échec dégrade la réponse, elle ne l'annule pas.
-  const [profile, bench, history] = await Promise.all([
-    loadProfile(userClient, userId),
-    loadBenchTiers(userClient, userId),
+  // Le profil se lit **avant** le reste : c'est lui qui porte le benchmark actif
+  // (DECISIONS.md D6), et le bench se lit dans ce benchmark-là. Un aller-retour
+  // de plus, sur un chemin qui attend ensuite le modèle, plutôt que de résumer
+  // des passes d'un barème que le joueur ne travaille plus.
+  const profile = await loadProfile(userClient, userId);
+  const identity = identityOf(profile);
+  const { activeBenchmark } = preferencesOf(profile);
+  const [bench, history] = await Promise.all([
+    loadBenchTiers(userClient, userId, activeBenchmark),
     loadHistory(userClient, debriefId),
   ]);
   const context: ChatContext = {
@@ -325,7 +337,7 @@ export async function POST(request: Request): Promise<Response> {
     bench,
     // Le catalogue suit la passe la plus récente : c'est le palier sur lequel
     // le joueur s'entraîne, même quand les paliers d'avant sont terminés.
-    scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
+    scenarios: scenarioCatalog(bench.latestTier ?? defaultTierFor(activeBenchmark)).groups,
     history,
     question,
   };
@@ -334,7 +346,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     generated = await generateChatAnswer(
-      askWith(config, { persist: persistChatGptTokensWith(service, userId) }),
+      askWith(config, identity, { persist: persistChatGptTokensWith(service, userId) }),
       context,
     );
   } catch (cause) {

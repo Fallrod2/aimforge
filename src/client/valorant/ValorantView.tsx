@@ -31,7 +31,8 @@
  */
 
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { DEFAULT_BENCHMARK_ID } from "../../lib/energy";
+import { type BenchmarkId, getBenchmark } from "../../lib/energy";
+import { useActiveBenchmark } from "../app/active-benchmark";
 import { Notice } from "../components/Notice";
 import {
   type BenchRunSummary,
@@ -144,6 +145,9 @@ function Header() {
 /* ------------------------------------------------------------------ */
 
 function Live({ account }: { readonly account: LinkedAccount }) {
+  // Le pont bench/in-game ne trace que les passes du benchmark **actif** : deux
+  // benchmarks n'ont pas la même échelle d'énergie, et la courbe n'a qu'un axe.
+  const { benchmarkId } = useActiveBenchmark();
   const [stats, setStats] = useState<Stats>({ status: "loading" });
   const [period, setPeriod] = useState<PeriodId>("last30Days");
   const [refreshing, setRefreshing] = useState(false);
@@ -215,9 +219,8 @@ function Live({ account }: { readonly account: LinkedAccount }) {
     [response, period],
   );
   const bridge = useMemo(
-    () =>
-      response === null ? null : buildBridge(runs, response.stats.trend, DEFAULT_BENCHMARK_ID),
-    [runs, response],
+    () => (response === null ? null : buildBridge(runs, response.stats.trend, benchmarkId)),
+    [runs, response, benchmarkId],
   );
 
   return (
@@ -256,7 +259,7 @@ function Live({ account }: { readonly account: LinkedAccount }) {
           />
           <Trends trend={trend} period={period} />
           <BreakdownTables byAgent={response.stats.byAgent} byMap={response.stats.byMap} />
-          <BridgeSection bridge={bridge} />
+          <BridgeSection bridge={bridge} benchmarkId={benchmarkId} />
           <MatchList trend={trend} debriefed={debriefed} />
         </>
       )}
@@ -354,16 +357,24 @@ function Metric({ title, available, missing, children }: MetricProps) {
 /* Pont bench ↔ in-game                                                */
 /* ------------------------------------------------------------------ */
 
-function BridgeSection({ bridge }: { readonly bridge: Bridge | null }) {
+interface BridgeSectionProps {
+  readonly bridge: Bridge | null;
+  /** Le benchmark actif : celui des passes tracées, et celui qu'on nomme. */
+  readonly benchmarkId: BenchmarkId;
+}
+
+function BridgeSection({ bridge, benchmarkId }: BridgeSectionProps) {
+  const benchmarkName = getBenchmark(benchmarkId).name;
+
   return (
     <Section
       title="Ton aim training paie-t-il ?"
-      caption="L'overall Voltaic et le HS% en partie, sur le même axe du temps."
+      caption={`L'overall ${benchmarkName} et le HS% en partie, sur le même axe du temps.`}
     >
       {bridge === null ? (
         <Empty>
-          Il faut au moins deux passes de bench de la saison courante et deux parties datées avec un
-          HS% connu pour mettre les deux courbes en regard.
+          Il faut au moins deux passes de bench du barème {benchmarkName} et deux parties datées
+          avec un HS% connu pour mettre les deux courbes en regard.
         </Empty>
       ) : (
         <div className="flex flex-col gap-3">
@@ -381,7 +392,7 @@ function BridgeSection({ bridge }: { readonly bridge: Bridge | null }) {
           <Suspense fallback={<ChartsLoading height="h-72" />}>
             <BridgeChart
               bridge={bridge}
-              benchmarkId={DEFAULT_BENCHMARK_ID}
+              benchmarkId={benchmarkId}
               benchDomain={paddedDomain(
                 bridge.bench.map((point) => point.value),
                 { lower: 0 },

@@ -62,6 +62,7 @@ import {
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
+import type { BenchmarkId } from "../src/lib/energy/index.js";
 import {
   AiSettingsUnavailableError,
   type AskDeps,
@@ -72,6 +73,7 @@ import {
   type ProviderConfig,
   resolveModelFor,
 } from "../src/server/ai/index.js";
+import { identityOf, type PromptIdentity } from "../src/server/coach/prompt.js";
 import {
   createQuotaRefund,
   evaluateQuota,
@@ -88,9 +90,9 @@ import { gateRoutine, type RoutineGate } from "../src/server/routine/gating.js";
 import { type AskModel, generateRoutine } from "../src/server/routine/generate.js";
 import { summarizeIngameForRoutine } from "../src/server/routine/ingame.js";
 import {
-  ROUTINE_SYSTEM_PROMPT,
   type RoutineContext,
   type RoutineDebriefAxes,
+  routineSystemPrompt,
 } from "../src/server/routine/prompt.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
 import { coachAxeSchema } from "../src/shared/coach-contract.js";
@@ -98,7 +100,12 @@ import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
-import { DEFAULT_TIER, loadLatestBenchRuns } from "./_lib/coach-context.js";
+import {
+  defaultTierFor,
+  loadLatestBenchRuns,
+  loadProfile,
+  preferencesOf,
+} from "./_lib/coach-context.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -229,15 +236,27 @@ async function loadContext(
   userId: string,
   dureeMinutes: number,
   focus: string | null,
-): Promise<{ readonly context: RoutineContext; readonly gate: RoutineGate }> {
+): Promise<{
+  readonly context: RoutineContext;
+  readonly gate: RoutineGate;
+  readonly identity: PromptIdentity;
+  readonly activeBenchmark: BenchmarkId;
+}> {
+  // Le profil se lit **avant** le bench : il porte le benchmark actif
+  // (DECISIONS.md D6), donc le barème dont la séance parle et celui dans lequel
+  // les passes se lisent. La routine ne montrait jusqu'ici aucun profil ; elle
+  // le lit désormais pour ces deux préférences, et pour rien d'autre.
+  const profile = await loadProfile(client, userId);
+  const identity = identityOf(profile);
+  const { activeBenchmark } = preferencesOf(profile);
   const [bench, debriefs, matches] = await Promise.all([
-    loadBenchTiers(client, userId),
+    loadBenchTiers(client, userId, activeBenchmark),
     loadDebriefs(client, userId),
     loadMatches(client),
   ]);
   // Le catalogue suit la passe la plus récente : c'est le palier que la séance
   // vise, même quand les paliers d'avant sont terminés et restent affichés.
-  const catalog = scenarioCatalog(bench.latestTier ?? DEFAULT_TIER);
+  const catalog = scenarioCatalog(bench.latestTier ?? defaultTierFor(activeBenchmark));
   const gate = gateRoutine(matches);
   // Sous le seuil, le modèle ne voit **aucune** statistique de partie : c'est
   // ce qui rend le mode « bench seul » vrai plutôt que déclaratif.
@@ -246,6 +265,8 @@ async function loadContext(
   return {
     context: { dureeMinutes, focus, bench, debriefs, ingame, scenarios: catalog.groups },
     gate,
+    identity,
+    activeBenchmark,
   };
 }
 
@@ -309,8 +330,12 @@ async function loadMatches(client: UserClient): Promise<readonly MatchSummary[]>
  * Une passe qui n'est rapportée par personne (lecture en échec, benchmark inconnu)
  * fait perdre un palier, pas la routine : le bench reste du contexte.
  */
-async function loadBenchTiers(client: UserClient, userId: string): Promise<RoutineBenchTiers> {
-  const { runs, latestTier } = await loadLatestBenchRuns(client, userId);
+async function loadBenchTiers(
+  client: UserClient,
+  userId: string,
+  activeBenchmark: BenchmarkId,
+): Promise<RoutineBenchTiers> {
+  const { runs, latestTier } = await loadLatestBenchRuns(client, userId, activeBenchmark);
 
   return {
     tiers: runs.map((entry) => summarizeTierBenchForRoutine(entry.run, entry.scores)),
@@ -364,10 +389,15 @@ async function loadDebriefs(
  */
 function askWith(
   config: ProviderConfig,
+  identity: PromptIdentity,
   budget: ReturnType<typeof startBudget>,
   deps: AskDeps,
 ): AskModel {
-  const ask = createAsk(config, { system: ROUTINE_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
+  const ask = createAsk(
+    config,
+    { system: routineSystemPrompt(identity), maxTokens: MAX_TOKENS },
+    deps,
+  );
 
   return (messages) => {
     const timeout = attemptTimeout(budget.remaining(), BUDGET_CALL_CAP_MS, BUDGET_CALL_FLOOR_MS);
@@ -515,8 +545,15 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // 6. Contexte (bench, debriefs, parties récentes → mode) puis génération.
-  const { context, gate } = await loadContext(userClient, user.id, body.dureeMinutes, body.focus);
-  const allowed = scenarioCatalog(context.bench.latestTier ?? DEFAULT_TIER).names;
+  const { context, gate, identity, activeBenchmark } = await loadContext(
+    userClient,
+    user.id,
+    body.dureeMinutes,
+    body.focus,
+  );
+  const allowed = scenarioCatalog(
+    context.bench.latestTier ?? defaultTierFor(activeBenchmark),
+  ).names;
   const budget = startBudget(BUDGET_TOTAL_MS);
 
   let generated: Awaited<ReturnType<typeof generateRoutine>>;
@@ -526,7 +563,7 @@ export async function POST(request: Request): Promise<Response> {
       // La réécriture des jetons ne concerne que la liaison ChatGPT ; les
       // adaptateurs à clé l'ignorent. La passer sans condition évite d'avoir à
       // se rappeler quel fournisseur en a besoin.
-      askWith(config, budget, { persist: persistChatGptTokensWith(service, user.id) }),
+      askWith(config, identity, budget, { persist: persistChatGptTokensWith(service, user.id) }),
       context,
       allowed,
     );

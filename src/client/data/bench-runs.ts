@@ -35,16 +35,14 @@ import { currentUserId } from "./session";
 import type { BenchRunDetail, BenchRunSummary, BenchSource, SaveBenchRunInput } from "./types";
 
 /**
- * La colonne du benchmark s'appelle encore `season`.
+ * La colonne du benchmark est `benchmark_id` (migration `0017`).
  *
- * La migration `0017` a ajouté `benchmark_id` et un trigger qui garde les deux
- * colonnes identiques, précisément pour que le client déployé continue de
- * fonctionner pendant la bascule ; `0018` supprimera `season` **après** le
- * déploiement de ce code (expand/contract). Tant que ce n'est pas fait, on lit
- * et on écrit `season` — le champ métier, lui, s'appelle `benchmarkId` partout
- * ailleurs, et la traduction vit dans `mapping.ts` et dans `supabaseStore`.
+ * L'ancienne colonne `season` existe toujours, tenue synchrone par un trigger
+ * le temps de l'expand/contract : ce code n'écrit **que** `benchmark_id`, et le
+ * trigger recopie la valeur dans `season` pour un client déployé plus ancien.
+ * `0018` supprimera la colonne et le trigger une fois ce code en production.
  */
-const RUN_COLUMNS = "id, date, tier, overall, rank, complete, source, season";
+const RUN_COLUMNS = "id, date, tier, overall, rank, complete, source, benchmark_id";
 const SCORE_COLUMNS = "scenario, score, energy";
 
 const RUN_NOT_FOUND = "Passe introuvable : elle a peut-être été supprimée.";
@@ -107,10 +105,14 @@ export async function saveBenchRunTo(
     // Une passe dont personne n'a dit d'où elle vient a été tapée à la main :
     // c'est le seul défaut qui ne surestime pas ce qu'on sait de la donnée.
     source: input.source ?? "manual",
-    // Le benchmark n'est pas un choix de l'appelant : on enregistre ce qui est
-    // joué aujourd'hui, avec les seuils qui ont servi à calculer les énergies
-    // trois lignes plus haut (SPEC §5 quinquies).
-    benchmarkId: currentBenchmark(),
+    // Le benchmark estampillé est celui que l'utilisateur a **actif** (D6), et
+    // c'est le même que celui dont les seuils ont servi à calculer les énergies
+    // trois lignes plus haut : le provider aligne le benchmark courant de la
+    // lib sur le benchmark actif, donc `computeBenchRun` et `currentBenchmark`
+    // parlent forcément du même (SPEC §5 quinquies). L'appelant peut le nommer
+    // — le tracker le fait, il tient le benchmark actif de son hook — mais il
+    // ne peut pas en choisir un autre que celui du calcul sans mentir.
+    benchmarkId: input.benchmarkId ?? currentBenchmark(),
   });
 
   try {
@@ -152,7 +154,8 @@ function supabaseStore(userId: string): BenchRunStore {
           complete: run.complete,
           source: run.source,
           // Le seul endroit où le champ métier redevient le nom de la colonne.
-          season: run.benchmarkId,
+          // `season` n'est pas envoyée : le trigger de `0017` l'aligne.
+          benchmark_id: run.benchmarkId,
         })
         .select(RUN_COLUMNS)
         .single();

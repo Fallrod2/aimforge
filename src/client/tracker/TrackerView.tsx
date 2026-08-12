@@ -34,14 +34,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  type BenchmarkDefinition,
+  type BenchmarkId,
   computeBenchRun,
-  currentBenchmark,
   firstTierFor,
   getTier,
+  getTierFor,
   listScenarios,
   type TierId,
   tierIdsFor,
 } from "../../lib/energy";
+import { useActiveBenchmark } from "../app/active-benchmark";
+import { BenchmarkNote } from "../components/BenchmarkNote";
 import { RankBadge } from "../components/RankBadge";
 import { Segmented } from "../components/Segmented";
 import {
@@ -95,13 +99,27 @@ interface TrackerViewProps {
   readonly onSaved: (run: BenchRunSummary) => void;
 }
 
-/** Les paliers proposés : ceux du benchmark courant, dans son ordre. */
-const tierOptions = tierIdsFor(currentBenchmark()).map((id) => ({
-  value: id,
-  label: getTier(id).label,
-}));
+/**
+ * Les paliers proposés : ceux du benchmark **actif**, dans son ordre.
+ *
+ * Calculés dans le rendu et non une fois pour toutes au chargement du module :
+ * un autre benchmark peut avoir d'autres paliers (DECISIONS.md D5), et une
+ * constante de module les figerait à ceux du benchmark par défaut.
+ */
+function tierOptionsFor(benchmarkId: BenchmarkId) {
+  return tierIdsFor(benchmarkId).map((id) => ({
+    value: id,
+    label: getTierFor(benchmarkId, id).label,
+  }));
+}
 
 export function TrackerView({ onSaved }: TrackerViewProps) {
+  // Le tracker saisit **dans le benchmark actif** : ses paliers, ses scénarios,
+  // ses seuils, et c'est lui qu'estampille la sauvegarde. Les accès non
+  // qualifiés de la lib (`computeBenchRun`, `listScenarios`, `getTier`) le
+  // suivent d'eux-mêmes — le provider aligne le benchmark courant du module.
+  const { benchmarkId, benchmark } = useActiveBenchmark();
+  const tierOptions = useMemo(() => tierOptionsFor(benchmarkId), [benchmarkId]);
   /**
    * Le palier choisi à la main, `null` tant que l'utilisateur n'a rien choisi :
    * on affiche alors celui de son dernier bench. Un `useState` initialisé puis
@@ -110,8 +128,20 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
    */
   const [chosenTier, setChosenTier] = useState<TierId | null>(null);
   const start = useStartTier();
-  const tier =
-    chosenTier ?? (start.status === "ready" ? start.tier : firstTierFor(currentBenchmark()));
+  /**
+   * Le palier saisi, **ramené dans le benchmark actif**.
+   *
+   * Le palier de départ vient du dernier bench enregistré, et un palier n'existe
+   * que dans son benchmark (DECISIONS.md D5) : sans ce garde-fou, un joueur dont
+   * la dernière passe appartient à un autre barème ouvrirait le tracker sur un
+   * palier que `getTier` ne connaît pas — c'est-à-dire sur une exception.
+   */
+  const tier = useMemo(() => {
+    const wanted = chosenTier ?? (start.status === "ready" ? start.tier : null);
+    const tiers = tierIdsFor(benchmarkId);
+
+    return wanted !== null && tiers.includes(wanted) ? wanted : firstTierFor(benchmarkId);
+  }, [chosenTier, start, benchmarkId]);
 
   const [draft, setDraft] = useState<BenchDraft>(emptyDraft);
   const [saving, setSaving] = useState(false);
@@ -186,7 +216,15 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
       // Une passe pré-remplie reste pré-remplie même si l'utilisateur en a
       // corrigé un champ : ce qui compte pour l'historique, c'est que ces
       // chiffres n'ont pas été relevés à la main.
-      const run = await saveBenchRun({ tier, scores, source: importedTier ? "kovaaks" : "manual" });
+      const run = await saveBenchRun({
+        tier,
+        scores,
+        source: importedTier ? "kovaaks" : "manual",
+        // Dit explicitement, alors que le défaut donnerait la même valeur : la
+        // passe est estampillée du benchmark que l'écran affiche, pas d'un
+        // pointeur de module qu'il faudrait aller vérifier ailleurs.
+        benchmarkId,
+      });
 
       setSaved(run);
       onSaved(run);
@@ -267,6 +305,11 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
             Palier
           </p>
           <Segmented label="Palier" options={tierOptions} value={tier} onChange={setChosenTier} />
+          {/* Le barème dans lequel on saisit, juste sous le palier : les deux
+              décident ensemble des seuils, et le second se change au Profil. */}
+          <div className="mt-2">
+            <BenchmarkNote benchmark={benchmark} />
+          </div>
         </div>
 
         <SummaryPanel
@@ -293,6 +336,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           account={kovaaks}
           loading={!accountsKnown}
           state={importState}
+          benchmark={benchmark}
           scenarioCount={scenarios.length}
           tierLabel={tierData.label}
           imported={importedTier}
@@ -393,6 +437,8 @@ interface ImportPanelProps {
   /** Les comptes liés ne sont pas encore connus : ne rien affirmer. */
   readonly loading: boolean;
   readonly state: ImportState;
+  /** Le benchmark actif : c'est le sien que l'import va chercher. */
+  readonly benchmark: BenchmarkDefinition;
   readonly scenarioCount: number;
   readonly tierLabel: string;
   /** La saisie courante du palier vient d'un import. */
@@ -420,6 +466,7 @@ function ImportPanel({
   account,
   loading,
   state,
+  benchmark,
   scenarioCount,
   tierLabel,
   imported,
@@ -432,9 +479,9 @@ function ImportPanel({
   if (account === null) {
     return (
       <LinkInvite title="Tes scores peuvent se remplir tout seuls">
-        Lie ton pseudo KovaaK's une fois : le tracker ira chercher tes scores du benchmark Voltaic
-        et remplira les {scenarioCount} champs pour toi. D'ici là, la saisie à la main ci-dessous
-        fait le travail.
+        Lie ton pseudo KovaaK's une fois : le tracker ira chercher tes scores du benchmark{" "}
+        {benchmark.name} et remplira les {scenarioCount} champs pour toi. D'ici là, la saisie à la
+        main ci-dessous fait le travail.
       </LinkInvite>
     );
   }

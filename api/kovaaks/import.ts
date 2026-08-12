@@ -29,7 +29,7 @@ import {
   type KovaaksImportResponse,
   kovaaksImportRequestSchema,
 } from "../../src/client/data/linked-accounts-contract.js";
-import { currentBenchmark } from "../../src/lib/energy/index.js";
+import { currentBenchmark, getBenchmark } from "../../src/lib/energy/index.js";
 import { mapBenchmarkProgress } from "../../src/server/kovaaks/benchmark.js";
 import { consumeDailyLimit, kovaaksImportLimit } from "../../src/server/linked/rate-limit.js";
 import {
@@ -137,7 +137,7 @@ export async function POST(request: Request): Promise<Response> {
       // qui n'est pas la même chose qu'un pseudo inconnu.
       if (cause.status === 404) {
         return fail(
-          `« ${username} » n'a aucun score sur le benchmark Voltaic ${tier} de la saison courante. Joue-le une fois sur KovaaK's, ou saisis tes scores à la main.`,
+          `« ${username} » n'a aucun score sur le palier ${tier} du barème ${getBenchmark(currentBenchmark()).name}. Joue-le une fois sur KovaaK's, ou saisis tes scores à la main.`,
           404,
         );
       }

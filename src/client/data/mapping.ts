@@ -14,18 +14,17 @@
  *   (`buildSeries`) et que le reste du code a toujours connue.
  *
  * Depuis le verrou multi-benchmarks (SPEC §5 quinquies), c'est aussi ici que la
- * colonne `season` devient un `BenchmarkId` **validé** : tout ce qui est dérivé
+ * colonne `benchmark_id` devient un `BenchmarkId` **validé** : tout ce qui est dérivé
  * à la lecture (les 9 sous-catégories, l'ordre des scénarios) l'est avec les
  * seuils du benchmark de la passe, jamais avec ceux du benchmark courant. Un
  * benchmark absent du registre lève (`EnergyError`) : un repli silencieux sur le
  * courant afficherait des énergies fausses sans le dire.
  *
- * **Le nom de la colonne et le nom du champ divergent, et c'est voulu.** La
- * colonne s'appelle encore `season` — la migration `0017` l'a doublée d'une
- * colonne `benchmark_id` tenue synchrone par trigger, et la suppression de
- * `season` (`0018`) n'aura lieu qu'une fois ce client déployé (expand/contract).
- * Le code, lui, ne parle plus que de `benchmarkId` : la traduction se fait ici,
- * une fois, plutôt que d'être répétée dans chaque vue.
+ * La colonne lue est `benchmark_id` (migration `0017`). L'ancienne colonne
+ * `season` existe encore et un trigger la garde synchrone, le temps que `0018`
+ * la supprime (expand/contract) : ce module ne la lit plus, et le champ métier
+ * s'appelle `benchmarkId` partout — la traduction se fait ici, une fois, plutôt
+ * que d'être répétée dans chaque vue.
  */
 
 import {
@@ -54,8 +53,8 @@ export interface BenchRunRow {
   readonly rank: string | null;
   readonly complete: boolean;
   readonly source: string;
-  /** La colonne s'appelle encore `season` ; le champ métier est `benchmarkId`. */
-  readonly season: string;
+  /** Le benchmark de la passe ; le champ métier correspondant est `benchmarkId`. */
+  readonly benchmark_id: string;
 }
 
 /** Les colonnes de `scenario_scores` lues avec une passe. */
@@ -105,7 +104,7 @@ export function toBenchRunSummary(row: BenchRunRow): BenchRunSummary {
   // C'est voulu : mieux vaut une passe qui refuse de s'afficher qu'une passe
   // affichée avec les seuils d'un autre benchmark. Il est résolu en premier :
   // le palier se valide contre lui.
-  const benchmarkId = toBenchmarkId(row.season);
+  const benchmarkId = toBenchmarkId(row.benchmark_id);
 
   return {
     id: row.id,

@@ -67,37 +67,39 @@ export type Database = {
       }
       bench_runs: {
         Row: {
+          benchmark_id: string
           complete: boolean
           created_at: string
           date: string
           id: number
           overall: number
           rank: string | null
+          /** legacy, expand/contract 0017 : tenue synchrone par trigger, supprimée en 0018. */
           season: string
           source: string
           tier: string
           user_id: string
         }
         Insert: {
+          benchmark_id?: string
           complete?: boolean
           created_at?: string
           date?: string
           id?: never
           overall: number
           rank?: string | null
-          season?: string
           source?: string
           tier: string
           user_id: string
         }
         Update: {
+          benchmark_id?: string
           complete?: boolean
           created_at?: string
           date?: string
           id?: never
           overall?: number
           rank?: string | null
-          season?: string
           source?: string
           tier?: string
           user_id?: string
@@ -400,7 +402,9 @@ export type Database = {
       }
       profiles: {
         Row: {
+          active_benchmark: string
           created_at: string
+          game: string
           main_agent: string | null
           notes_maps: string | null
           objectif: string | null
@@ -411,7 +415,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          active_benchmark?: string
           created_at?: string
+          game?: string
           main_agent?: string | null
           notes_maps?: string | null
           objectif?: string | null
@@ -422,7 +428,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          active_benchmark?: string
           created_at?: string
+          game?: string
           main_agent?: string | null
           notes_maps?: string | null
           objectif?: string | null

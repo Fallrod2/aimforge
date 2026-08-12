@@ -26,6 +26,7 @@
 
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AppLayout } from "./app/AppLayout";
+import { ActiveBenchmarkProvider } from "./app/active-benchmark";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { AuthView } from "./auth/AuthView";
 import { RecoveryView } from "./auth/RecoveryView";
@@ -113,14 +114,20 @@ function Routed() {
   if (!authenticated) return guarded ? <LandingView /> : <AuthView />;
 
   return (
-    <AppLayout route={route}>
-      {/* Le repli ne s'affiche que le temps de télécharger l'historique, une
-          fois par session : un cadre muet, pas un écran de chargement, pour ne
-          pas faire clignoter la mise en page sous l'utilisateur. */}
-      <Suspense fallback={<ViewLoading />}>
-        <View route={route} navigate={navigate} />
-      </Suspense>
-    </AppLayout>
+    // Le benchmark actif est une préférence du profil (DECISIONS.md D6) : il se
+    // charge à l'ouverture de session, donc ici — au-dessus de toutes les vues
+    // qui le suivent (tracker, historique, Valorant, profil) et sous la garde
+    // d'authentification, puisqu'il n'existe pas sans profil.
+    <ActiveBenchmarkProvider>
+      <AppLayout route={route}>
+        {/* Le repli ne s'affiche que le temps de télécharger l'historique, une
+            fois par session : un cadre muet, pas un écran de chargement, pour ne
+            pas faire clignoter la mise en page sous l'utilisateur. */}
+        <Suspense fallback={<ViewLoading />}>
+          <View route={route} navigate={navigate} />
+        </Suspense>
+      </AppLayout>
+    </ActiveBenchmarkProvider>
   );
 }
 

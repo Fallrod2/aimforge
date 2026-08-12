@@ -55,13 +55,19 @@ export type {
   RefreshResponse,
 } from "./linked-accounts-contract";
 export { formatRiotId, parseRiotId, type RiotId } from "./linked-accounts-mapping";
-export { getProfile, updateProfile } from "./profile";
+export {
+  getActiveBenchmark,
+  getProfile,
+  setActiveBenchmark,
+  updateProfile,
+} from "./profile";
 export { deleteRoutine, listRoutines, setRoutineDone } from "./routines";
 export type {
   BenchRunDetail,
   BenchRunSummary,
   BenchSource,
   Profile,
+  ProfileInput,
   SaveBenchRunInput,
   ScenarioScore,
   SubcategoryEnergy,

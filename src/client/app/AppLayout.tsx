@@ -66,15 +66,18 @@ export function AppLayout({ route, children }: AppLayoutProps) {
     <div className="min-h-dvh">
       <header className="sticky top-0 z-20 border-b border-steel-800 bg-steel-950/90 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3 sm:px-6">
+          {/* La marque est « AimForge », et rien d'autre. Le nom du barème a
+              longtemps été collé au logo : il y disait « cette application, c'est
+              Voltaic S5 », ce qui cesse d'être vrai dès qu'un second benchmark
+              existe et que l'utilisateur choisit le sien (DECISIONS.md D6). Il
+              vit désormais là où il est pertinent — en tête du tracker et de
+              l'historique, avec son statut et sa date de version. */}
           <a
             href={routeHash(viewRoute("dashboard"))}
             className="flex shrink-0 items-baseline gap-2"
           >
             <span className="font-mono text-lg font-semibold tracking-tight text-ember-500">
               AimForge
-            </span>
-            <span className="hidden text-[11px] tracking-[0.18em] text-steel-500 uppercase sm:inline">
-              Voltaic S5
             </span>
           </a>
 

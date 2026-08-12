@@ -109,7 +109,7 @@ afterEach(() => {
   while (restorers.length > 0) restorers.pop()?.();
 });
 
-/** Une ligne `bench_runs` : la colonne du benchmark s'appelle encore `season`. */
+/** Une ligne `bench_runs` : la colonne du benchmark est `benchmark_id` (0017). */
 function benchRow(benchmarkId: string): BenchRunRow {
   return {
     id: 12,
@@ -119,7 +119,7 @@ function benchRow(benchmarkId: string): BenchRunRow {
     rank: "Gold",
     complete: true,
     source: "manual",
-    season: benchmarkId,
+    benchmark_id: benchmarkId,
   };
 }
 

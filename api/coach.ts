@@ -81,7 +81,12 @@ import {
 } from "../src/server/ai/index.js";
 import { type AskModel, generateDebrief } from "../src/server/coach/generate.js";
 import { matchStatsFrom } from "../src/server/coach/match-stats.js";
-import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt.js";
+import {
+  type CoachContext,
+  coachSystemPrompt,
+  identityOf,
+  type PromptIdentity,
+} from "../src/server/coach/prompt.js";
 import {
   createQuotaRefund,
   evaluateQuota,
@@ -98,7 +103,12 @@ import {
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
-import { DEFAULT_TIER, loadBenchTiers, loadProfile } from "./_lib/coach-context.js";
+import {
+  defaultTierFor,
+  loadBenchTiers,
+  loadProfile,
+  preferencesOf,
+} from "./_lib/coach-context.js";
 import { postDebriefCard } from "./_lib/coach-thread-write.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
@@ -347,16 +357,21 @@ async function loadContext(
   client: UserClient,
   userId: string,
   stats: string,
-): Promise<CoachContext> {
-  const [profile, bench] = await Promise.all([
-    loadProfile(client, userId),
-    loadBenchTiers(client, userId),
-  ]);
+): Promise<{ readonly context: CoachContext; readonly identity: PromptIdentity }> {
+  // Le profil se lit **avant** le bench, et non en parallèle : c'est lui qui
+  // porte le benchmark actif (DECISIONS.md D6), et le bench se lit dans ce
+  // benchmark-là. Un aller-retour de plus sur un chemin qui attend ensuite
+  // vingt secondes de modèle est un prix qu'on paie sans hésiter pour ne pas
+  // résumer des passes d'un barème que le joueur ne travaille plus.
+  const profile = await loadProfile(client, userId);
+  const identity = identityOf(profile);
+  const { activeBenchmark } = preferencesOf(profile);
+  const bench = await loadBenchTiers(client, userId, activeBenchmark);
   // Le palier retenu est celui de la passe la plus récente : c'est celui sur
   // lequel le joueur s'entraîne, donc le seul catalogue qui lui soit utile.
-  const catalog = scenarioCatalog(bench.latestTier ?? DEFAULT_TIER);
+  const catalog = scenarioCatalog(bench.latestTier ?? defaultTierFor(activeBenchmark));
 
-  return { stats, profile, bench, scenarios: catalog.groups };
+  return { context: { stats, profile, bench, scenarios: catalog.groups }, identity };
 }
 
 /* ------------------------------------------------------------------ */
@@ -372,8 +387,12 @@ async function loadContext(
  * (relance corrective comprise) reste dans `generateDebrief`, qui ne sait
  * toujours pas qui répond au bout du fil.
  */
-function askWith(config: ProviderConfig, deps: AskDeps): AskModel {
-  const ask = createAsk(config, { system: COACH_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
+function askWith(config: ProviderConfig, identity: PromptIdentity, deps: AskDeps): AskModel {
+  const ask = createAsk(
+    config,
+    { system: coachSystemPrompt(identity), maxTokens: MAX_TOKENS },
+    deps,
+  );
 
   // Seul le texte est retenu : un debrief n'est pas mis en cache, et une sortie
   // coupée retombe déjà dans la relance corrective de `generateDebrief` — un
@@ -531,7 +550,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // 6. Contexte puis génération.
-  const context = await loadContext(userClient, user.id, stats);
+  const { context, identity } = await loadContext(userClient, user.id, stats);
 
   let generated: Awaited<ReturnType<typeof generateDebrief>>;
 
@@ -540,7 +559,7 @@ export async function POST(request: Request): Promise<Response> {
       // La réécriture des jetons ne concerne que la liaison ChatGPT ; les
       // adaptateurs à clé l'ignorent. La passer sans condition évite d'avoir à
       // se rappeler quel fournisseur en a besoin.
-      askWith(config, { persist: persistChatGptTokensWith(service, user.id) }),
+      askWith(config, identity, { persist: persistChatGptTokensWith(service, user.id) }),
       context,
     );
   } catch (cause) {

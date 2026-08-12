@@ -24,7 +24,7 @@ const row: BenchRunRow = {
   rank: "Gold",
   complete: true,
   source: "manual",
-  season: "voltaic-s5",
+  benchmark_id: "voltaic-s5",
 };
 
 describe("toBenchRunSummary", () => {

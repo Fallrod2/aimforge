@@ -44,23 +44,47 @@ import {
   summarizeTierBench,
 } from "../../src/server/coach/bench.js";
 import type { CoachBenchTiers, CoachProfile } from "../../src/server/coach/prompt.js";
+import { DEFAULT_GAME, toGameId } from "../../src/shared/game-vocab.js";
 
 /** Le client Supabase monté avec le JWT de l'appelant. */
 export type CoachUserClient = ReturnType<typeof createClient<Database>>;
 
 /**
- * Palier retenu quand le joueur n'a aucune passe : le plus bas du benchmark.
+ * Palier retenu quand le joueur n'a aucune passe : le plus bas de **son**
+ * benchmark actif.
  *
  * Mieux vaut la liste du premier palier qu'aucune liste — sans elle, le modèle
  * n'a plus de noms à citer et se remet à en inventer. Il est lu dans le registre
  * plutôt qu'écrit en dur : « novice » est un palier de Voltaic, pas une
  * constante du domaine (DECISIONS.md D5).
  *
- * Il est exporté parce que cinq points d'entrée (`api/coach`, `api/coach-chat`,
- * `api/coach-thread`, `api/routine`, l'analyse de match) doivent choisir le même
- * repli : deux copies décideraient un jour de deux catalogues différents.
+ * C'est une fonction depuis que le benchmark actif est une préférence de
+ * l'utilisateur (D6) : une constante de module aurait figé le repli sur le
+ * premier palier du benchmark par défaut, donc proposé au joueur le catalogue
+ * d'un barème qu'il ne joue pas.
+ *
+ * Elle est exportée parce que cinq points d'entrée (`api/coach`,
+ * `api/coach-chat`, `api/coach-thread`, `api/routine`, l'analyse de match)
+ * doivent choisir le même repli : deux copies décideraient un jour de deux
+ * catalogues différents.
  */
-export const DEFAULT_TIER: TierId = firstTierFor(DEFAULT_BENCHMARK_ID);
+export function defaultTierFor(benchmarkId: BenchmarkId): TierId {
+  return firstTierFor(benchmarkId);
+}
+
+/**
+ * Les préférences du profil que le contexte serveur lit : le vocabulaire et le
+ * barème (migration `0019`, DECISIONS.md D6 et D7).
+ *
+ * Elles voyagent avec le profil parce qu'elles viennent de la même ligne et de
+ * la même lecture. Elles n'entrent pas dans le bloc `<profil>` du prompt : ce
+ * ne sont pas des données que le joueur a écrites, ce sont des réglages qui
+ * décident de la façon dont le prompt est rédigé.
+ */
+export const DEFAULT_PREFERENCES = {
+  game: DEFAULT_GAME,
+  activeBenchmark: DEFAULT_BENCHMARK_ID,
+} as const;
 
 /**
  * Le benchmark de la passe, ou `null` si le registre ne le connaît pas.
@@ -78,13 +102,27 @@ function toKnownBenchmark(value: string): BenchmarkId | null {
   }
 }
 
+/**
+ * Le profil du joueur, préférences comprises.
+ *
+ * `null` quand la lecture échoue — comme partout ici, le profil est du contexte.
+ * L'appelant retombe alors sur `DEFAULT_PREFERENCES` : un debrief rédigé dans le
+ * vocabulaire par défaut vaut mieux qu'un debrief annulé après consommation du
+ * quota.
+ *
+ * Le benchmark actif est validé par le registre et retombe sur le défaut s'il
+ * lui est inconnu. Le raisonnement n'est pas celui du benchmark d'une passe
+ * (qui décide de la relecture de chiffres enregistrés, et où un repli
+ * fabriquerait des valeurs fausses) : ici il ne décide que du barème dont on
+ * parle et des paliers qu'on lit.
+ */
 export async function loadProfile(
   client: CoachUserClient,
   userId: string,
 ): Promise<CoachProfile | null> {
   const { data, error } = await client
     .from("profiles")
-    .select("pseudo, rang_valorant, peak, main_agent, objectif, notes_maps")
+    .select("pseudo, rang_valorant, peak, main_agent, objectif, notes_maps, game, active_benchmark")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -96,7 +134,19 @@ export async function loadProfile(
     mainAgent: data.main_agent,
     objectif: data.objectif,
     notesMaps: data.notes_maps,
+    game: toGameId(data.game),
+    activeBenchmark: toKnownBenchmark(data.active_benchmark) ?? DEFAULT_BENCHMARK_ID,
   };
+}
+
+/** Les préférences d'un profil, ou celles par défaut s'il n'a pas pu être lu. */
+export function preferencesOf(profile: CoachProfile | null): {
+  readonly game: CoachProfile["game"];
+  readonly activeBenchmark: BenchmarkId;
+} {
+  return profile === null
+    ? DEFAULT_PREFERENCES
+    : { game: profile.game, activeBenchmark: profile.activeBenchmark };
 }
 
 /** Une passe et ses scores, telle que la base les rend. */
@@ -132,11 +182,17 @@ interface DatedRun extends BenchRunWithScores {
 async function loadTierRun(
   client: CoachUserClient,
   userId: string,
+  activeBenchmark: BenchmarkId,
   tier: TierId,
 ): Promise<DatedRun | null> {
   const { data: run, error } = await client
     .from("bench_runs")
-    .select("id, date, tier, overall, rank, complete, season")
+    .select("id, date, tier, overall, rank, complete, benchmark_id")
+    // Le filtre par benchmark n'est pas un confort : sans lui, une passe d'un
+    // autre barème pourrait être la plus récente d'un palier, et le coach
+    // commenterait des énergies qui ne se comparent pas à celles du barème que
+    // le joueur travaille aujourd'hui (DECISIONS.md D6).
+    .eq("benchmark_id", activeBenchmark)
     .eq("user_id", userId)
     .eq("tier", tier)
     .order("date", { ascending: false })
@@ -146,9 +202,10 @@ async function loadTierRun(
 
   if (error !== null || run === null) return null;
 
-  // La colonne s'appelle encore `season` (migration 0017, expand/contract) ;
-  // le champ métier, lui, est `benchmarkId` partout ailleurs.
-  const benchmarkId = toKnownBenchmark(run.season);
+  // La colonne est `benchmark_id` (migration 0017) ; le champ métier est
+  // `benchmarkId` partout ailleurs. Revalidé même après le filtre : la requête
+  // dit ce qu'on a demandé, le registre dit ce qu'on sait relire.
+  const benchmarkId = toKnownBenchmark(run.benchmark_id);
 
   if (benchmarkId === null) return null;
 
@@ -172,17 +229,21 @@ async function loadTierRun(
 }
 
 /**
- * La dernière passe de **chaque** palier mesuré, dans l'ordre du benchmark.
+ * La dernière passe de **chaque** palier mesuré du benchmark actif, dans l'ordre
+ * de ce benchmark.
  *
- * Les trois lectures partent ensemble : elles ne dépendent pas les unes des
- * autres, et le contexte du coach est déjà chargé en parallèle du profil.
+ * Les paliers itérés sont ceux du benchmark actif et non ceux du benchmark par
+ * défaut : un autre barème peut en avoir d'autres, ou moins (DECISIONS.md D5).
+ *
+ * Les lectures partent ensemble : elles ne dépendent pas les unes des autres.
  */
 export async function loadLatestBenchRuns(
   client: CoachUserClient,
   userId: string,
+  activeBenchmark: BenchmarkId,
 ): Promise<LatestBenchRuns> {
   const loaded = await Promise.all(
-    tierIdsFor(DEFAULT_BENCHMARK_ID).map((tier) => loadTierRun(client, userId, tier)),
+    tierIdsFor(activeBenchmark).map((tier) => loadTierRun(client, userId, activeBenchmark, tier)),
   );
   const found = loaded.flatMap((entry) => (entry === null ? [] : [entry]));
   // « La plus récente » se départage comme la lecture d'avant : date, puis id.
@@ -214,8 +275,9 @@ export async function loadLatestBenchRuns(
 export async function loadBenchTiers(
   client: CoachUserClient,
   userId: string,
+  activeBenchmark: BenchmarkId,
 ): Promise<CoachBenchTiers> {
-  const { runs, latestTier } = await loadLatestBenchRuns(client, userId);
+  const { runs, latestTier } = await loadLatestBenchRuns(client, userId, activeBenchmark);
 
   return {
     tiers: runs.map((entry) => summarizeTierBench(entry.run, entry.scores)),

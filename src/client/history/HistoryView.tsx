@@ -9,24 +9,29 @@
  * **Et sur un seul benchmark** (SPEC §5 quinquies), pour la même raison portée
  * plus loin : deux benchmarks n'ont pas les mêmes seuils, donc un 447 S5 et un
  * 447 S6 ne décrivent pas la même performance. Le cadrage est le benchmark
- * *courant* — c'est celui qu'on joue — et il n'y a volontairement **aucun
- * sélecteur de benchmark** : il n'en existe qu'un, une liste déroulante à un
- * seul choix serait un ornement. Les passes des autres benchmarks ne sont pas
- * cachées pour autant : elles sont comptées à côté du total, comme le sont déjà
- * les passes des autres paliers. Le jour où un second benchmark existe
- * vraiment, c'est ce compteur qui dira qu'il faut un sélecteur.
+ * **actif** de l'utilisateur (`profiles.active_benchmark`, DECISIONS.md D6) —
+ * celui qu'il joue, celui que le tracker estampille. Il n'y a pas de sélecteur
+ * ici : il vit au Profil, une fois, plutôt qu'une fois par écran. Les passes des
+ * autres benchmarks ne sont pas cachées pour autant : elles sont comptées à côté
+ * du total, comme le sont déjà les passes des autres paliers.
+ *
+ * Les passes d'archive, elles, se relisent **avec le benchmark de la passe** et
+ * non avec l'actif (`mapping.ts`) : changer de benchmark actif ne réécrit aucun
+ * chiffre déjà enregistré.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  currentBenchmark,
-  DEFAULT_BENCHMARK_ID,
+  type BenchmarkId,
   firstTierFor,
   getTier,
+  getTierFor,
   listSubcategories,
   type TierId,
   tierIdsFor,
 } from "../../lib/energy";
+import { useActiveBenchmark } from "../app/active-benchmark";
+import { BenchmarkNote } from "../components/BenchmarkNote";
 import { Notice } from "../components/Notice";
 import { Segmented } from "../components/Segmented";
 import { type BenchRunSummary, deleteBenchRun, listBenchRuns } from "../data";
@@ -46,17 +51,25 @@ type Loadable =
   | { readonly status: "error"; readonly message: string }
   | { readonly status: "ready"; readonly runs: readonly BenchRunSummary[] };
 
-/** Les paliers proposés : ceux du benchmark courant, dans son ordre. */
-const tierOptions = tierIdsFor(currentBenchmark()).map((id) => ({
-  value: id,
-  label: getTier(id).label,
-}));
+/**
+ * Les paliers proposés : ceux du benchmark **actif**, dans son ordre. Calculés
+ * au rendu, pas au chargement du module : un autre benchmark a d'autres paliers
+ * (DECISIONS.md D5).
+ */
+function tierOptionsFor(benchmarkId: BenchmarkId) {
+  return tierIdsFor(benchmarkId).map((id) => ({
+    value: id,
+    label: getTierFor(benchmarkId, id).label,
+  }));
+}
 
 function failureMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
 }
 
 export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
+  const { benchmarkId, benchmark } = useActiveBenchmark();
+  const tierOptions = useMemo(() => tierOptionsFor(benchmarkId), [benchmarkId]);
   const [state, setState] = useState<Loadable>({ status: "loading" });
   const [tier, setTier] = useState<TierId | null>(null);
   const [subcategory, setSubcategory] = useState<string | null>(null);
@@ -70,14 +83,22 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
   const focusRunIdRef = useRef(focusRunId);
   focusRunIdRef.current = focusRunId;
 
+  // Même raison pour le benchmark actif : il ne sert au chargement qu'à choisir
+  // le palier initial. Le mettre en dépendance rechargerait toute la liste à
+  // chaque changement de benchmark, alors que la lecture n'est pas filtrée en
+  // base — c'est le rendu qui filtre, et il suit déjà.
+  const benchmarkIdRef = useRef(benchmarkId);
+  benchmarkIdRef.current = benchmarkId;
+
   const load = useCallback(async () => {
     setState({ status: "loading" });
     try {
       const runs = await listBenchRuns();
       // Le palier initial se choisit dans ce que la vue va réellement montrer,
-      // c'est-à-dire le benchmark courant : le déduire d'une passe d'archive
+      // c'est-à-dire le benchmark actif : le déduire d'une passe d'archive
       // ouvrirait l'historique sur un palier vide.
-      const shown = runs.filter((run) => run.benchmarkId === DEFAULT_BENCHMARK_ID);
+      const active = benchmarkIdRef.current;
+      const shown = runs.filter((run) => run.benchmarkId === active);
 
       setState({ status: "ready", runs });
       // Le palier n'est choisi qu'une fois, au premier chargement : celui de la
@@ -87,7 +108,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
           current ??
           shown.find((run) => run.id === focusRunIdRef.current)?.tier ??
           shown[0]?.tier ??
-          firstTierFor(currentBenchmark()),
+          firstTierFor(active),
       );
     } catch (cause) {
       setState({ status: "error", message: failureMessage(cause, "Chargement impossible.") });
@@ -99,12 +120,23 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
   }, [load]);
 
   const runs = state.status === "ready" ? state.runs : [];
-  const activeTier = tier ?? firstTierFor(currentBenchmark());
+  /**
+   * Le palier affiché, **ramené dans le benchmark actif**.
+   *
+   * Un palier choisi sous un benchmark peut ne pas exister sous le suivant
+   * (DECISIONS.md D5) : sans ce garde-fou, changer de benchmark depuis le Profil
+   * ferait lever `getTier` sur un palier inconnu au retour ici.
+   */
+  const activeTier = useMemo(() => {
+    const tiers = tierIdsFor(benchmarkId);
+
+    return tier !== null && tiers.includes(tier) ? tier : firstTierFor(benchmarkId);
+  }, [tier, benchmarkId]);
   // Le filtre de benchmark passe **avant** celui de palier : le graphe ne doit
   // jamais tracer deux échelles de seuils sur le même axe.
   const benchmarkRuns = useMemo(
-    () => runs.filter((run) => run.benchmarkId === DEFAULT_BENCHMARK_ID),
-    [runs],
+    () => runs.filter((run) => run.benchmarkId === benchmarkId),
+    [runs, benchmarkId],
   );
   const otherBenchmarkCount = runs.length - benchmarkRuns.length;
   const tierRuns = useMemo(
@@ -173,8 +205,11 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
           <p className="mt-0.5 text-xs text-steel-500">
             {tierRuns.length} passe{tierRuns.length > 1 ? "s" : ""} en {getTier(activeTier).label}
             {otherTierCount > 0 ? ` · ${otherTierCount} dans les autres paliers` : ""}
-            {otherBenchmarkCount > 0 ? ` · ${otherBenchmarkCount} dans une saison précédente` : ""}
+            {otherBenchmarkCount > 0 ? ` · ${otherBenchmarkCount} dans un autre barème` : ""}
           </p>
+          {/* Le barème avec lequel ces passes se relisent, discrètement : c'est
+              lui qui décide des seuils, donc des énergies affichées ci-dessous. */}
+          <BenchmarkNote benchmark={benchmark} />
         </div>
         <Segmented
           label="Palier de l'historique"
@@ -189,7 +224,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
           {otherTierCount > 0
             ? "Change de palier ci-dessus, ou enregistre une passe depuis le tracker."
             : otherBenchmarkCount > 0
-              ? `L'historique ne montre que la saison courante : ${otherBenchmarkCount} passe${otherBenchmarkCount > 1 ? "s" : ""} d'une saison précédente en ${otherBenchmarkCount > 1 ? "sont" : "est"} écartée${otherBenchmarkCount > 1 ? "s" : ""}, ses seuils n'étant pas comparables.`
+              ? `L'historique ne montre que le barème ${benchmark.name} : ${otherBenchmarkCount} passe${otherBenchmarkCount > 1 ? "s" : ""} d'un autre barème en ${otherBenchmarkCount > 1 ? "sont" : "est"} écartée${otherBenchmarkCount > 1 ? "s" : ""}, ses seuils n'étant pas comparables.`
               : "Saisis tes scores dans le tracker puis sauvegarde : la passe apparaîtra ici."}
         </Notice>
       ) : (
@@ -224,7 +259,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
 
             <ProgressChart
               tier={activeTier}
-              benchmarkId={DEFAULT_BENCHMARK_ID}
+              benchmarkId={benchmarkId}
               points={points}
               subcategory={subcategory}
             />

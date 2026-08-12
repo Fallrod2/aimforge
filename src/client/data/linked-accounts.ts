@@ -234,8 +234,15 @@ export async function listImportedMatches(
 /**
  * Palier utilisé pour vérifier qu'un pseudo KovaaK's existe : le premier du
  * benchmark courant, celui que tout le monde a joué au moins une fois.
+ *
+ * Une fonction et non une constante de module : le benchmark courant suit
+ * désormais le benchmark **actif** de l'utilisateur (DECISIONS.md D6), que le
+ * provider aligne après le chargement du bundle. Une constante aurait figé le
+ * premier palier du benchmark par défaut à l'import du module.
  */
-const VERIFICATION_TIER: TierId = firstTierFor(currentBenchmark());
+function verificationTier(): TierId {
+  return firstTierFor(currentBenchmark());
+}
 
 /**
  * Lie un pseudo KovaaK's, après l'avoir vérifié.
@@ -249,7 +256,7 @@ const VERIFICATION_TIER: TierId = firstTierFor(currentBenchmark());
  * premier import, c'est-à-dire au moment où l'utilisateur attend des scores.
  */
 export async function linkKovaaksAccount(username: string): Promise<LinkedAccount> {
-  const verified = await importKovaaksScores(username, VERIFICATION_TIER);
+  const verified = await importKovaaksScores(username, verificationTier());
   const userId = await currentUserId();
   const { data, error } = await supabase
     .from("linked_accounts")

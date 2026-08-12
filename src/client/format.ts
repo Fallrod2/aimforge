@@ -58,6 +58,24 @@ export function scenarioLabel(
   return scenarioDisplayName(benchmarkId, scenarioName, tierLabel);
 }
 
+/**
+ * Date de version d'un jeu de données de benchmark (`dataVersion`, « 2026-08-08 »
+ * → « 8 août 2026 »).
+ *
+ * Le fuseau est **UTC** par défaut, et ce n'est pas un détail : la chaîne est un
+ * jour civil sans heure, que `Date` lit à minuit UTC. La rendre dans le fuseau
+ * du navigateur ferait afficher la veille à l'ouest de Greenwich — un barème
+ * daté d'un jour de moins que ce que dit sa source.
+ */
+export function formatDataVersion(date: string, timeZone = "UTC"): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone,
+  }).format(new Date(date));
+}
+
 /** Date d'une passe sans l'heure, pour l'axe du graphe. */
 export function formatChartDate(iso: string, timeZone?: string): string {
   return new Intl.DateTimeFormat("fr-FR", {

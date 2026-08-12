@@ -46,6 +46,7 @@ import {
   resolveModelFor,
 } from "../src/server/ai/index.js";
 import type { AskModel } from "../src/server/coach/generate.js";
+import { identityOf, type PromptIdentity } from "../src/server/coach/prompt.js";
 import {
   createQuotaRefund,
   evaluateQuota,
@@ -53,10 +54,7 @@ import {
   refundQuota,
 } from "../src/server/coach/quota.js";
 import { generateThreadAnswer } from "../src/server/coach/thread.js";
-import {
-  COACH_THREAD_SYSTEM_PROMPT,
-  type ThreadContext,
-} from "../src/server/coach/thread-prompt.js";
+import { coachThreadSystemPrompt, type ThreadContext } from "../src/server/coach/thread-prompt.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
 import { CHAT_DAILY_QUOTA } from "../src/shared/coach-chat-contract.js";
@@ -69,9 +67,10 @@ import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
 import {
   type CoachUserClient,
-  DEFAULT_TIER,
+  defaultTierFor,
   loadBenchTiers,
   loadProfile,
+  preferencesOf,
 } from "./_lib/coach-context.js";
 import {
   loadRecentDebriefs,
@@ -105,10 +104,10 @@ function failWithQuota(error: string, status: number, remaining: number | null):
   return remaining === null ? fail(error, status) : json({ error, remaining }, status);
 }
 
-function askWith(config: ProviderConfig, deps: AskDeps): AskModel {
+function askWith(config: ProviderConfig, identity: PromptIdentity, deps: AskDeps): AskModel {
   const ask = createAsk(
     config,
-    { system: COACH_THREAD_SYSTEM_PROMPT, maxTokens: MAX_TOKENS },
+    { system: coachThreadSystemPrompt(identity), maxTokens: MAX_TOKENS },
     deps,
   );
 
@@ -212,9 +211,15 @@ export async function POST(request: Request): Promise<Response> {
 
   // 6. Contexte puis génération. Tout est lu sous la RLS de l'appelant, et
   //    aucune de ces lectures n'est un prérequis : un échec dégrade la réponse.
-  const [profile, bench, matches, debriefs, history] = await Promise.all([
-    loadProfile(userClient, userId),
-    loadBenchTiers(userClient, userId),
+  // Le profil se lit **avant** le reste : c'est lui qui porte le benchmark actif
+  // (DECISIONS.md D6), et le bench se lit dans ce benchmark-là. Un aller-retour
+  // de plus, sur un chemin qui attend ensuite le modèle, plutôt que de résumer
+  // des passes d'un barème que le joueur ne travaille plus.
+  const profile = await loadProfile(userClient, userId);
+  const identity = identityOf(profile);
+  const { activeBenchmark } = preferencesOf(profile);
+  const [bench, matches, debriefs, history] = await Promise.all([
+    loadBenchTiers(userClient, userId, activeBenchmark),
     loadRecentMatches(userClient, userId),
     loadRecentDebriefs(userClient, userId),
     loadThreadHistory(userClient, userId),
@@ -224,7 +229,7 @@ export async function POST(request: Request): Promise<Response> {
     bench,
     // Le catalogue suit la passe la plus récente : c'est le palier sur lequel
     // le joueur s'entraîne, même quand les paliers d'avant sont terminés.
-    scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
+    scenarios: scenarioCatalog(bench.latestTier ?? defaultTierFor(activeBenchmark)).groups,
     matches: matches.summaries,
     debriefs,
     history,
@@ -236,7 +241,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     generated = await generateThreadAnswer(
-      askWith(config, { persist: persistChatGptTokensWith(service, userId) }),
+      askWith(config, identity, { persist: persistChatGptTokensWith(service, userId) }),
       context,
     );
   } catch (cause) {

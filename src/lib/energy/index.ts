@@ -12,9 +12,16 @@
  *   sa formule d'origine.
  *
  * Les crochets de test des registres (`registerBenchmark`,
- * `setCurrentBenchmark`, `registerEnergyFormula`) ne sont volontairement
- * **pas** réexportés ici : le code applicatif n'a aucune raison de déposer un
- * benchmark ou une formule, ni de changer le benchmark courant à chaud.
+ * `registerEnergyFormula`) ne sont volontairement **pas** réexportés ici : le
+ * code applicatif n'a aucune raison de déposer un benchmark ou une formule.
+ *
+ * `setCurrentBenchmark`, lui, l'est — sous le nom `syncCurrentBenchmark`, qui
+ * dit à quoi il sert : aligner le benchmark courant sur le benchmark **actif**
+ * de l'utilisateur (`profiles.active_benchmark`, DECISIONS.md D6). Sans lui,
+ * tout ce qui parle du présent sans nommer de benchmark — saisie du tracker,
+ * aperçu live, rails d'énergie, libellés de scénarios — resterait sur le
+ * benchmark par défaut pendant que l'écran en affiche un autre. Il n'a que deux
+ * appelants légitimes : le provider de benchmark actif au boot, et le sélecteur.
  */
 
 export {
@@ -29,6 +36,7 @@ export {
   type KovaaksImport,
   listBenchmarkIds,
   listBenchmarks,
+  setCurrentBenchmark as syncCurrentBenchmark,
   toBenchmarkId,
 } from "./benchmarks.js";
 export {

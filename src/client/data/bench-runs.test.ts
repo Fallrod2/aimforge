@@ -48,8 +48,8 @@ function fakeStore({ failScores = false, failCompensation = false }: FakeOptions
         overall: run.overall,
         rank: run.rank,
         complete: run.complete,
-        // La ligne est celle de la base : la colonne s'appelle encore `season`.
-        season: run.benchmarkId,
+        // La ligne est celle de la base : la colonne est `benchmark_id` (0017).
+        benchmark_id: run.benchmarkId,
         source: run.source,
       };
 
@@ -127,8 +127,8 @@ describe("saveBenchRunTo — chemin nominal", () => {
           overall: run.overall,
           rank: run.rank,
           complete: run.complete,
-          // La ligne est celle de la base : la colonne s'appelle encore `season`.
-          season: run.benchmarkId,
+          // La ligne est celle de la base : la colonne est `benchmark_id` (0017).
+          benchmark_id: run.benchmarkId,
           source: run.source,
         };
       },
@@ -217,8 +217,8 @@ describe("saveBenchRunTo — compensation", () => {
           overall: run.overall,
           rank: run.rank,
           complete: run.complete,
-          // La ligne est celle de la base : la colonne s'appelle encore `season`.
-          season: run.benchmarkId,
+          // La ligne est celle de la base : la colonne est `benchmark_id` (0017).
+          benchmark_id: run.benchmarkId,
           source: run.source,
         };
       },

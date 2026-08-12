@@ -51,9 +51,10 @@ import {
 import { type AskAnalysis, generateMatchAnalysis } from "../../src/server/coach/analysis.js";
 import {
   type AnalysisContext,
-  MATCH_ANALYSIS_SYSTEM_PROMPT,
+  matchAnalysisSystemPrompt,
 } from "../../src/server/coach/analysis-prompt.js";
 import { matchStatsFrom } from "../../src/server/coach/match-stats.js";
+import { identityOf, type PromptIdentity } from "../../src/server/coach/prompt.js";
 import {
   createQuotaRefund,
   evaluateQuota,
@@ -68,9 +69,10 @@ import { loadAiSettingsWith, persistChatGptTokensWith } from "./ai-settings.js";
 import { refundAiUsageWith } from "./ai-usage.js";
 import {
   type CoachUserClient,
-  DEFAULT_TIER,
+  defaultTierFor,
   loadBenchTiers,
   loadProfile,
+  preferencesOf,
 } from "./coach-context.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./platform-settings.js";
 import { fail, json } from "./request.js";
@@ -118,10 +120,10 @@ function failWithQuota(error: string, status: number, remaining: number | null):
  * (point 1 en tête de fichier) : perdre le fait qu'elle a été coupée
  * reviendrait à graver une phrase inachevée.
  */
-function askWith(config: ProviderConfig, deps: AskDeps): AskAnalysis {
+function askWith(config: ProviderConfig, identity: PromptIdentity, deps: AskDeps): AskAnalysis {
   const ask = createAsk(
     config,
-    { system: MATCH_ANALYSIS_SYSTEM_PROMPT, maxTokens: MAX_TOKENS },
+    { system: matchAnalysisSystemPrompt(identity), maxTokens: MAX_TOKENS },
     deps,
   );
 
@@ -211,10 +213,14 @@ export async function analyzeMatch(input: AnalyzeMatchInput): Promise<Response> 
   //    lectures n'est un prérequis : un échec dégrade l'analyse (moins de
   //    contexte), il ne l'annule pas. Le détail, lui, est déjà là — c'est le
   //    seul élément sans lequel on refuse d'appeler le modèle.
-  const [profile, bench] = await Promise.all([
-    loadProfile(client, userId),
-    loadBenchTiers(client, userId),
-  ]);
+  // Le profil se lit **avant** le reste : c'est lui qui porte le benchmark actif
+  // (DECISIONS.md D6), et le bench se lit dans ce benchmark-là. Un aller-retour
+  // de plus, sur un chemin qui attend ensuite le modèle, plutôt que de résumer
+  // des passes d'un barème que le joueur ne travaille plus.
+  const profile = await loadProfile(client, userId);
+  const identity = identityOf(profile);
+  const { activeBenchmark } = preferencesOf(profile);
+  const bench = await loadBenchTiers(client, userId, activeBenchmark);
   const context: AnalysisContext = {
     detail,
     summary: matchStatsFrom(input.summary),
@@ -222,14 +228,14 @@ export async function analyzeMatch(input: AnalyzeMatchInput): Promise<Response> 
     bench,
     // Le catalogue suit la passe la plus récente : c'est le palier sur lequel
     // le joueur s'entraîne, même quand les paliers d'avant sont terminés.
-    scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
+    scenarios: scenarioCatalog(bench.latestTier ?? defaultTierFor(activeBenchmark)).groups,
   };
 
   let generated: Awaited<ReturnType<typeof generateMatchAnalysis>>;
 
   try {
     generated = await generateMatchAnalysis(
-      askWith(config, { persist: persistChatGptTokensWith(service, userId) }),
+      askWith(config, identity, { persist: persistChatGptTokensWith(service, userId) }),
       context,
     );
   } catch (cause) {
