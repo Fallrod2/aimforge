@@ -28,7 +28,31 @@
 
 import { MATCH_ID_MAX } from "../shared/valorant-contract";
 
-export type ViewId = "home" | "perfs" | "coach" | "profile" | "admin" | "auth";
+export type ViewId = "home" | "perfs" | "coach" | "profile" | "admin" | "auth" | LegalViewId;
+
+/**
+ * Les trois documents légaux (vague 3.5).
+ *
+ * Ils sont des vues à part entière — une adresse, un titre, un contenu — mais
+ * n'appartiennent à aucune barre de navigation : on y arrive par le pied de
+ * page, ou par un lien depuis l'extérieur. D'où le type séparé, dont
+ * `AppViewId` est le complément : ce qui peut porter une icône et une entrée
+ * d'onglet.
+ */
+export type LegalViewId = "privacy" | "terms" | "legal";
+
+/** Les vues de l'application proprement dite : tout sauf les pages légales. */
+export type AppViewId = Exclude<ViewId, LegalViewId>;
+
+/** Les trois pages légales, dans l'ordre où le pied de page les affiche. */
+export const LEGAL_VIEWS: readonly LegalViewId[] = ["privacy", "terms", "legal"];
+
+const LEGAL_VIEW_SET: ReadonlySet<string> = new Set(LEGAL_VIEWS);
+
+/** Cette vue est-elle un document légal ? */
+export function isLegalView(view: ViewId): view is LegalViewId {
+  return LEGAL_VIEW_SET.has(view);
+}
 
 /**
  * Les deux sous-vues de Perfs.
@@ -78,6 +102,9 @@ const PATHS: Readonly<Record<ViewId, string>> = {
   profile: "profil",
   admin: "administration",
   auth: "connexion",
+  privacy: "confidentialite",
+  terms: "cgu",
+  legal: "mentions-legales",
 };
 
 interface PathSpec {
@@ -121,7 +148,7 @@ export function viewRoute(view: ViewId): Route {
 }
 
 export interface NavItem {
-  readonly view: ViewId;
+  readonly view: AppViewId;
   readonly label: string;
 }
 
@@ -154,12 +181,23 @@ export const NAV_ITEMS: readonly NavItem[] = [
 export const ADMIN_ROUTE: Route = viewRoute("admin");
 
 /**
- * Une vue exige-t-elle une session ? Tout sauf la page de connexion : la
- * réponse est en liste blanche, pour qu'une vue ajoutée plus tard soit
- * protégée par défaut plutôt que publique par oubli.
+ * Les vues accessibles **sans session**, et la raison de chacune.
+ *
+ * - `auth` : la page de connexion, évidemment — c'est par elle qu'on obtient
+ *   une session ;
+ * - `privacy`, `terms`, `legal` : les trois documents légaux. Ils doivent être
+ *   lisibles *avant* de créer un compte, puisque c'est en les acceptant qu'on
+ *   s'inscrit, et rester lisibles par un visiteur qui n'en créera jamais — un
+ *   document légal derrière un mur d'authentification n'est pas publié.
+ *
+ * La liste est **blanche** et non noire : une vue ajoutée demain est protégée
+ * par défaut, et ne devient publique que si quelqu'un l'écrit ici.
  */
+const PUBLIC_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["auth", ...LEGAL_VIEWS]);
+
+/** Une vue exige-t-elle une session ? Tout ce qui n'est pas public. */
 export function requiresSession(view: ViewId): boolean {
-  return view !== "auth";
+  return !PUBLIC_VIEWS.has(view);
 }
 
 /**

@@ -4,6 +4,8 @@ import {
   AUTH_ROUTE,
   canonicalHash,
   DEFAULT_ROUTE,
+  isLegalView,
+  LEGAL_VIEWS,
   NAV_ITEMS,
   parseRoute,
   type Route,
@@ -13,7 +15,20 @@ import {
   viewRoute,
 } from "./route";
 
-const ALL_VIEWS: readonly ViewId[] = ["home", "perfs", "coach", "profile", "admin", "auth"];
+const ALL_VIEWS: readonly ViewId[] = [
+  "home",
+  "perfs",
+  "coach",
+  "profile",
+  "admin",
+  "auth",
+  "privacy",
+  "terms",
+  "legal",
+];
+
+/** Les vues qu'un visiteur sans session doit pouvoir ouvrir. */
+const PUBLIC_VIEWS: readonly ViewId[] = ["auth", "privacy", "terms", "legal"];
 
 describe("parseRoute", () => {
   it("retombe sur l'accueil quand le hash est absent, vide ou inconnu", () => {
@@ -29,6 +44,9 @@ describe("parseRoute", () => {
     expect(parseRoute("#/profil").view).toBe("profile");
     expect(parseRoute("#/administration").view).toBe("admin");
     expect(parseRoute("#/connexion").view).toBe("auth");
+    expect(parseRoute("#/confidentialite").view).toBe("privacy");
+    expect(parseRoute("#/cgu").view).toBe("terms");
+    expect(parseRoute("#/mentions-legales").view).toBe("legal");
   });
 
   it("ignore les paramètres inconnus", () => {
@@ -252,15 +270,53 @@ describe("routeHash", () => {
 });
 
 describe("requiresSession", () => {
-  it("protège toutes les sections sauf la page de connexion", () => {
+  it("protège toutes les sections sauf la liste blanche publique", () => {
     for (const view of ALL_VIEWS) {
-      expect(requiresSession(view), view).toBe(view !== "auth");
+      expect(requiresSession(view), view).toBe(!PUBLIC_VIEWS.includes(view));
     }
   });
 
   it("laisse passer la route de connexion et protège la route par défaut", () => {
     expect(requiresSession(AUTH_ROUTE.view)).toBe(false);
     expect(requiresSession(DEFAULT_ROUTE.view)).toBe(true);
+  });
+
+  /**
+   * Le cœur de la vague 3.5 : ces trois documents s'acceptent à l'inscription,
+   * donc ils se lisent avant d'avoir un compte. Sous un mur d'authentification,
+   * ils ne seraient pas publiés.
+   */
+  it("ouvre les trois pages légales à un visiteur sans session", () => {
+    for (const hash of ["#/confidentialite", "#/cgu", "#/mentions-legales"]) {
+      expect(requiresSession(parseRoute(hash).view), hash).toBe(false);
+    }
+  });
+
+  it("ne rend publique aucune vue de l'application", () => {
+    for (const view of ALL_VIEWS.filter((candidate) => candidate !== "auth")) {
+      expect(requiresSession(view), view).toBe(!isLegalView(view));
+    }
+  });
+});
+
+describe("pages légales", () => {
+  it("reconnaît les trois documents, et rien d'autre", () => {
+    expect(LEGAL_VIEWS).toEqual(["privacy", "terms", "legal"]);
+    for (const view of ALL_VIEWS) {
+      expect(isLegalView(view), view).toBe(LEGAL_VIEWS.includes(view as never));
+    }
+  });
+
+  it("leur donne une adresse française, lisible et stable", () => {
+    expect(routeHash(viewRoute("privacy"))).toBe("#/confidentialite");
+    expect(routeHash(viewRoute("terms"))).toBe("#/cgu");
+    expect(routeHash(viewRoute("legal"))).toBe("#/mentions-legales");
+  });
+
+  it("les laisse hors de la navigation permanente", () => {
+    for (const item of NAV_ITEMS) {
+      expect(isLegalView(item.view), item.view).toBe(false);
+    }
   });
 });
 

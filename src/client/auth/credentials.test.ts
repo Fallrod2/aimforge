@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AuthMode,
   MIN_PASSWORD_LENGTH,
+  needsConsent,
   needsPassword,
   validateCredentials,
 } from "./credentials";
@@ -13,6 +14,14 @@ describe("needsPassword", () => {
     expect(needsPassword("reset")).toBe(false);
     expect(needsPassword("signin")).toBe(true);
     expect(needsPassword("signup")).toBe(true);
+  });
+});
+
+describe("needsConsent", () => {
+  it("ne demande le consentement qu'à la création du compte", () => {
+    expect(needsConsent("signup")).toBe(true);
+    expect(needsConsent("signin")).toBe(false);
+    expect(needsConsent("reset")).toBe(false);
   });
 });
 

@@ -6,6 +6,7 @@
  * (cf. `requiresSession` dans `route.ts`).
  */
 
+import { LegalFooter } from "../legal/LegalFooter";
 import { AUTH_ROUTE, routeHash } from "../route";
 
 const AUTH_HASH = routeHash(AUTH_ROUTE);
@@ -39,7 +40,7 @@ const MODULES: readonly Module[] = [
 
 export function LandingView() {
   return (
-    <div className="min-h-dvh">
+    <div className="flex min-h-dvh flex-col">
       <header className="border-b border-steel-800">
         <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-4 sm:px-6">
           <span className="font-mono text-lg font-semibold tracking-tight text-ember-500">
@@ -54,7 +55,7 @@ export function LandingView() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
+      <main className="mx-auto w-full max-w-5xl grow px-4 py-12 sm:px-6 sm:py-16">
         <section className="max-w-2xl">
           <p className="text-[11px] font-medium tracking-[0.18em] text-ember-500 uppercase">
             Entraînement aim · FPS compétitifs
@@ -103,6 +104,10 @@ export function LandingView() {
           Tes données t'appartiennent : chaque compte ne lit et n'écrit que ses propres lignes.
         </p>
       </main>
+
+      {/* Les trois documents sont accessibles sans compte : c'est ici, avant
+          l'inscription, qu'on doit pouvoir les lire. */}
+      <LegalFooter />
     </div>
   );
 }

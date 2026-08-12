@@ -15,7 +15,8 @@
 import type { ReactNode } from "react";
 import { useIsAdmin } from "../admin/useIsAdmin";
 import { useAuth } from "../auth/AuthProvider";
-import { NAV_ITEMS, type Route, routeHash, type ViewId, viewRoute } from "../route";
+import { LegalFooter } from "../legal/LegalFooter";
+import { type AppViewId, NAV_ITEMS, type Route, routeHash, type ViewId, viewRoute } from "../route";
 
 interface AppLayoutProps {
   readonly route: Route;
@@ -29,7 +30,12 @@ interface AppLayoutProps {
  */
 const BOTTOM_BAR_HEIGHT = "h-16";
 
-const ICONS: Readonly<Record<ViewId, string>> = {
+/**
+ * Une icône par vue de l'application — `AppViewId` et non `ViewId` : les trois
+ * documents légaux n'ont ni entrée d'onglet ni icône, ils vivent dans le pied
+ * de page. Le registre reste ainsi total, sans entrées mortes.
+ */
+const ICONS: Readonly<Record<AppViewId, string>> = {
   home: "M4 4h7v7H4zM13 4h7v4h-7zM13 11h7v9h-7zM4 14h7v6H4z",
   // Une courbe montante : Perfs porte la saisie **et** l'historique, et c'est
   // la progression qui les relie. Un réticule n'aurait parlé que de la saisie.
@@ -41,7 +47,7 @@ const ICONS: Readonly<Record<ViewId, string>> = {
   auth: "M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l4-4-4-4M14 12H4",
 };
 
-function Icon({ view }: { readonly view: ViewId }) {
+function Icon({ view }: { readonly view: AppViewId }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -133,8 +139,15 @@ export function AppLayout({ route, children }: AppLayoutProps) {
         </div>
       </header>
 
-      {/* Le décalage bas laisse défiler le contenu au-dessus de la barre du pouce. */}
-      <main className="mx-auto max-w-5xl px-4 py-6 pb-24 sm:px-6 sm:py-8 lg:pb-8">{children}</main>
+      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">{children}</main>
+
+      {/* Le pied de page légal ferme le document, et porte désormais le
+          décalage bas qui laisse défiler le contenu au-dessus de la barre du
+          pouce : c'est lui le dernier élément de la page, plus `<main>`. Le
+          `pb-16` vaut exactement `BOTTOM_BAR_HEIGHT`, et disparaît en `lg` avec
+          la barre. Il reste discret — une obligation de publication, pas une
+          navigation. */}
+      <LegalFooter className="pb-16 lg:pb-0" />
 
       <nav
         aria-label="Sections"
@@ -157,7 +170,8 @@ export function AppLayout({ route, children }: AppLayoutProps) {
 }
 
 interface LinkProps {
-  readonly view: ViewId;
+  /** Une vue de l'application : un document légal ne s'affiche pas en onglet. */
+  readonly view: AppViewId;
   readonly label: string;
   readonly active: ViewId;
 }

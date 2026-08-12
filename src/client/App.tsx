@@ -25,7 +25,11 @@
  *   ses figures ne sont téléchargées qu'à l'ouverture de son repli ;
  * - **l'administration**, parce que presque personne ne l'ouvrira jamais : elle
  *   n'existe que pour les administrateurs (SPEC §5 quater), et il n'y a aucune
- *   raison de la faire télécharger à tous les autres.
+ *   raison de la faire télécharger à tous les autres ;
+ * - **les trois documents légaux** (`legal/pages`), pour la même raison : du
+ *   texte long, ouvert une fois, qui n'a rien à faire dans le premier
+ *   chargement. Ils sont en revanche **publics** — la garde d'authentification
+ *   les laisse passer, sans session comme avec.
  *
  * Le reste est en import statique : ces vues ne pèsent que leur propre code, et
  * les découper coûterait un aller-retour réseau à chaque onglet pour rien.
@@ -40,11 +44,14 @@ import { RecoveryView } from "./auth/RecoveryView";
 import { CoachSpace } from "./coach/CoachSpace";
 import { DashboardView } from "./dashboard/DashboardView";
 import { LandingView } from "./landing/LandingView";
+import { LegalShell } from "./legal/LegalShell";
+import { LEGAL_PAGES } from "./legal/pages";
 import { PerfsView } from "./perfs/PerfsView";
 import { ProfileView } from "./profile/ProfileView";
 import {
   canonicalHash,
   DEFAULT_ROUTE,
+  isLegalView,
   parseRoute,
   type Route,
   type RouteTarget,
@@ -116,10 +123,13 @@ function Routed() {
   const guarded = requiresSession(route.view);
 
   useEffect(() => {
-    // Connecté sur une vue publique (la page de connexion) : elle n'a plus
-    // rien à demander, on renvoie sur l'accueil de l'application.
-    if (authenticated && !guarded) navigate(DEFAULT_ROUTE);
-  }, [authenticated, guarded, navigate]);
+    // Connecté sur la page de connexion : elle n'a plus rien à demander, on
+    // renvoie sur l'accueil de l'application. La condition porte sur `auth` et
+    // non sur « vue publique » : les pages légales sont publiques elles aussi,
+    // et un utilisateur connecté qui ouvre les CGU doit les lire, pas se faire
+    // rediriger vers l'accueil.
+    if (authenticated && route.view === "auth") navigate(DEFAULT_ROUTE);
+  }, [authenticated, route.view, navigate]);
 
   // La session stockée n'est pas encore relue : afficher quoi que ce soit
   // ferait clignoter la landing sous un utilisateur déjà connecté.
@@ -129,7 +139,24 @@ function Routed() {
   // qu'à choisir le nouveau mot de passe, jamais à parcourir l'application.
   if (recovering) return <RecoveryView />;
 
-  if (!authenticated) return guarded ? <LandingView /> : <AuthView />;
+  if (!authenticated) {
+    // Les documents légaux sont publics (cf. `requiresSession`) : sans session
+    // ils s'affichent dans leur propre coque, puisqu'il n'y a pas d'`AppLayout`
+    // pour les porter. Une fois connecté, ils passent par `View`, comme les
+    // autres vues.
+    if (isLegalView(route.view)) {
+      const LegalPage = LEGAL_PAGES[route.view];
+
+      return (
+        <LegalShell>
+          <Suspense fallback={<ViewLoading />}>
+            <LegalPage />
+          </Suspense>
+        </LegalShell>
+      );
+    }
+    return guarded ? <LandingView /> : <AuthView />;
+  }
 
   return (
     // Le benchmark actif est une préférence du profil (DECISIONS.md D6) : il se
@@ -155,6 +182,15 @@ interface ViewProps {
 }
 
 function View({ route, navigate }: ViewProps) {
+  // Avant le `switch` : les trois documents légaux ne sont pas des sections de
+  // l'application mais des pages qu'elle héberge, et leur composant vient d'un
+  // registre différé plutôt que d'une branche écrite ici (cf. `legal/pages`).
+  if (isLegalView(route.view)) {
+    const LegalPage = LEGAL_PAGES[route.view];
+
+    return <LegalPage />;
+  }
+
   switch (route.view) {
     case "perfs":
       return (

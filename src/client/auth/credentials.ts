@@ -31,6 +31,20 @@ export function needsPassword(mode: AuthMode): boolean {
 }
 
 /**
+ * Le consentement aux documents légaux n'est demandé qu'à la **création** du
+ * compte : c'est là que le contrat se forme. Se reconnecter ou demander un
+ * lien de réinitialisation n'engage rien de nouveau, et redemander la case à
+ * chaque connexion la transformerait en réflexe — c'est-à-dire en rien.
+ */
+export function needsConsent(mode: AuthMode): boolean {
+  return mode === "signup";
+}
+
+/** Ce que dit le formulaire quand la case n'est pas cochée. */
+export const CONSENT_REQUIRED =
+  "Pour créer un compte, accepte la politique de confidentialité et les CGU.";
+
+/**
  * Le premier problème bloquant de la saisie, prêt à afficher, ou `null` si
  * elle peut partir au serveur.
  */

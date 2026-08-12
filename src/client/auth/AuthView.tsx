@@ -9,10 +9,17 @@
 import { type FormEvent, useState } from "react";
 import { Notice } from "../components/Notice";
 import { Segmented } from "../components/Segmented";
+import { legalHash } from "../legal/documents";
 import { DEFAULT_ROUTE, routeHash } from "../route";
 import { supabase } from "../supabase/client";
 import { authErrorMessage } from "./auth-errors";
-import { type AuthMode, needsPassword, validateCredentials } from "./credentials";
+import {
+  type AuthMode,
+  CONSENT_REQUIRED,
+  needsConsent,
+  needsPassword,
+  validateCredentials,
+} from "./credentials";
 import { OAUTH_PROVIDERS, type OAuthProvider, startOAuth } from "./oauth";
 
 type Feedback =
@@ -41,8 +48,21 @@ export function AuthView() {
   const [mode, setMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  /**
+   * Le consentement aux documents légaux, à l'inscription.
+   *
+   * Il n'est **pas enregistré** en base, et c'est un choix : la preuve du
+   * consentement est la date de création du compte, puisqu'on ne peut pas
+   * créer de compte sans cocher la case et que les documents portent leur
+   * propre date de version. Une colonne `consented_at` recopierait
+   * `created_at` en prétendant dire autre chose. Le jour où les documents
+   * changeront de façon substantielle, c'est une acceptation *dans
+   * l'application* qu'il faudra tracer — et elle, elle aura sa table.
+   */
+  const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState<"form" | OAuthProvider["id"] | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const consentMissing = needsConsent(mode) && !consent;
 
   function changeMode(next: AuthMode): void {
     setMode(next);
@@ -51,6 +71,14 @@ export function AuthView() {
 
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
+
+    // Le bouton est déjà désactivé dans ce cas : la garde est ici pour que
+    // l'inscription ne parte pas si un chemin détourné (soumission implicite,
+    // extension, `form.requestSubmit()`) contournait le bouton.
+    if (consentMissing) {
+      setFeedback({ tone: "error", text: CONSENT_REQUIRED });
+      return;
+    }
 
     const problem = validateCredentials(mode, email, password);
 
@@ -120,6 +148,12 @@ export function AuthView() {
               {busy === provider.id ? "Ouverture…" : `Continuer avec ${provider.label}`}
             </button>
           ))}
+          {/* Pour l'OAuth, pas de case à cocher : le geste d'inscription est le
+              clic lui-même, et il n'y a pas de bouton distinct à désactiver.
+              La mention précède donc l'action, comme le veut l'usage. */}
+          <p className="text-[11px] leading-relaxed text-steel-500">
+            En continuant, tu acceptes la <PrivacyLink /> et les <TermsLink />.
+          </p>
         </div>
 
         <div className="flex items-center gap-3 text-[11px] tracking-[0.18em] text-steel-600 uppercase">
@@ -152,9 +186,24 @@ export function AuthView() {
             />
           ) : null}
 
+          {needsConsent(mode) ? (
+            <label htmlFor="consent" className="flex items-start gap-3 text-xs text-steel-400">
+              <input
+                id="consent"
+                type="checkbox"
+                checked={consent}
+                onChange={(event) => setConsent(event.target.checked)}
+                className="mt-0.5 size-4 shrink-0 accent-ember-600"
+              />
+              <span className="leading-relaxed">
+                J'ai lu et j'accepte la <PrivacyLink /> et les <TermsLink />.
+              </span>
+            </label>
+          ) : null}
+
           <button
             type="submit"
-            disabled={busy !== null}
+            disabled={busy !== null || consentMissing}
             className="rounded-lg bg-ember-600 px-4 py-3 text-sm font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
           >
             {busy === "form" ? "Un instant…" : SUBMIT_LABEL[mode]}
@@ -226,6 +275,34 @@ async function run(mode: AuthMode, email: string, password: string): Promise<Fee
     // transformerait ce formulaire en détecteur d'adresses inscrites.
     text: `Si un compte existe pour ${email}, un lien de réinitialisation vient d'y être envoyé.`,
   };
+}
+
+/**
+ * Les deux liens légaux du formulaire : même allure, deux composants, pour que
+ * l'adresse vienne du routeur (`legalHash`) et non d'un `#/cgu` recopié.
+ *
+ * **Nouvel onglet**, à la différence des liens du pied de page : ouvrir un
+ * document dans l'onglet courant démonterait ce formulaire, et l'email, le mot
+ * de passe et la case cochée partiraient avec lui. Aller lire ce qu'on accepte
+ * ne doit pas coûter la saisie en cours.
+ */
+const LEGAL_LINK_CLASS =
+  "text-steel-300 underline underline-offset-2 transition-colors hover:text-ember-400";
+
+function PrivacyLink() {
+  return (
+    <a href={legalHash("privacy")} target="_blank" rel="noreferrer" className={LEGAL_LINK_CLASS}>
+      politique de confidentialité
+    </a>
+  );
+}
+
+function TermsLink() {
+  return (
+    <a href={legalHash("terms")} target="_blank" rel="noreferrer" className={LEGAL_LINK_CLASS}>
+      CGU
+    </a>
+  );
 }
 
 interface FieldProps {
