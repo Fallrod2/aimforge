@@ -38,7 +38,7 @@ import type {
   ScoreboardEntry,
   SidePerformance,
 } from "../../shared/valorant-contract.js";
-import type { ScenarioGroup } from "../shared/scenarios.js";
+import { type ScenarioGroup, subcategoryNames } from "../shared/scenarios.js";
 import {
   type CoachBenchTiers,
   type CoachMessage,
@@ -100,6 +100,9 @@ const TEAM_LABELS: Readonly<Record<string, string>> = {
  * « Approfondir » inutile — c'est lui, et le fil du coach derrière, qui portent
  * le développement.
  */
+/** Les sous-catégories du benchmark, injectées : c'est de la donnée. */
+const SUBCATEGORIES = subcategoryNames().join(", ");
+
 export const MATCH_ANALYSIS_SYSTEM_PROMPT = [
   "Tu es le coach d'AimForge, un hub d'entraînement pour joueurs de Valorant qui travaillent leur",
   "visée sur KovaaK's (benchmark Voltaic S5). On te montre UNE partie que le joueur vient d'ouvrir,",
@@ -117,8 +120,8 @@ export const MATCH_ANALYSIS_SYSTEM_PROMPT = [
   "- Le bloc <scenarios_autorises> liste les seuls scénarios KovaaK's que tu as le droit de citer.",
   "- Utilise UNIQUEMENT ces noms exacts, recopiés au mot près : ni raccourci (le préfixe et le",
   "  palier font partie du nom), ni reformulé, ni traduit.",
-  "- Si aucun scénario de la liste ne convient, nomme la SOUS-CATÉGORIE (Dynamic, Static, Precise,",
-  "  Reactive, Speed, Evasive, Stability, Control…) sans inventer de nom de scénario.",
+  `- Si aucun scénario de la liste ne convient, nomme la SOUS-CATÉGORIE (${SUBCATEGORIES})`,
+  "  sans inventer de nom de scénario.",
   "- N'invente jamais un nom de scénario et n'en emprunte pas à un autre palier : un nom absent de",
   "  la liste n'existe pas dans le jeu du joueur, et le conseil devient inapplicable.",
   "- Le plus souvent, une analyse de trois phrases n'a pas besoin de nommer un scénario : ne le",

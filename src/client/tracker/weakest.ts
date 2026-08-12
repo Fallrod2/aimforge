@@ -11,7 +11,14 @@
  * doit le dire au lieu de le laisser deviner.
  */
 
-import { type ComputedSubcategory, getTier, TIER_IDS, type TierId } from "../../lib/energy";
+import {
+  type BenchmarkId,
+  type ComputedSubcategory,
+  currentBenchmark,
+  getTier,
+  type TierId,
+  tierIdsFor,
+} from "../../lib/energy";
 
 /** Combien de sous-catégories on nomme : assez pour orienter, pas pour noyer. */
 export const WEAKEST_COUNT = 3;
@@ -24,9 +31,19 @@ export type WeakestView =
   /** Les 9 sous-catégories sont au plafond ; `next` est le palier d'après. */
   | { readonly kind: "capped"; readonly next: TierId | null };
 
-/** Le palier suivant dans la progression Voltaic, `null` après Advanced. */
-export function nextTierAfter(tier: TierId): TierId | null {
-  return TIER_IDS[TIER_IDS.indexOf(tier) + 1] ?? null;
+/**
+ * Le palier suivant dans la progression du benchmark, `null` après le dernier.
+ *
+ * L'ordre vient du benchmark : « après Advanced il n'y a rien » est un fait de
+ * Voltaic, pas du domaine (DECISIONS.md D5).
+ */
+export function nextTierAfter(
+  tier: TierId,
+  benchmarkId: BenchmarkId = currentBenchmark(),
+): TierId | null {
+  const tiers = tierIdsFor(benchmarkId);
+
+  return tiers[tiers.indexOf(tier) + 1] ?? null;
 }
 
 /**

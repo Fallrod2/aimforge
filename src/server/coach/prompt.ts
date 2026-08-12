@@ -30,8 +30,8 @@
  * demande la **sous-catégorie**, qui est un repli légitime et vérifiable.
  */
 
-import type { SeasonId, TierId } from "../../lib/energy/index.js";
-import type { ScenarioGroup } from "../shared/scenarios.js";
+import type { BenchmarkId, TierId } from "../../lib/energy/index.js";
+import { type ScenarioGroup, subcategoryNames } from "../shared/scenarios.js";
 
 const OPEN = "<stats_utilisateur>";
 const CLOSE = "</stats_utilisateur>";
@@ -128,7 +128,7 @@ export interface CoachBenchSummary {
  * La dernière passe d'un palier, résumée : le résumé du coach, plus ce qui
  * permet de répondre à « où j'en suis sur ce palier ? ».
  *
- * La **saison** est celle de la passe et n'a pas à être celle des autres
+ * Le **benchmark** est celui de la passe et n'a pas à être celui des autres
  * paliers : un joueur peut avoir terminé son Novice en S5 et attaquer son
  * Advanced en S6. Elle est affichée pour que le modèle ne compare pas deux
  * énergies qui ne se comparent pas.
@@ -139,7 +139,8 @@ export interface CoachBenchSummary {
  * cours.
  */
 export interface CoachTierBench extends CoachBenchSummary {
-  readonly season: SeasonId;
+  /** Le benchmark de la passe : chaque palier garde le sien. */
+  readonly benchmarkId: BenchmarkId;
   /** Scénarios renseignés dans la passe. */
   readonly filled: number;
   /** Scénarios du palier (18 sur le benchmark Voltaic). */
@@ -181,6 +182,9 @@ export interface CoachContext {
  * Il est constant — aucune donnée utilisateur n'y entre, sinon la frontière
  * décrite en tête de module n'existerait plus.
  */
+/** Les sous-catégories du benchmark, injectées : c'est de la donnée. */
+const SUBCATEGORIES = subcategoryNames().join(", ");
+
 export const COACH_SYSTEM_PROMPT = [
   "Tu es le coach post-game d'AimForge, un hub d'entraînement pour joueurs de Valorant qui",
   "travaillent leur visée sur KovaaK's (benchmark Voltaic S5).",
@@ -194,8 +198,8 @@ export const COACH_SYSTEM_PROMPT = [
   "- Quand tu recommandes un scénario, utilise UNIQUEMENT ces noms exacts, recopiés au mot près",
   "  depuis la liste : ni raccourci (le préfixe et le palier font partie du nom), ni reformulé, ni",
   "  traduit.",
-  "- Si aucun scénario de la liste ne convient, recommande la SOUS-CATÉGORIE (Dynamic, Static,",
-  "  Precise, Reactive, Speed, Evasive, Stability, Control…) sans inventer de nom de scénario.",
+  `- Si aucun scénario de la liste ne convient, recommande la SOUS-CATÉGORIE (${SUBCATEGORIES})`,
+  "  sans inventer de nom de scénario.",
   "- N'invente jamais un nom de scénario et n'en emprunte pas à un autre palier : un nom absent de",
   "  la liste n'existe pas dans le jeu du joueur, et le conseil devient inapplicable.",
   "- Les conseils sans scénario (échauffement libre, deathmatch, range, placement de viseur,",
@@ -292,7 +296,7 @@ function formatTierBench(bench: CoachTierBench): string {
           .join(" | ");
 
   return [
-    `- Palier ${bench.tierLabel} · saison ${bench.season} · passe du ${bench.date}`,
+    `- Palier ${bench.tierLabel} · saison ${bench.benchmarkId} · passe du ${bench.date}`,
     `  Complétude : ${bench.filled}/${bench.total} scénarios renseignés${complete}`,
     `  Overall : ${overall} · rang ${rank}`,
     `  Sous-catégories les plus faibles : ${weakest}`,

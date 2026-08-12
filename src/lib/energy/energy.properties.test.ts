@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_BENCHMARK_ID,
   getTier,
   overallEnergy,
   type Scenario,
   scenarioEnergy,
   subcategoryEnergy,
-  TIER_IDS,
   type TierId,
+  tierIdsFor,
 } from "./index";
+
+/**
+ * Les paliers du benchmark de référence. Ce n'est plus une constante de type :
+ * la liste appartient au benchmark, et se lit dans le registre (DECISIONS.md D5).
+ */
+const TIER_IDS = tierIdsFor(DEFAULT_BENCHMARK_ID);
 
 interface ScenarioRef {
   readonly tierId: TierId;

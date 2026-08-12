@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_BENCHMARK_ID } from "./../lib/energy";
 import {
   formatChartDate,
   formatDelta,
@@ -82,5 +83,11 @@ describe("scenarioLabel", () => {
 
   it("laisse intact un nom qui ne suit pas la convention", () => {
     expect(scenarioLabel("Custom Scenario", "Novice")).toBe("Custom Scenario");
+  });
+
+  it("lit la grammaire du benchmark passé, pas une règle d'affichage en dur", () => {
+    // Une passe d'historique porte son benchmark : c'est le sien qui dit ce
+    // qu'il faut retirer, pas celui d'aujourd'hui.
+    expect(scenarioLabel("VT Pasu Novice", "Novice", DEFAULT_BENCHMARK_ID)).toBe("Pasu");
   });
 });

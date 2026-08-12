@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_BENCHMARK_ID,
   EnergyError,
   getScenario,
   getSubcategory,
   getTier,
-  TIER_IDS,
   TIERS,
   type TierId,
+  tierIdsFor,
 } from "./index";
+
+/**
+ * Les paliers du benchmark de référence. Ce n'est plus une constante de type :
+ * la liste appartient au benchmark, et se lit dans le registre (DECISIONS.md D5).
+ */
+const TIER_IDS = tierIdsFor(DEFAULT_BENCHMARK_ID);
 
 // Ces tests verrouillent les invariants de voltaic-s5-data.json : le moteur
 // suppose 3 paliers x 9 sous-catégories x 2 scénarios, des seuils strictement

@@ -4,8 +4,27 @@
  * seuil écrit en dur ici (règle du projet : le JSON est la source de vérité).
  */
 
+import { type BenchmarkDefinition, type BenchmarkId, getBenchmark } from "./benchmarks.js";
 import { getTier, listScenarios } from "./data.js";
 import type { TierId } from "./types.js";
+
+/**
+ * Une définition de benchmark factice, dérivée de celle du benchmark de
+ * référence.
+ *
+ * Trois fichiers de test ont besoin d'un second benchmark (le verrou de
+ * relecture, le branchement de formule, l'exclusion des `incomplete`). Écrire
+ * trois littéraux complets, c'est trois endroits à retoucher au prochain champ
+ * ajouté à `BenchmarkDefinition` — et deux occasions de laisser un test mentir
+ * en oubliant d'en mettre un à jour.
+ */
+export function benchmarkLike(
+  base: BenchmarkId,
+  id: BenchmarkId,
+  overrides: Partial<BenchmarkDefinition> = {},
+): BenchmarkDefinition {
+  return { ...getBenchmark(base), id, ...overrides };
+}
 
 /**
  * Les 18 scores d'un palier posés **pile** sur le seuil d'une ancre

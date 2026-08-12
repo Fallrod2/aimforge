@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { clearTier, draftScores, emptyDraft, parseScoreInput, setScoreInput } from "./draft";
+import {
+  clearTier,
+  draftScores,
+  emptyDraft,
+  parseScoreInput,
+  setScoreInput,
+  tierDraft,
+} from "./draft";
 
 const PASU = "VT Pasu Novice";
 const POPCORN = "VT Popcorn Novice";
@@ -46,23 +53,23 @@ describe("setScoreInput", () => {
       "900",
     );
 
-    expect(draft.novice[PASU]).toBe("807");
-    expect(draft.intermediate["VT Pasu Intermediate"]).toBe("900");
-    expect(draft.advanced).toEqual({});
+    expect(tierDraft(draft, "novice")[PASU]).toBe("807");
+    expect(tierDraft(draft, "intermediate")["VT Pasu Intermediate"]).toBe("900");
+    expect(tierDraft(draft, "advanced")).toEqual({});
   });
 
   it("efface le scénario quand la saisie repasse à vide", () => {
     const filled = setScoreInput(emptyDraft(), "novice", PASU, "807");
     const emptied = setScoreInput(filled, "novice", PASU, "");
 
-    expect(emptied.novice).toEqual({});
+    expect(tierDraft(emptied, "novice")).toEqual({});
   });
 
   it("ne mute pas le brouillon reçu", () => {
     const before = setScoreInput(emptyDraft(), "novice", PASU, "807");
 
     setScoreInput(before, "novice", POPCORN, "500");
-    expect(before.novice).toEqual({ [PASU]: "807" });
+    expect(tierDraft(before, "novice")).toEqual({ [PASU]: "807" });
   });
 });
 
@@ -76,8 +83,8 @@ describe("clearTier", () => {
     );
     const cleared = clearTier(draft, "novice");
 
-    expect(cleared.novice).toEqual({});
-    expect(cleared.advanced).toEqual({ "VT Pasu Advanced": "1000" });
+    expect(tierDraft(cleared, "novice")).toEqual({});
+    expect(tierDraft(cleared, "advanced")).toEqual({ "VT Pasu Advanced": "1000" });
   });
 });
 

@@ -17,9 +17,9 @@
  */
 
 import {
+  type BenchmarkId,
   computeBenchRun,
-  currentSeason,
-  type SeasonId,
+  currentBenchmark,
   scenarioNames,
   type TierId,
 } from "../../lib/energy";
@@ -34,6 +34,16 @@ import {
 import { currentUserId } from "./session";
 import type { BenchRunDetail, BenchRunSummary, BenchSource, SaveBenchRunInput } from "./types";
 
+/**
+ * La colonne du benchmark s'appelle encore `season`.
+ *
+ * La migration `0017` a ajouté `benchmark_id` et un trigger qui garde les deux
+ * colonnes identiques, précisément pour que le client déployé continue de
+ * fonctionner pendant la bascule ; `0018` supprimera `season` **après** le
+ * déploiement de ce code (expand/contract). Tant que ce n'est pas fait, on lit
+ * et on écrit `season` — le champ métier, lui, s'appelle `benchmarkId` partout
+ * ailleurs, et la traduction vit dans `mapping.ts` et dans `supabaseStore`.
+ */
 const RUN_COLUMNS = "id, date, tier, overall, rank, complete, source, season";
 const SCORE_COLUMNS = "scenario, score, energy";
 
@@ -54,8 +64,8 @@ export interface BenchRunStore {
     readonly rank: string | null;
     readonly complete: boolean;
     readonly source: BenchSource;
-    /** Saison Voltaic estampillée à l'écriture ; jamais déduite à la lecture. */
-    readonly season: SeasonId;
+    /** Benchmark estampillé à l'écriture ; jamais déduit à la lecture. */
+    readonly benchmarkId: BenchmarkId;
   }): Promise<BenchRunRow>;
   /** Insère les scores d'une passe, en un seul lot. */
   insertScores(runId: number, scores: readonly ScenarioScoreRow[]): Promise<void>;
@@ -97,10 +107,10 @@ export async function saveBenchRunTo(
     // Une passe dont personne n'a dit d'où elle vient a été tapée à la main :
     // c'est le seul défaut qui ne surestime pas ce qu'on sait de la donnée.
     source: input.source ?? "manual",
-    // La saison n'est pas un choix de l'appelant : on enregistre ce qui est
+    // Le benchmark n'est pas un choix de l'appelant : on enregistre ce qui est
     // joué aujourd'hui, avec les seuils qui ont servi à calculer les énergies
     // trois lignes plus haut (SPEC §5 quinquies).
-    season: currentSeason(),
+    benchmarkId: currentBenchmark(),
   });
 
   try {
@@ -141,7 +151,8 @@ function supabaseStore(userId: string): BenchRunStore {
           rank: run.rank,
           complete: run.complete,
           source: run.source,
-          season: run.season,
+          // Le seul endroit où le champ métier redevient le nom de la colonne.
+          season: run.benchmarkId,
         })
         .select(RUN_COLUMNS)
         .single();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MatchSummary } from "../../client/data/linked-accounts-contract";
-import { CURRENT_SEASON } from "../../lib/energy";
+import { DEFAULT_BENCHMARK_ID } from "../../lib/energy";
 import { DEBRIEF_SUGGESTION_MARKER } from "../../shared/coach-thread-contract";
 import { scenarioCatalog } from "../shared/scenarios";
 import type { CoachBenchTiers, CoachProfile, CoachTierBench } from "./prompt";
@@ -26,7 +26,7 @@ const PROFILE: CoachProfile = {
 const NOVICE: CoachTierBench = {
   tier: "novice",
   tierLabel: "Novice",
-  season: CURRENT_SEASON,
+  benchmarkId: DEFAULT_BENCHMARK_ID,
   date: "2026-06-12T18:30:00.000Z",
   overall: 812.4,
   rank: "Gold",
@@ -42,7 +42,7 @@ const NOVICE: CoachTierBench = {
 const INTERMEDIATE: CoachTierBench = {
   tier: "intermediate",
   tierLabel: "Intermediate",
-  season: CURRENT_SEASON,
+  benchmarkId: DEFAULT_BENCHMARK_ID,
   date: "2026-08-01T18:30:00.000Z",
   overall: 612.3,
   rank: "Diamond",

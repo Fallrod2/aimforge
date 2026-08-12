@@ -31,7 +31,7 @@
  */
 
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { CURRENT_SEASON } from "../../lib/energy";
+import { DEFAULT_BENCHMARK_ID } from "../../lib/energy";
 import { Notice } from "../components/Notice";
 import {
   type BenchRunSummary,
@@ -215,7 +215,8 @@ function Live({ account }: { readonly account: LinkedAccount }) {
     [response, period],
   );
   const bridge = useMemo(
-    () => (response === null ? null : buildBridge(runs, response.stats.trend, CURRENT_SEASON)),
+    () =>
+      response === null ? null : buildBridge(runs, response.stats.trend, DEFAULT_BENCHMARK_ID),
     [runs, response],
   );
 
@@ -380,7 +381,7 @@ function BridgeSection({ bridge }: { readonly bridge: Bridge | null }) {
           <Suspense fallback={<ChartsLoading height="h-72" />}>
             <BridgeChart
               bridge={bridge}
-              season={CURRENT_SEASON}
+              benchmarkId={DEFAULT_BENCHMARK_ID}
               benchDomain={paddedDomain(
                 bridge.bench.map((point) => point.value),
                 { lower: 0 },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CURRENT_SEASON } from "../../lib/energy";
+import { DEFAULT_BENCHMARK_ID } from "../../lib/energy";
 import { scenarioCatalog } from "../shared/scenarios";
 import type { RoutineBenchTiers, RoutineTierBench } from "./bench";
 import type { RoutineIngame } from "./ingame";
@@ -17,7 +17,7 @@ import {
 const INTERMEDIATE: RoutineTierBench = {
   tier: "intermediate",
   tierLabel: "Intermediate",
-  season: CURRENT_SEASON,
+  benchmarkId: DEFAULT_BENCHMARK_ID,
   date: "2026-08-01T18:30:00.000Z",
   overall: 612.3,
   rank: "Diamond",
@@ -34,7 +34,7 @@ const INTERMEDIATE: RoutineTierBench = {
 const NOVICE: RoutineTierBench = {
   tier: "novice",
   tierLabel: "Novice",
-  season: CURRENT_SEASON,
+  benchmarkId: DEFAULT_BENCHMARK_ID,
   date: "2026-06-12T18:30:00.000Z",
   overall: 447.4,
   rank: "Gold",

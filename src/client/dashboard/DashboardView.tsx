@@ -32,7 +32,7 @@ import {
   listDebriefs,
   listRoutines,
 } from "../data";
-import { rankColorForSeason } from "../energy-view";
+import { rankColorForBenchmark } from "../energy-view";
 import { formatEnergy, formatRunDate } from "../format";
 import { LinkInvite } from "../linked/LinkInvite";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
@@ -310,13 +310,13 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
           {run.overall > 0 ? formatEnergy(run.overall) : "—"}
         </p>
         <p className="mt-2 text-xs text-steel-500">
-          {getTierFor(run.season, run.tier).label} · {formatRunDate(run.date)}
+          {getTierFor(run.benchmarkId, run.tier).label} · {formatRunDate(run.date)}
         </p>
       </div>
       <div className="ml-auto shrink-0">
         <RankBadge
           rank={run.rank}
-          color={rankColorForSeason(run.season, run.tier, run.overall)}
+          color={rankColorForBenchmark(run.benchmarkId, run.tier, run.overall)}
           complete={run.complete}
         />
       </div>

@@ -13,21 +13,28 @@
  *   normalise en ISO `Z`, forme sur laquelle l'UI trie lexicographiquement
  *   (`buildSeries`) et que le reste du code a toujours connue.
  *
- * Depuis le verrou multi-saison (SPEC §5 quinquies), c'est aussi ici que la
- * colonne `season` devient un `SeasonId` **validé** : tout ce qui est dérivé à
- * la lecture (les 9 sous-catégories, l'ordre des scénarios) l'est avec les
- * seuils de la saison de la passe, jamais avec ceux de la saison courante. Une
- * saison absente du registre lève (`EnergyError`) : un repli silencieux sur la
- * courante afficherait des énergies fausses sans le dire.
+ * Depuis le verrou multi-benchmarks (SPEC §5 quinquies), c'est aussi ici que la
+ * colonne `season` devient un `BenchmarkId` **validé** : tout ce qui est dérivé
+ * à la lecture (les 9 sous-catégories, l'ordre des scénarios) l'est avec les
+ * seuils du benchmark de la passe, jamais avec ceux du benchmark courant. Un
+ * benchmark absent du registre lève (`EnergyError`) : un repli silencieux sur le
+ * courant afficherait des énergies fausses sans le dire.
+ *
+ * **Le nom de la colonne et le nom du champ divergent, et c'est voulu.** La
+ * colonne s'appelle encore `season` — la migration `0017` l'a doublée d'une
+ * colonne `benchmark_id` tenue synchrone par trigger, et la suppression de
+ * `season` (`0018`) n'aura lieu qu'une fois ce client déployé (expand/contract).
+ * Le code, lui, ne parle plus que de `benchmarkId` : la traduction se fait ici,
+ * une fois, plutôt que d'être répétée dans chaque vue.
  */
 
 import {
+  type BenchmarkId,
   computeSubcategoriesFor,
   listScenariosFor,
-  type SeasonId,
-  TIER_IDS,
   type TierId,
-  toSeasonId,
+  toBenchmarkId,
+  toTierId,
 } from "../../lib/energy";
 import { DataError } from "./errors";
 import {
@@ -47,6 +54,7 @@ export interface BenchRunRow {
   readonly rank: string | null;
   readonly complete: boolean;
   readonly source: string;
+  /** La colonne s'appelle encore `season` ; le champ métier est `benchmarkId`. */
   readonly season: string;
 }
 
@@ -57,13 +65,20 @@ export interface ScenarioScoreRow {
   readonly energy: number;
 }
 
-function toTierId(value: string): TierId {
-  const tier = TIER_IDS.find((id) => id === value);
-
-  if (tier === undefined) {
-    throw new DataError(`Palier inconnu en base : « ${value} ».`);
+/**
+ * Le palier de la passe, validé **contre son benchmark** (DECISIONS.md D5) :
+ * « novice » n'est pas un palier dans l'absolu, c'en est un dans Voltaic S5.
+ *
+ * La validation vient du registre, l'erreur reste une `DataError` : c'est la
+ * convention de ce module (« Provenance inconnue en base », « Date illisible en
+ * base »), et l'écran affiche `error.message` tel quel.
+ */
+function benchTierId(benchmarkId: BenchmarkId, value: string): TierId {
+  try {
+    return toTierId(benchmarkId, value);
+  } catch (cause) {
+    throw new DataError(`Palier inconnu en base : « ${value} ».`, cause);
   }
-  return tier;
 }
 
 function toBenchSource(value: string): BenchSource {
@@ -86,14 +101,17 @@ function toIsoDate(value: string): string {
 
 /** Une ligne `bench_runs` → la passe telle que l'affiche l'historique. */
 export function toBenchRunSummary(row: BenchRunRow): BenchRunSummary {
+  // `toBenchmarkId` lève une `EnergyError` sur un benchmark inconnu du registre.
+  // C'est voulu : mieux vaut une passe qui refuse de s'afficher qu'une passe
+  // affichée avec les seuils d'un autre benchmark. Il est résolu en premier :
+  // le palier se valide contre lui.
+  const benchmarkId = toBenchmarkId(row.season);
+
   return {
     id: row.id,
     date: toIsoDate(row.date),
-    tier: toTierId(row.tier),
-    // `toSeasonId` lève une `EnergyError` sur une saison inconnue du registre.
-    // C'est voulu : mieux vaut une passe qui refuse de s'afficher qu'une passe
-    // affichée avec les seuils d'une autre saison.
-    season: toSeasonId(row.season),
+    tier: benchTierId(benchmarkId, row.tier),
+    benchmarkId,
     overall: row.overall,
     rank: row.rank,
     complete: row.complete,
@@ -113,12 +131,12 @@ export function toBenchRunSummaries(rows: readonly BenchRunRow[]): readonly Benc
  * escamoté.
  */
 function sortScenarios(
-  season: SeasonId,
+  benchmarkId: BenchmarkId,
   tier: TierId,
   scores: readonly ScenarioScore[],
 ): readonly ScenarioScore[] {
   const order = new Map(
-    listScenariosFor(season, tier).map((scenario, index) => [scenario.name, index]),
+    listScenariosFor(benchmarkId, tier).map((scenario, index) => [scenario.name, index]),
   );
   const rank = (name: string): number => order.get(name) ?? Number.MAX_SAFE_INTEGER;
 
@@ -133,7 +151,7 @@ function sortScenarios(
  * Les énergies par scénario sont celles **figées en base** au moment de la
  * saisie ; les énergies par sous-catégorie sont dérivées à la lecture (max des
  * 2 scénarios, moteur d'énergie) car la base ne les stocke pas — d'où
- * l'obligation de les dériver avec les seuils de `summary.season`.
+ * l'obligation de les dériver avec les seuils de `summary.benchmarkId`.
  */
 export function toBenchRunDetail(
   row: BenchRunRow,
@@ -149,7 +167,7 @@ export function toBenchRunDetail(
 
   return {
     ...summary,
-    scores: sortScenarios(summary.season, summary.tier, scores),
-    subcategories: computeSubcategoriesFor(summary.season, summary.tier, scoreMap),
+    scores: sortScenarios(summary.benchmarkId, summary.tier, scores),
+    subcategories: computeSubcategoriesFor(summary.benchmarkId, summary.tier, scoreMap),
   };
 }

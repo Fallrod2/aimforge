@@ -27,16 +27,16 @@
  * 1. **Un seul palier.** Deux paliers Voltaic n'ont pas la même échelle (500 en
  *    Novice n'est pas 500 en Advanced) : les mélanger dessinerait une falaise à
  *    chaque changement de palier. Le pont retient le palier de la passe la plus
- *    récente de la saison, et le dit.
- * 2. **Une seule saison**, celle que l'appelant passe : les seuils changent
- *    d'une saison à l'autre (SPEC §5 quinquies).
+ *    récente du benchmark, et le dit.
+ * 2. **Un seul benchmark**, celui que l'appelant passe : les seuils changent
+ *    d'un benchmark à l'autre (SPEC §5 quinquies).
  *
  * Et une garde : le recouvrement des deux séries est mesuré. Deux courbes qui
  * ne partagent aucun jour ne disent rien l'une de l'autre, et l'écran doit
  * pouvoir le dire au lieu de laisser croire à une corrélation.
  */
 
-import type { SeasonId, TierId } from "../../lib/energy";
+import type { BenchmarkId, TierId } from "../../lib/energy";
 import type { BenchRunSummary, TrendPoint } from "../data";
 
 const DAY_MS = 86_400_000;
@@ -75,25 +75,25 @@ const MIN_POINTS = 2;
 /**
  * Le pont, ou `null` s'il n'y a rien d'honnête à montrer.
  *
- * `null` couvre : aucune passe de la saison, aucune partie datée avec un HS%,
+ * `null` couvre : aucune passe du benchmark, aucune partie datée avec un HS%,
  * ou moins de deux points d'un côté. L'écran affiche alors ce qui manque, sans
  * cadre de graphe vide.
  */
 export function buildBridge(
   runs: readonly BenchRunSummary[],
   trend: readonly TrendPoint[],
-  season: SeasonId,
+  benchmarkId: BenchmarkId,
 ): Bridge | null {
-  const seasonRuns = [...runs]
-    .filter((run) => run.season === season && run.overall > 0)
+  const benchmarkRuns = [...runs]
+    .filter((run) => run.benchmarkId === benchmarkId && run.overall > 0)
     .sort((left, right) => left.date.localeCompare(right.date) || left.id - right.id);
   // Le palier de la passe la plus récente : c'est celui qu'on joue, donc celui
   // dont la progression a un sens à côté des parties d'aujourd'hui.
-  const tier = seasonRuns.at(-1)?.tier;
+  const tier = benchmarkRuns.at(-1)?.tier;
 
   if (tier === undefined) return null;
 
-  const bench = seasonRuns
+  const bench = benchmarkRuns
     .filter((run) => run.tier === tier)
     .map((run) => ({ t: Date.parse(run.date), value: run.overall, key: String(run.id) }))
     .filter((entry) => !Number.isNaN(entry.t));

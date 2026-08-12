@@ -62,7 +62,6 @@ import {
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
-import type { TierId } from "../src/lib/energy/index.js";
 import {
   AiSettingsUnavailableError,
   type AskDeps,
@@ -99,7 +98,7 @@ import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
-import { loadLatestBenchRuns } from "./_lib/coach-context.js";
+import { DEFAULT_TIER, loadLatestBenchRuns } from "./_lib/coach-context.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -125,9 +124,6 @@ const MAX_TOKENS = 3000;
 const BUDGET_TOTAL_MS = 48_000;
 const BUDGET_CALL_CAP_MS = 38_000;
 const BUDGET_CALL_FLOOR_MS = 8_000;
-
-/** Palier retenu quand le joueur n'a aucune passe : le premier du benchmark. */
-const DEFAULT_TIER: TierId = "novice";
 
 /** Nombre de debriefs relus pour en tirer les axes (AIMFORGE_KICKOFF §3). */
 const DEBRIEF_COUNT = 3;
@@ -310,7 +306,7 @@ async function loadMatches(client: UserClient): Promise<readonly MatchSummary[]>
  * ajoute l'écart au rang suivant, qui est ce qui transforme une énergie en
  * objectif de séance.
  *
- * Une passe qui n'est rapportée par personne (lecture en échec, saison inconnue)
+ * Une passe qui n'est rapportée par personne (lecture en échec, benchmark inconnu)
  * fait perdre un palier, pas la routine : le bench reste du contexte.
  */
 async function loadBenchTiers(client: UserClient, userId: string): Promise<RoutineBenchTiers> {

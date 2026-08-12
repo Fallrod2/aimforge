@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CURRENT_SEASON, getSeason, listScenarios, TIER_IDS } from "../../lib/energy";
+import { DEFAULT_BENCHMARK_ID, getBenchmark, listScenarios, tierIdsFor } from "../../lib/energy";
+
+/**
+ * Les paliers du benchmark de référence. Ce n'est plus une constante de type :
+ * la liste appartient au benchmark, et se lit dans le registre (DECISIONS.md D5).
+ */
+const TIER_IDS = tierIdsFor(DEFAULT_BENCHMARK_ID);
+
 import {
   type KovaaksBenchmarkProgress,
   kovaaksBenchmarkId,
@@ -21,17 +28,21 @@ function progress(
 }
 
 describe("normalizeScenarioName", () => {
-  it("retire le marqueur de saison final", () => {
-    expect(normalizeScenarioName("VT Pasu Novice S5")).toBe("vt pasu novice");
+  it("retire le marqueur d'import déclaré par le benchmark", () => {
+    expect(normalizeScenarioName(DEFAULT_BENCHMARK_ID, "VT Pasu Novice S5")).toBe("vt pasu novice");
   });
 
   it("ignore la casse et les espaces surnuméraires", () => {
-    expect(normalizeScenarioName("  vt   PASU   novice  ")).toBe("vt pasu novice");
+    expect(normalizeScenarioName(DEFAULT_BENCHMARK_ID, "  vt   PASU   novice  ")).toBe(
+      "vt pasu novice",
+    );
   });
 
   it("ne retire pas un chiffre qui fait partie du nom", () => {
-    // « 1w4ts » n'est pas un marqueur de saison : il doit survivre.
-    expect(normalizeScenarioName("VT 1w4ts Novice S5")).toBe("vt 1w4ts novice");
+    // « 1w4ts » n'est pas un marqueur d'import : il doit survivre.
+    expect(normalizeScenarioName(DEFAULT_BENCHMARK_ID, "VT 1w4ts Novice S5")).toBe(
+      "vt 1w4ts novice",
+    );
   });
 });
 
@@ -43,7 +54,7 @@ describe("voltaicScenarioName", () => {
       expect(official).toHaveLength(18);
       for (const scenario of official) {
         // La forme réellement servie par le Benchmark Tracker.
-        expect(voltaicScenarioName(CURRENT_SEASON, tier, `${scenario.name} S5`)).toBe(
+        expect(voltaicScenarioName(DEFAULT_BENCHMARK_ID, tier, `${scenario.name} S5`)).toBe(
           scenario.name,
         );
       }
@@ -51,11 +62,11 @@ describe("voltaicScenarioName", () => {
   });
 
   it("refuse un scénario d'un autre palier", () => {
-    expect(voltaicScenarioName(CURRENT_SEASON, "novice", "VT Pasu Advanced S5")).toBeNull();
+    expect(voltaicScenarioName(DEFAULT_BENCHMARK_ID, "novice", "VT Pasu Advanced S5")).toBeNull();
   });
 
   it("refuse un scénario inconnu", () => {
-    expect(voltaicScenarioName(CURRENT_SEASON, "novice", "Tile Frenzy")).toBeNull();
+    expect(voltaicScenarioName(DEFAULT_BENCHMARK_ID, "novice", "Tile Frenzy")).toBeNull();
   });
 });
 
@@ -95,7 +106,7 @@ describe("scoreMatchesRank", () => {
 describe("mapBenchmarkProgress", () => {
   it("ramène les centièmes à l'unité du tableur", () => {
     const result = mapBenchmarkProgress(
-      CURRENT_SEASON,
+      DEFAULT_BENCHMARK_ID,
       "novice",
       progress({
         "VT Pasu Novice S5": { score: 68350, scenario_rank: 2, rank_maxes: [555, 660, 745, 800] },
@@ -107,7 +118,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("laisse vide un scénario jamais joué plutôt que d'y écrire 0", () => {
     const result = mapBenchmarkProgress(
-      CURRENT_SEASON,
+      DEFAULT_BENCHMARK_ID,
       "novice",
       progress({ "VT Pasu Novice S5": { score: 0, scenario_rank: 0, rank_maxes: [555, 660] } }),
     );
@@ -118,7 +129,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("rejette un score qui contredit son propre rang", () => {
     const result = mapBenchmarkProgress(
-      CURRENT_SEASON,
+      DEFAULT_BENCHMARK_ID,
       "novice",
       // 96840 centièmes = 968.4, très au-dessus de la tranche du rang 0.
       progress({
@@ -132,7 +143,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("compte les 18 scénarios du palier, renseignés ou non", () => {
     const result = mapBenchmarkProgress(
-      CURRENT_SEASON,
+      DEFAULT_BENCHMARK_ID,
       "novice",
       progress({
         "VT Pasu Novice S5": { score: 68350, scenario_rank: 2, rank_maxes: [555, 660, 745, 800] },
@@ -147,7 +158,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("signale les scénarios qu'il n'a pas su rattacher", () => {
     const result = mapBenchmarkProgress(
-      CURRENT_SEASON,
+      DEFAULT_BENCHMARK_ID,
       "novice",
       progress({ "Tile Frenzy": { score: 12300 } }),
     );
@@ -158,7 +169,7 @@ describe("mapBenchmarkProgress", () => {
 
   it("accepte un scénario sans rang ni seuils", () => {
     const result = mapBenchmarkProgress(
-      CURRENT_SEASON,
+      DEFAULT_BENCHMARK_ID,
       "novice",
       progress({ "VT Pasu Novice S5": { score: 68350 } }),
     );
@@ -199,16 +210,16 @@ describe("kovaaksBenchmarkProgressSchema", () => {
 
 describe("kovaaksBenchmarkId", () => {
   it("désigne un benchmark distinct par palier", () => {
-    const ids = TIER_IDS.map((tier) => kovaaksBenchmarkId(CURRENT_SEASON, tier));
+    const ids = TIER_IDS.map((tier) => kovaaksBenchmarkId(DEFAULT_BENCHMARK_ID, tier));
 
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("lit les identifiants dans la définition de saison, pas une constante locale", () => {
-    const { benchmarkIds } = getSeason(CURRENT_SEASON).kovaaks;
+  it("lit les identifiants dans la définition du benchmark, pas une constante locale", () => {
+    const benchmarkIds = getBenchmark(DEFAULT_BENCHMARK_ID).kovaaks?.benchmarkIds ?? {};
 
     for (const tier of TIER_IDS) {
-      expect(kovaaksBenchmarkId(CURRENT_SEASON, tier)).toBe(benchmarkIds[tier]);
+      expect(kovaaksBenchmarkId(DEFAULT_BENCHMARK_ID, tier)).toBe(benchmarkIds[tier]);
     }
   });
 });

@@ -16,7 +16,7 @@
  * Module **pur** : moteur d'énergie et module du coach, rien d'autre.
  */
 
-import { getTierFor, type SeasonId, type TierId } from "../../lib/energy/index.js";
+import { type BenchmarkId, getTierFor, type TierId } from "../../lib/energy/index.js";
 import {
   type BenchRunForCoach,
   type ScenarioScoreForCoach,
@@ -50,8 +50,8 @@ export interface RoutineBenchSummary {
 
 /** La dernière passe d'un palier, vue par la routine. */
 export interface RoutineTierBench extends RoutineBenchSummary {
-  /** Saison de la passe : chaque palier garde la sienne. */
-  readonly season: SeasonId;
+  /** Le benchmark de la passe : chaque palier garde le sien. */
+  readonly benchmarkId: BenchmarkId;
   /** Scénarios renseignés dans la passe. */
   readonly filled: number;
   /** Scénarios du palier (18 sur le benchmark Voltaic). */
@@ -81,11 +81,11 @@ export interface RoutineBenchTiers {
  * sous-catégorie n'est plus le frein.
  */
 export function nextRankAbove(
-  season: SeasonId,
+  benchmarkId: BenchmarkId,
   tier: TierId,
   energy: number,
 ): { readonly name: string; readonly minEnergy: number } | null {
-  const found = getTierFor(season, tier).overallRanks.find((rank) => rank.minEnergy > energy);
+  const found = getTierFor(benchmarkId, tier).overallRanks.find((rank) => rank.minEnergy > energy);
 
   return found === undefined ? null : { name: found.name, minEnergy: found.minEnergy };
 }
@@ -95,8 +95,8 @@ export function nextRankAbove(
  *
  * Le rang overall n'est pas recalculé — il est lu tel quel dans la colonne
  * `rank`, comme le fait le coach. Les rangs *parcourus* pour l'écart, eux,
- * viennent de la saison de la passe : c'est ce qui rend « 99 d'énergie sous
- * Platinum » vrai plutôt qu'approximatif après un changement de saison.
+ * viennent du benchmark de la passe : c'est ce qui rend « 99 d'énergie sous
+ * Platinum » vrai plutôt qu'approximatif après un changement de benchmark.
  */
 export function summarizeBenchForRoutine(
   run: BenchRunForCoach,
@@ -105,9 +105,9 @@ export function summarizeBenchForRoutine(
 ): RoutineBenchSummary {
   const summary = summarizeBench(run, scores, count);
 
-  // Lève tôt (et une seule fois) si la saison ou le palier est inconnu, plutôt
-  // qu'au milieu de la boucle ci-dessous.
-  getTierFor(run.season, run.tier);
+  // Lève tôt (et une seule fois) si le benchmark ou le palier est inconnu,
+  // plutôt qu'au milieu de la boucle ci-dessous.
+  getTierFor(run.benchmarkId, run.tier);
 
   return {
     tier: run.tier,
@@ -117,7 +117,7 @@ export function summarizeBenchForRoutine(
     rank: summary.rank,
     complete: summary.complete,
     weakest: summary.weakest.map((weakness) => {
-      const next = nextRankAbove(run.season, run.tier, weakness.energy);
+      const next = nextRankAbove(run.benchmarkId, run.tier, weakness.energy);
 
       return {
         name: weakness.name,
@@ -130,10 +130,10 @@ export function summarizeBenchForRoutine(
 }
 
 /**
- * Le même résumé, plus la saison et la complétude de la passe.
+ * Le même résumé, plus le benchmark et la complétude de la passe.
  *
  * Il complète `summarizeBenchForRoutine` au lieu de le refaire : la complétude
- * et la saison sont comptées par le module du coach (`summarizeTierBench`), les
+ * et le benchmark sont comptés par le module du coach (`summarizeTierBench`), les
  * écarts au rang suivant restent ici. Une passe se résume donc d'une seule
  * façon, quel que soit celui des deux prompts qui la lit.
  */
@@ -146,7 +146,7 @@ export function summarizeTierBenchForRoutine(
 
   return {
     ...summarizeBenchForRoutine(run, scores, count),
-    season: tierSummary.season,
+    benchmarkId: tierSummary.benchmarkId,
     filled: tierSummary.filled,
     total: tierSummary.total,
   };

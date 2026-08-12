@@ -30,7 +30,14 @@
 
 import type { createClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/client/supabase/database-types.js";
-import { type SeasonId, TIER_IDS, type TierId, toSeasonId } from "../../src/lib/energy/index.js";
+import {
+  type BenchmarkId,
+  DEFAULT_BENCHMARK_ID,
+  firstTierFor,
+  type TierId,
+  tierIdsFor,
+  toBenchmarkId,
+} from "../../src/lib/energy/index.js";
 import {
   type BenchRunForCoach,
   type ScenarioScoreForCoach,
@@ -42,24 +49,30 @@ import type { CoachBenchTiers, CoachProfile } from "../../src/server/coach/promp
 export type CoachUserClient = ReturnType<typeof createClient<Database>>;
 
 /**
- * Palier retenu quand le joueur n'a aucune passe : le premier du benchmark.
+ * Palier retenu quand le joueur n'a aucune passe : le plus bas du benchmark.
  *
- * Mieux vaut la liste du palier Novice qu'aucune liste — sans elle, le modèle
- * n'a plus de noms à citer et se remet à en inventer.
+ * Mieux vaut la liste du premier palier qu'aucune liste — sans elle, le modèle
+ * n'a plus de noms à citer et se remet à en inventer. Il est lu dans le registre
+ * plutôt qu'écrit en dur : « novice » est un palier de Voltaic, pas une
+ * constante du domaine (DECISIONS.md D5).
+ *
+ * Il est exporté parce que cinq points d'entrée (`api/coach`, `api/coach-chat`,
+ * `api/coach-thread`, `api/routine`, l'analyse de match) doivent choisir le même
+ * repli : deux copies décideraient un jour de deux catalogues différents.
  */
-export const DEFAULT_TIER: TierId = "novice";
+export const DEFAULT_TIER: TierId = firstTierFor(DEFAULT_BENCHMARK_ID);
 
 /**
- * La saison de la passe, ou `null` si le registre ne la connaît pas.
+ * Le benchmark de la passe, ou `null` si le registre ne le connaît pas.
  *
- * Le bench est du *contexte* : une saison inconnue le fait disparaître du
- * prompt (comme un palier inconnu), elle ne fait pas échouer un debrief dont le
+ * Le bench est du *contexte* : un benchmark inconnu le fait disparaître du
+ * prompt (comme un palier inconnu), il ne fait pas échouer un debrief dont le
  * quota est déjà consommé. Ce qu'on refuse, c'est de résumer une passe avec les
- * seuils d'une autre saison.
+ * seuils d'un autre benchmark.
  */
-function toSeason(value: string): SeasonId | null {
+function toKnownBenchmark(value: string): BenchmarkId | null {
   try {
-    return toSeasonId(value);
+    return toBenchmarkId(value);
   } catch {
     return null;
   }
@@ -133,9 +146,11 @@ async function loadTierRun(
 
   if (error !== null || run === null) return null;
 
-  const season = toSeason(run.season);
+  // La colonne s'appelle encore `season` (migration 0017, expand/contract) ;
+  // le champ métier, lui, est `benchmarkId` partout ailleurs.
+  const benchmarkId = toKnownBenchmark(run.season);
 
-  if (season === null) return null;
+  if (benchmarkId === null) return null;
 
   const { data: scores } = await client
     .from("scenario_scores")
@@ -146,7 +161,7 @@ async function loadTierRun(
     id: run.id,
     run: {
       tier,
-      season,
+      benchmarkId,
       date: run.date,
       overall: run.overall,
       rank: run.rank,
@@ -166,7 +181,9 @@ export async function loadLatestBenchRuns(
   client: CoachUserClient,
   userId: string,
 ): Promise<LatestBenchRuns> {
-  const loaded = await Promise.all(TIER_IDS.map((tier) => loadTierRun(client, userId, tier)));
+  const loaded = await Promise.all(
+    tierIdsFor(DEFAULT_BENCHMARK_ID).map((tier) => loadTierRun(client, userId, tier)),
+  );
   const found = loaded.flatMap((entry) => (entry === null ? [] : [entry]));
   // « La plus récente » se départage comme la lecture d'avant : date, puis id.
   // Deux passes enregistrées le même jour doivent quand même s'ordonner.

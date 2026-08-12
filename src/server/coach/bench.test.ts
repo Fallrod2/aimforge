@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { CURRENT_SEASON, listScenarios, listSubcategories } from "../../lib/energy";
+import { DEFAULT_BENCHMARK_ID, listScenarios, listSubcategories } from "../../lib/energy";
 import { summarizeBench, summarizeTierBench } from "./bench";
 
 const RUN = {
   tier: "novice",
-  season: CURRENT_SEASON,
+  benchmarkId: DEFAULT_BENCHMARK_ID,
   date: "2026-08-01T18:30:00.000Z",
   overall: 447.36,
   rank: "Gold",
@@ -68,12 +68,12 @@ describe("summarizeBench", () => {
 });
 
 describe("summarizeTierBench", () => {
-  it("garde le résumé du coach et y ajoute la saison de la passe", () => {
+  it("garde le résumé du coach et y ajoute le benchmark de la passe", () => {
     const summary = summarizeTierBench(RUN, scoresWithDip(""));
 
     expect(summary.tierLabel).toBe("Novice");
     expect(summary.rank).toBe("Gold");
-    expect(summary.season).toBe(CURRENT_SEASON);
+    expect(summary.benchmarkId).toBe(DEFAULT_BENCHMARK_ID);
     expect(summary.weakest).toHaveLength(3);
   });
 

@@ -33,7 +33,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { computeBenchRun, getTier, listScenarios, TIER_IDS, type TierId } from "../../lib/energy";
+import {
+  computeBenchRun,
+  currentBenchmark,
+  firstTierFor,
+  getTier,
+  listScenarios,
+  type TierId,
+  tierIdsFor,
+} from "../../lib/energy";
 import { RankBadge } from "../components/RankBadge";
 import { Segmented } from "../components/Segmented";
 import {
@@ -48,7 +56,14 @@ import { formatEnergy, scenarioLabel } from "../format";
 import { LinkInvite } from "../linked/LinkInvite";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
 import { awaitsAutoPull, rememberAutoPull, sessionAutoPulls, shouldAutoPull } from "./auto-import";
-import { type BenchDraft, clearTier, draftScores, emptyDraft, setScoreInput } from "./draft";
+import {
+  type BenchDraft,
+  clearTier,
+  draftScores,
+  emptyDraft,
+  setScoreInput,
+  tierDraft,
+} from "./draft";
 import {
   applyImportedScores,
   clearImportState,
@@ -80,7 +95,11 @@ interface TrackerViewProps {
   readonly onSaved: (run: BenchRunSummary) => void;
 }
 
-const tierOptions = TIER_IDS.map((id) => ({ value: id, label: getTier(id).label }));
+/** Les paliers proposés : ceux du benchmark courant, dans son ordre. */
+const tierOptions = tierIdsFor(currentBenchmark()).map((id) => ({
+  value: id,
+  label: getTier(id).label,
+}));
 
 export function TrackerView({ onSaved }: TrackerViewProps) {
   /**
@@ -91,7 +110,8 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
    */
   const [chosenTier, setChosenTier] = useState<TierId | null>(null);
   const start = useStartTier();
-  const tier = chosenTier ?? (start.status === "ready" ? start.tier : "novice");
+  const tier =
+    chosenTier ?? (start.status === "ready" ? start.tier : firstTierFor(currentBenchmark()));
 
   const [draft, setDraft] = useState<BenchDraft>(emptyDraft);
   const [saving, setSaving] = useState(false);
@@ -118,7 +138,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
 
   const importState = importStateFor(imports, tier);
   const importedTier = isImportedTier(imports, tier);
-  const tierEmpty = Object.keys(draft[tier]).length === 0;
+  const tierEmpty = Object.keys(tierDraft(draft, tier)).length === 0;
   /**
    * Le squelette tient la place de la grille tant qu'on attend des chiffres :
    * comptes liés encore inconnus, ou import en route sur un palier encore vide
@@ -260,7 +280,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           <SaveActions
             canSave={canSave}
             saving={saving}
-            hasDraft={Object.keys(draft[tier]).length > 0}
+            hasDraft={Object.keys(tierDraft(draft, tier)).length > 0}
             onSave={save}
             onReset={reset}
           />
@@ -320,7 +340,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
                               tier={tier}
                               tierLabel={tierData.label}
                               scenario={scenario.name}
-                              value={draft[tier][scenario.name] ?? ""}
+                              value={tierDraft(draft, tier)[scenario.name] ?? ""}
                               energy={
                                 computed.scores.find((row) => row.scenario === scenario.name)
                                   ?.energy ?? 0

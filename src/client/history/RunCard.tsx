@@ -39,9 +39,9 @@ export function RunCard({
   onCancelDelete,
   onConfirmDelete,
 }: RunCardProps) {
-  // Les libellés, l'échelle et les seuils viennent de la saison **de la
+  // Les libellés, l'échelle et les seuils viennent du benchmark **de la
   // passe** : une passe d'archive ne se relit pas avec les seuils du jour.
-  const tier = getTierFor(run.season, run.tier);
+  const tier = getTierFor(run.benchmarkId, run.tier);
   const color = runRankColor(run);
   const panelId = `run-${run.id}-detail`;
 
@@ -128,7 +128,7 @@ export function RunCard({
 }
 
 function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
-  const tier = getTierFor(detail.season, detail.tier);
+  const tier = getTierFor(detail.benchmarkId, detail.tier);
   const scoreByScenario = new Map(detail.scores.map((row) => [row.scenario, row]));
 
   return (
@@ -141,7 +141,7 @@ function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
           {detail.subcategories.map((sub) => (
             <li key={sub.name} className="grid grid-cols-[7rem_1fr_4.5rem] items-center gap-3">
               <span className="truncate text-xs text-steel-300">{sub.name}</span>
-              <EnergyRail tier={detail.tier} season={detail.season} energy={sub.energy} />
+              <EnergyRail tier={detail.tier} benchmarkId={detail.benchmarkId} energy={sub.energy} />
               <span className="text-right font-mono text-xs tabular-nums text-steel-200">
                 {sub.energy > 0 ? (
                   formatEnergy(sub.energy)
@@ -156,10 +156,11 @@ function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
 
       <section>
         <h3 className="text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
-          Scénarios ({detail.scores.length}/{listScenariosFor(detail.season, detail.tier).length})
+          Scénarios ({detail.scores.length}/
+          {listScenariosFor(detail.benchmarkId, detail.tier).length})
         </h3>
         <ul className="mt-3 divide-y divide-steel-800/70">
-          {listScenariosFor(detail.season, detail.tier).map((scenario) => {
+          {listScenariosFor(detail.benchmarkId, detail.tier).map((scenario) => {
             const row = scoreByScenario.get(scenario.name);
 
             return (
@@ -168,7 +169,7 @@ function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
                 className="grid grid-cols-[1fr_4.5rem_4.5rem] items-center gap-2 py-1.5"
               >
                 <span className="truncate text-xs text-steel-300" title={scenario.name}>
-                  {scenarioLabel(scenario.name, tier.label)}
+                  {scenarioLabel(scenario.name, tier.label, detail.benchmarkId)}
                 </span>
                 <span className="text-right font-mono text-xs tabular-nums text-steel-200">
                   {row ? formatScore(row.score) : <span className="text-steel-600">—</span>}

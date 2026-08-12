@@ -202,7 +202,7 @@ function formatTierBench(bench: RoutineTierBench): string {
   const overall = bench.overall > 0 ? formatEnergy(bench.overall) : "0 (bench incomplet)";
 
   return [
-    `- Palier ${bench.tierLabel} · saison ${bench.season} · passe du ${bench.date}`,
+    `- Palier ${bench.tierLabel} · saison ${bench.benchmarkId} · passe du ${bench.date}`,
     `  Complétude : ${bench.filled}/${bench.total} scénarios renseignés${complete}`,
     `  Overall : ${overall} · rang ${rank}`,
     "  Sous-catégories les plus faibles, et ce qui les sépare du rang suivant :",

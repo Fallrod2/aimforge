@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CURRENT_SEASON } from "../../lib/energy/index.js";
+import { DEFAULT_BENCHMARK_ID } from "../../lib/energy/index.js";
 import type { MatchDetail, ScoreboardEntry } from "../../shared/valorant-contract.js";
 import type { ScenarioGroup } from "../shared/scenarios.js";
 import {
@@ -100,7 +100,7 @@ const BENCH: CoachBenchTiers = {
     {
       tier: "novice",
       tierLabel: "Novice",
-      season: CURRENT_SEASON,
+      benchmarkId: DEFAULT_BENCHMARK_ID,
       date: "2026-06-12T18:30:00.000Z",
       overall: 812.4,
       rank: "Gold",

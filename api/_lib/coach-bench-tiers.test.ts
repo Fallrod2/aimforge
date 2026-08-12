@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CURRENT_SEASON, listScenarios } from "../../src/lib/energy/index.js";
+import { DEFAULT_BENCHMARK_ID, listScenarios } from "../../src/lib/energy/index.js";
 import { buildAnalysisUserMessage } from "../../src/server/coach/analysis-prompt.js";
 import { buildChatMessages } from "../../src/server/coach/chat-prompt.js";
 import { buildCoachUserMessage } from "../../src/server/coach/prompt.js";
@@ -31,6 +31,7 @@ interface RunRow {
   readonly overall: number;
   readonly rank: string | null;
   readonly complete: boolean;
+  /** La colonne du benchmark s'appelle encore `season` (migration 0017). */
   readonly season: string;
 }
 
@@ -41,7 +42,7 @@ const NOVICE: RunRow = {
   overall: 812.4,
   rank: "Gold",
   complete: true,
-  season: CURRENT_SEASON,
+  season: DEFAULT_BENCHMARK_ID,
 };
 
 const INTERMEDIATE: RunRow = {
@@ -51,7 +52,7 @@ const INTERMEDIATE: RunRow = {
   overall: 612.3,
   rank: "Diamond",
   complete: false,
-  season: CURRENT_SEASON,
+  season: DEFAULT_BENCHMARK_ID,
 };
 
 /** La passe la plus récente, et la seule qui remontait avant ce chargeur. */
@@ -62,7 +63,7 @@ const ADVANCED: RunRow = {
   overall: 0,
   rank: null,
   complete: false,
-  season: CURRENT_SEASON,
+  season: DEFAULT_BENCHMARK_ID,
 };
 
 /** Les 18 scénarios d'un palier, ou les `count` premiers. */
@@ -181,13 +182,13 @@ describe("loadBenchTiers", () => {
     expect(advanced?.overall).toBe(0);
   });
 
-  it("garde la saison de chaque passe", async () => {
+  it("garde le benchmark de chaque passe", async () => {
     const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER);
 
-    expect(bench.tiers.map((tier) => tier.season)).toEqual([
-      CURRENT_SEASON,
-      CURRENT_SEASON,
-      CURRENT_SEASON,
+    expect(bench.tiers.map((tier) => tier.benchmarkId)).toEqual([
+      DEFAULT_BENCHMARK_ID,
+      DEFAULT_BENCHMARK_ID,
+      DEFAULT_BENCHMARK_ID,
     ]);
   });
 
@@ -208,7 +209,7 @@ describe("loadBenchTiers", () => {
     expect(bench.latestTier).toBeNull();
   });
 
-  it("écarte une passe dont la saison est inconnue du registre", async () => {
+  it("écarte une passe dont le benchmark est inconnu du registre", async () => {
     const bench = await loadBenchTiers(
       fakeClient({
         runs: [{ ...NOVICE, season: "voltaic-s9" }, INTERMEDIATE],

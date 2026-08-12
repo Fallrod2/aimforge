@@ -6,19 +6,19 @@
  * sur la tête de jauge et sur les graduations franchies.
  */
 
-import { currentSeason, type SeasonId, type TierId } from "../../lib/energy";
-import { railFractionFor, rankColorForSeason, rankTicksFor } from "../energy-view";
+import { type BenchmarkId, currentBenchmark, type TierId } from "../../lib/energy";
+import { railFractionFor, rankColorForBenchmark, rankTicksFor } from "../energy-view";
 
 interface EnergyRailProps {
   readonly tier: TierId;
   readonly energy: number;
   /**
-   * Saison dont l'échelle et les graduations s'appliquent. Par défaut la
+   * Benchmark dont l'échelle et les graduations s'appliquent. Par défaut le
    * courante — c'est le cas du tracker, qui montre la saisie en cours. Une
-   * jauge qui décrit une passe **enregistrée** doit passer `run.season` :
-   * `maxEnergy` et les seuils de rang changent d'une saison à l'autre.
+   * jauge qui décrit une passe **enregistrée** doit passer `run.benchmarkId` :
+   * `maxEnergy` et les seuils de rang changent d'un benchmark à l'autre.
    */
-  readonly season?: SeasonId;
+  readonly benchmarkId?: BenchmarkId;
   /** Jauge de synthèse : plus épaisse, graduations nommées. */
   readonly emphasis?: boolean;
 }
@@ -26,12 +26,12 @@ interface EnergyRailProps {
 export function EnergyRail({
   tier,
   energy,
-  season = currentSeason(),
+  benchmarkId = currentBenchmark(),
   emphasis = false,
 }: EnergyRailProps) {
-  const fraction = railFractionFor(season, tier, energy);
-  const color = rankColorForSeason(season, tier, energy);
-  const ticks = rankTicksFor(season, tier, energy);
+  const fraction = railFractionFor(benchmarkId, tier, energy);
+  const color = rankColorForBenchmark(benchmarkId, tier, energy);
+  const ticks = rankTicksFor(benchmarkId, tier, energy);
   const width = `${fraction * 100}%`;
 
   return (

@@ -10,7 +10,7 @@ import { formatChartDate } from "../format";
 /**
  * Couleur officielle du rang d'une passe, ou `null` si aucun rang atteint.
  *
- * Les rangs et leurs couleurs sont lus dans la saison **de la passe** : après
+ * Les rangs et leurs couleurs sont lus dans le benchmark **de la passe** : après
  * la sortie de la S6, une passe S5 garde le rang et la couleur qu'elle a
  * toujours eus (SPEC §5 quinquies).
  */
@@ -18,8 +18,8 @@ export function runRankColor(run: BenchRunSummary): string | null {
   if (run.rank === null) return null;
 
   return (
-    getTierFor(run.season, run.tier).overallRanks.find((rank) => rank.name === run.rank)?.color ??
-    null
+    getTierFor(run.benchmarkId, run.tier).overallRanks.find((rank) => rank.name === run.rank)
+      ?.color ?? null
   );
 }
 

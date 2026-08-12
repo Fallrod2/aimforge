@@ -16,7 +16,7 @@
  */
 
 import type { z } from "zod";
-import type { TierId } from "../../lib/energy";
+import { currentBenchmark, firstTierFor, type TierId } from "../../lib/energy";
 import { supabase } from "../supabase/client";
 import { DataError, NO_SESSION_MESSAGE, queryError } from "./errors";
 import {
@@ -231,8 +231,11 @@ export async function listImportedMatches(
 /* Liaison KovaaK's                                                    */
 /* ------------------------------------------------------------------ */
 
-/** Palier utilisé pour vérifier qu'un pseudo KovaaK's existe. */
-const VERIFICATION_TIER: TierId = "novice";
+/**
+ * Palier utilisé pour vérifier qu'un pseudo KovaaK's existe : le premier du
+ * benchmark courant, celui que tout le monde a joué au moins une fois.
+ */
+const VERIFICATION_TIER: TierId = firstTierFor(currentBenchmark());
 
 /**
  * Lie un pseudo KovaaK's, après l'avoir vérifié.

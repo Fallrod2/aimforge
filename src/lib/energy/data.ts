@@ -1,51 +1,60 @@
 /**
- * Accès aux données Voltaic, **toujours qualifiés par une saison en interne**
+ * Accès aux données d'un benchmark, **toujours qualifiés en interne**
  * (SPEC §5 quinquies).
  *
  * Deux familles d'accesseurs, et il faut savoir laquelle on veut :
  *
- * - **qualifiées** (`getTierFor(season, …)`) — les chemins de *lecture* d'une
- *   passe déjà enregistrée. Ils résolvent les seuils de la saison **de la
- *   passe** : une passe S5 se relit en S5, même après la sortie de la S6 ;
+ * - **qualifiées** (`getTierFor(benchmarkId, …)`) — les chemins de *lecture*
+ *   d'une passe déjà enregistrée. Ils résolvent les seuils du benchmark **de la
+ *   passe** : une passe Voltaic S5 se relit en S5, quel que soit le benchmark
+ *   courant ;
  * - **non qualifiées** (`getTier(…)`) — la saisie, l'aperçu live, tout ce qui
- *   parle du présent. Elles résolvent la saison *active* (la courante, sauf
- *   pendant un `withSeason`), ce qui laisse `energy.ts` inchangé : le cœur
- *   mathématique n'a jamais eu à connaître les saisons, et n'a pas à
+ *   parle du présent. Elles résolvent le benchmark *actif* (le courant, sauf
+ *   pendant un `withBenchmark`), ce qui laisse `energy.ts` inchangé : le cœur
+ *   mathématique n'a jamais eu à connaître le registre, et n'a pas à
  *   l'apprendre.
  *
+ * C'est aussi ici que vit la validation d'un **palier** : `TierId` est un
+ * `string` ouvert (DECISIONS.md D5), donc « ce palier existe-t-il ? » est une
+ * question qui n'a de sens que rapportée à un benchmark. `toTierId` est la
+ * frontière, comme `toBenchmarkId` l'est pour le benchmark.
+ *
  * Les index (palier → sous-catégories → scénarios) sont construits à la
- * demande, une fois par saison, et gardés : une saison, c'est ~54 scénarios,
- * et l'historique en interroge des centaines de fois par affichage.
+ * demande, une fois par benchmark, et gardés : un benchmark, c'est ~54
+ * scénarios, et l'historique en interroge des centaines de fois par affichage.
  */
 
-import { activeSeason, CURRENT_SEASON, getSeason, type SeasonId } from "./seasons.js";
 import {
+  activeBenchmark,
+  type BenchmarkId,
+  DEFAULT_BENCHMARK_ID,
+  getBenchmark,
+} from "./benchmarks.js";
+import {
+  type BenchmarkData,
   EnergyError,
   type Scenario,
   type Subcategory,
   type Tier,
   type TierId,
-  type VoltaicData,
 } from "./types.js";
 
-export const TIER_IDS = ["novice", "intermediate", "advanced"] as const satisfies readonly TierId[];
-
 /**
- * Les 3 paliers de la saison **publiée**, dans l'ordre de progression, et ses
- * métadonnées. Ce sont des constantes de la saison `CURRENT_SEASON` : pour les
- * données d'une passe d'archive, passer par `getTierFor(run.season, …)`.
+ * Les paliers du benchmark **par défaut**, dans l'ordre de progression, et ses
+ * métadonnées. Ce sont des constantes de `DEFAULT_BENCHMARK_ID` : pour les
+ * données d'une passe d'archive, passer par `getTierFor(run.benchmarkId, …)`.
  */
-export const TIERS: readonly Tier[] = getSeason(CURRENT_SEASON).data.tiers;
+export const TIERS: readonly Tier[] = getBenchmark(DEFAULT_BENCHMARK_ID).data.tiers;
 
-export const META = getSeason(CURRENT_SEASON).data.meta;
+export const META = getBenchmark(DEFAULT_BENCHMARK_ID).data.meta;
 
-interface SeasonIndex {
+interface BenchmarkIndex {
   readonly tiersById: ReadonlyMap<string, Tier>;
   readonly subcategoriesByTier: ReadonlyMap<string, ReadonlyMap<string, Subcategory>>;
   readonly scenariosByTier: ReadonlyMap<string, ReadonlyMap<string, Scenario>>;
 }
 
-function buildIndex(data: VoltaicData): SeasonIndex {
+function buildIndex(data: BenchmarkData): BenchmarkIndex {
   const tiers = data.tiers;
 
   return {
@@ -75,12 +84,12 @@ function buildIndex(data: VoltaicData): SeasonIndex {
   };
 }
 
-// Clé = la définition de saison elle-même : une saison retirée du registre
-// (fixture de test) laisse partir son index avec elle.
-const indexes = new WeakMap<object, SeasonIndex>();
+// Clé = la définition de benchmark elle-même : un benchmark retiré du registre
+// (fixture de test) laisse partir son index avec lui.
+const indexes = new WeakMap<object, BenchmarkIndex>();
 
-function indexOf(season: SeasonId): SeasonIndex {
-  const definition = getSeason(season);
+function indexOf(benchmarkId: BenchmarkId): BenchmarkIndex {
+  const definition = getBenchmark(benchmarkId);
   const cached = indexes.get(definition);
 
   if (cached !== undefined) return cached;
@@ -92,32 +101,66 @@ function indexOf(season: SeasonId): SeasonIndex {
 }
 
 /* ------------------------------------------------------------------ */
-/* Accès qualifiés par saison                                          */
+/* Accès qualifiés par benchmark                                       */
 /* ------------------------------------------------------------------ */
 
-/** Les 3 paliers d'une saison, dans l'ordre de progression. */
-export function listTiersFor(season: SeasonId): readonly Tier[] {
-  return getSeason(season).data.tiers;
+/** Les paliers d'un benchmark, dans l'ordre de progression. */
+export function listTiersFor(benchmarkId: BenchmarkId): readonly Tier[] {
+  return getBenchmark(benchmarkId).data.tiers;
 }
 
-/** Le palier d'une saison. Throw si la saison ou l'identifiant est inconnu. */
-export function getTierFor(season: SeasonId, tierId: TierId): Tier {
-  const tier = indexOf(season).tiersById.get(tierId);
+/** Les identifiants des paliers d'un benchmark, dans l'ordre de progression. */
+export function tierIdsFor(benchmarkId: BenchmarkId): readonly TierId[] {
+  return listTiersFor(benchmarkId).map((tier) => tier.id);
+}
+
+/**
+ * Le palier le plus bas d'un benchmark — celui par lequel on commence.
+ *
+ * C'est le repli de tout ce qui doit désigner un palier sans rien savoir du
+ * joueur (tracker vierge, contexte de coach sans passe). L'ordre du tableau
+ * fait foi : un benchmark ordonne ses paliers, il n'y a rien à trier.
+ */
+export function firstTierFor(benchmarkId: BenchmarkId): TierId {
+  const first = listTiersFor(benchmarkId)[0];
+
+  if (first === undefined) {
+    throw new EnergyError(`Benchmark sans palier: "${benchmarkId}"`);
+  }
+  return first.id;
+}
+
+/** Le palier d'un benchmark. Throw si le benchmark ou l'identifiant est inconnu. */
+export function getTierFor(benchmarkId: BenchmarkId, tierId: TierId): Tier {
+  const tier = indexOf(benchmarkId).tiersById.get(tierId);
 
   if (!tier) {
-    throw new EnergyError(`Palier inconnu: "${tierId}" (attendu: ${TIER_IDS.join(", ")})`);
+    throw new EnergyError(
+      `Palier inconnu: "${tierId}" (attendu: ${tierIdsFor(benchmarkId).join(", ")})`,
+    );
   }
   return tier;
 }
 
+/**
+ * Une valeur brute (colonne `bench_runs.tier`, champ d'un contrat HTTP) → un
+ * `TierId` validé **contre ce benchmark**. Throw si le palier n'y existe pas.
+ *
+ * Même patron que `toBenchmarkId` : au-delà de cette frontière, un palier est
+ * forcément un palier du benchmark auquel il est rapporté.
+ */
+export function toTierId(benchmarkId: BenchmarkId, value: string): TierId {
+  return getTierFor(benchmarkId, value).id;
+}
+
 /** La sous-catégorie du palier. Throw si le palier ou le nom est inconnu. */
 export function getSubcategoryFor(
-  season: SeasonId,
+  benchmarkId: BenchmarkId,
   tierId: TierId,
   subcategoryName: string,
 ): Subcategory {
-  getTierFor(season, tierId);
-  const sub = indexOf(season).subcategoriesByTier.get(tierId)?.get(subcategoryName);
+  getTierFor(benchmarkId, tierId);
+  const sub = indexOf(benchmarkId).subcategoriesByTier.get(tierId)?.get(subcategoryName);
 
   if (!sub) {
     throw new EnergyError(`Sous-catégorie inconnue: "${subcategoryName}" (palier ${tierId})`);
@@ -126,9 +169,13 @@ export function getSubcategoryFor(
 }
 
 /** Le scénario du palier. Throw si le palier ou le nom est inconnu. */
-export function getScenarioFor(season: SeasonId, tierId: TierId, scenarioName: string): Scenario {
-  getTierFor(season, tierId);
-  const scenario = indexOf(season).scenariosByTier.get(tierId)?.get(scenarioName);
+export function getScenarioFor(
+  benchmarkId: BenchmarkId,
+  tierId: TierId,
+  scenarioName: string,
+): Scenario {
+  getTierFor(benchmarkId, tierId);
+  const scenario = indexOf(benchmarkId).scenariosByTier.get(tierId)?.get(scenarioName);
 
   if (!scenario) {
     throw new EnergyError(`Scénario inconnu: "${scenarioName}" (palier ${tierId})`);
@@ -136,43 +183,46 @@ export function getScenarioFor(season: SeasonId, tierId: TierId, scenarioName: s
   return scenario;
 }
 
-/** Les 18 scénarios du palier, dans l'ordre du tableur. */
-export function listScenariosFor(season: SeasonId, tierId: TierId): readonly Scenario[] {
-  return getTierFor(season, tierId).categories.flatMap((category) =>
+/** Les scénarios du palier, dans l'ordre du tableur. */
+export function listScenariosFor(benchmarkId: BenchmarkId, tierId: TierId): readonly Scenario[] {
+  return getTierFor(benchmarkId, tierId).categories.flatMap((category) =>
     category.subcategories.flatMap((sub) => sub.scenarios),
   );
 }
 
-/** Les 9 sous-catégories du palier, dans l'ordre du tableur. */
-export function listSubcategoriesFor(season: SeasonId, tierId: TierId): readonly Subcategory[] {
-  return getTierFor(season, tierId).categories.flatMap((category) => category.subcategories);
+/** Les sous-catégories du palier, dans l'ordre du tableur. */
+export function listSubcategoriesFor(
+  benchmarkId: BenchmarkId,
+  tierId: TierId,
+): readonly Subcategory[] {
+  return getTierFor(benchmarkId, tierId).categories.flatMap((category) => category.subcategories);
 }
 
 /* ------------------------------------------------------------------ */
-/* Accès à la saison active (API publique historique, inchangée)       */
+/* Accès au benchmark actif (API publique historique, inchangée)       */
 /* ------------------------------------------------------------------ */
 
 /** Le palier demandé. Throw si l'identifiant est inconnu. */
 export function getTier(tierId: TierId): Tier {
-  return getTierFor(activeSeason(), tierId);
+  return getTierFor(activeBenchmark(), tierId);
 }
 
 /** La sous-catégorie du palier. Throw si le palier ou le nom est inconnu. */
 export function getSubcategory(tierId: TierId, subcategoryName: string): Subcategory {
-  return getSubcategoryFor(activeSeason(), tierId, subcategoryName);
+  return getSubcategoryFor(activeBenchmark(), tierId, subcategoryName);
 }
 
 /** Le scénario du palier. Throw si le palier ou le nom est inconnu. */
 export function getScenario(tierId: TierId, scenarioName: string): Scenario {
-  return getScenarioFor(activeSeason(), tierId, scenarioName);
+  return getScenarioFor(activeBenchmark(), tierId, scenarioName);
 }
 
-/** Les 18 scénarios du palier, dans l'ordre du tableur. */
+/** Les scénarios du palier, dans l'ordre du tableur. */
 export function listScenarios(tierId: TierId): readonly Scenario[] {
-  return listScenariosFor(activeSeason(), tierId);
+  return listScenariosFor(activeBenchmark(), tierId);
 }
 
-/** Les 9 sous-catégories du palier, dans l'ordre du tableur. */
+/** Les sous-catégories du palier, dans l'ordre du tableur. */
 export function listSubcategories(tierId: TierId): readonly Subcategory[] {
-  return listSubcategoriesFor(activeSeason(), tierId);
+  return listSubcategoriesFor(activeBenchmark(), tierId);
 }

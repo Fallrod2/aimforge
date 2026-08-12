@@ -33,7 +33,7 @@ describe("toBenchRunSummary", () => {
       id: 12,
       date: "2026-03-01T12:00:00.000Z",
       tier: "novice",
-      season: "voltaic-s5",
+      benchmarkId: "voltaic-s5",
       overall: 400,
       rank: "Gold",
       complete: true,

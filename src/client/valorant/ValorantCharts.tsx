@@ -44,7 +44,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getTierFor, type SeasonId } from "../../lib/energy";
+import { type BenchmarkId, getTierFor } from "../../lib/energy";
 import { formatChartDate, formatEnergy } from "../format";
 import { themeColor } from "../theme";
 import type { Bridge } from "./bridge";
@@ -242,7 +242,7 @@ function LegendItem({ color, label, ring }: LegendItemProps) {
 
 interface BridgeChartProps {
   readonly bridge: Bridge;
-  readonly season: SeasonId;
+  readonly benchmarkId: BenchmarkId;
   /** Domaines verticaux des deux cadres, calculés chez l'appelant. */
   readonly benchDomain: readonly [number, number];
   readonly ingameDomain: readonly [number, number];
@@ -260,12 +260,12 @@ interface BridgeChartProps {
  */
 export function BridgeChart({
   bridge,
-  season,
+  benchmarkId,
   benchDomain,
   ingameDomain,
   timeZone,
 }: BridgeChartProps) {
-  const tier = getTierFor(season, bridge.tier);
+  const tier = getTierFor(benchmarkId, bridge.tier);
   const ticks = timeTicks(bridge.from, bridge.to);
   const formatTime = (value: number) => formatChartDate(new Date(value).toISOString(), timeZone);
 

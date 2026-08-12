@@ -29,7 +29,7 @@ import {
   type KovaaksImportResponse,
   kovaaksImportRequestSchema,
 } from "../../src/client/data/linked-accounts-contract.js";
-import { currentSeason } from "../../src/lib/energy/index.js";
+import { currentBenchmark } from "../../src/lib/energy/index.js";
 import { mapBenchmarkProgress } from "../../src/server/kovaaks/benchmark.js";
 import { consumeDailyLimit, kovaaksImportLimit } from "../../src/server/linked/rate-limit.js";
 import {
@@ -104,18 +104,18 @@ export async function POST(request: Request): Promise<Response> {
 
     if (player === null) return fail(unknownPseudo(username), 404);
 
-    // L'import sert à remplir une passe qu'on va jouer *maintenant* : c'est la
-    // saison courante qui fournit l'identifiant de benchmark, les noms de
+    // L'import sert à remplir une passe qu'on va jouer *maintenant* : c'est le
+    // benchmark courant qui fournit l'identifiant à interroger, les noms de
     // scénarios et, plus tard, les seuils (SPEC §5 quinquies).
-    const season = currentSeason();
-    const progress = await fetchBenchmarkProgress(player.steamId, season, tier, budget);
-    const mapped = mapBenchmarkProgress(season, tier, progress);
+    const benchmarkId = currentBenchmark();
+    const progress = await fetchBenchmarkProgress(player.steamId, benchmarkId, tier, budget);
+    const mapped = mapBenchmarkProgress(benchmarkId, tier, progress);
 
     if (mapped.unknown.length > 0) {
       // Pas une erreur pour l'utilisateur — mais le signe que le benchmark
       // amont a bougé, et la seule trace qu'on en aura.
       console.warn("[kovaaks] scénarios non rattachés", {
-        season,
+        benchmarkId,
         tier,
         unknown: mapped.unknown,
       });

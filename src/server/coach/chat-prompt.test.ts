@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CURRENT_SEASON } from "../../lib/energy";
+import { DEFAULT_BENCHMARK_ID } from "../../lib/energy";
 import { scenarioCatalog } from "../shared/scenarios";
 import {
   buildChatCorrectionMessages,
@@ -22,7 +22,7 @@ const PROFILE: CoachProfile = {
 const NOVICE: CoachTierBench = {
   tier: "novice",
   tierLabel: "Novice",
-  season: CURRENT_SEASON,
+  benchmarkId: DEFAULT_BENCHMARK_ID,
   date: "2026-06-12T18:30:00.000Z",
   overall: 812.4,
   rank: "Gold",
@@ -38,7 +38,7 @@ const NOVICE: CoachTierBench = {
 const INTERMEDIATE: CoachTierBench = {
   tier: "intermediate",
   tierLabel: "Intermediate",
-  season: CURRENT_SEASON,
+  benchmarkId: DEFAULT_BENCHMARK_ID,
   date: "2026-08-01T18:30:00.000Z",
   overall: 612.3,
   rank: "Diamond",

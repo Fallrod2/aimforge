@@ -9,9 +9,9 @@
  */
 
 import type {
+  BenchmarkId,
   ComputedScenarioScore,
   ComputedSubcategory,
-  SeasonId,
   TierId,
 } from "../../lib/energy";
 
@@ -32,11 +32,16 @@ export interface BenchRunSummary {
   readonly date: string;
   readonly tier: TierId;
   /**
-   * La saison Voltaic **de la passe** (SPEC §5 quinquies). Elle décide des
-   * seuils avec lesquels la passe se relit : une passe S5 garde ses valeurs S5
-   * après la sortie de la S6. Ce n'est pas une décoration d'affichage.
+   * Le benchmark **de la passe** (SPEC §5 quinquies). Il décide des seuils et
+   * de la formule avec lesquels la passe se relit : une passe Voltaic S5 garde
+   * ses valeurs S5 quel que soit le benchmark courant. Ce n'est pas une
+   * décoration d'affichage.
+   *
+   * Il vient de la colonne `bench_runs.season`, que la migration `0017` est en
+   * train de renommer `benchmark_id` (expand/contract) : la traduction se fait
+   * dans `mapping.ts`, et nulle part ailleurs.
    */
-  readonly season: SeasonId;
+  readonly benchmarkId: BenchmarkId;
   /** Moyenne harmonique des 9 sous-catégories ; 0 si le bench est incomplet. */
   readonly overall: number;
   /** Rang overall atteint, `null` sous le premier rang du palier. */

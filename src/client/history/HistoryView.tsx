@@ -6,24 +6,26 @@
  * énergies de deux paliers ne sont pas comparables (500 en Novice n'est pas
  * 500 en Advanced), donc ni la liste ni la courbe ne les mélangent.
  *
- * **Et sur une seule saison** (SPEC §5 quinquies), pour la même raison portée
- * plus loin : deux saisons Voltaic n'ont pas les mêmes seuils, donc un 447 S5 et
- * un 447 S6 ne décrivent pas la même performance. Le cadrage est la saison
- * *courante* — c'est celle qu'on joue — et il n'y a volontairement **aucun
- * sélecteur de saison** : il n'en existe qu'une, une liste déroulante à un seul
- * choix serait un ornement. Les passes des autres saisons ne sont pas cachées
- * pour autant : elles sont comptées à côté du total, comme le sont déjà les
- * passes des autres paliers. Le jour où une seconde saison existe vraiment,
- * c'est ce compteur qui dira qu'il faut un sélecteur.
+ * **Et sur un seul benchmark** (SPEC §5 quinquies), pour la même raison portée
+ * plus loin : deux benchmarks n'ont pas les mêmes seuils, donc un 447 S5 et un
+ * 447 S6 ne décrivent pas la même performance. Le cadrage est le benchmark
+ * *courant* — c'est celui qu'on joue — et il n'y a volontairement **aucun
+ * sélecteur de benchmark** : il n'en existe qu'un, une liste déroulante à un
+ * seul choix serait un ornement. Les passes des autres benchmarks ne sont pas
+ * cachées pour autant : elles sont comptées à côté du total, comme le sont déjà
+ * les passes des autres paliers. Le jour où un second benchmark existe
+ * vraiment, c'est ce compteur qui dira qu'il faut un sélecteur.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CURRENT_SEASON,
+  currentBenchmark,
+  DEFAULT_BENCHMARK_ID,
+  firstTierFor,
   getTier,
   listSubcategories,
-  TIER_IDS,
   type TierId,
+  tierIdsFor,
 } from "../../lib/energy";
 import { Notice } from "../components/Notice";
 import { Segmented } from "../components/Segmented";
@@ -44,7 +46,11 @@ type Loadable =
   | { readonly status: "error"; readonly message: string }
   | { readonly status: "ready"; readonly runs: readonly BenchRunSummary[] };
 
-const tierOptions = TIER_IDS.map((id) => ({ value: id, label: getTier(id).label }));
+/** Les paliers proposés : ceux du benchmark courant, dans son ordre. */
+const tierOptions = tierIdsFor(currentBenchmark()).map((id) => ({
+  value: id,
+  label: getTier(id).label,
+}));
 
 function failureMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
@@ -69,9 +75,9 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
     try {
       const runs = await listBenchRuns();
       // Le palier initial se choisit dans ce que la vue va réellement montrer,
-      // c'est-à-dire la saison courante : le déduire d'une passe d'archive
+      // c'est-à-dire le benchmark courant : le déduire d'une passe d'archive
       // ouvrirait l'historique sur un palier vide.
-      const shown = runs.filter((run) => run.season === CURRENT_SEASON);
+      const shown = runs.filter((run) => run.benchmarkId === DEFAULT_BENCHMARK_ID);
 
       setState({ status: "ready", runs });
       // Le palier n'est choisi qu'une fois, au premier chargement : celui de la
@@ -81,7 +87,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
           current ??
           shown.find((run) => run.id === focusRunIdRef.current)?.tier ??
           shown[0]?.tier ??
-          TIER_IDS[0],
+          firstTierFor(currentBenchmark()),
       );
     } catch (cause) {
       setState({ status: "error", message: failureMessage(cause, "Chargement impossible.") });
@@ -93,16 +99,19 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
   }, [load]);
 
   const runs = state.status === "ready" ? state.runs : [];
-  const activeTier = tier ?? TIER_IDS[0];
-  // Le filtre de saison passe **avant** celui de palier : le graphe ne doit
+  const activeTier = tier ?? firstTierFor(currentBenchmark());
+  // Le filtre de benchmark passe **avant** celui de palier : le graphe ne doit
   // jamais tracer deux échelles de seuils sur le même axe.
-  const seasonRuns = useMemo(() => runs.filter((run) => run.season === CURRENT_SEASON), [runs]);
-  const otherSeasonCount = runs.length - seasonRuns.length;
-  const tierRuns = useMemo(
-    () => seasonRuns.filter((run) => run.tier === activeTier),
-    [seasonRuns, activeTier],
+  const benchmarkRuns = useMemo(
+    () => runs.filter((run) => run.benchmarkId === DEFAULT_BENCHMARK_ID),
+    [runs],
   );
-  const otherTierCount = seasonRuns.length - tierRuns.length;
+  const otherBenchmarkCount = runs.length - benchmarkRuns.length;
+  const tierRuns = useMemo(
+    () => benchmarkRuns.filter((run) => run.tier === activeTier),
+    [benchmarkRuns, activeTier],
+  );
+  const otherTierCount = benchmarkRuns.length - tierRuns.length;
 
   const neededIds = useMemo(() => {
     const ids = new Set<number>();
@@ -164,7 +173,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
           <p className="mt-0.5 text-xs text-steel-500">
             {tierRuns.length} passe{tierRuns.length > 1 ? "s" : ""} en {getTier(activeTier).label}
             {otherTierCount > 0 ? ` · ${otherTierCount} dans les autres paliers` : ""}
-            {otherSeasonCount > 0 ? ` · ${otherSeasonCount} dans une saison précédente` : ""}
+            {otherBenchmarkCount > 0 ? ` · ${otherBenchmarkCount} dans une saison précédente` : ""}
           </p>
         </div>
         <Segmented
@@ -179,8 +188,8 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
         <Notice tone="empty" title={`Aucune passe en ${getTier(activeTier).label}.`}>
           {otherTierCount > 0
             ? "Change de palier ci-dessus, ou enregistre une passe depuis le tracker."
-            : otherSeasonCount > 0
-              ? `L'historique ne montre que la saison courante : ${otherSeasonCount} passe${otherSeasonCount > 1 ? "s" : ""} d'une saison précédente en ${otherSeasonCount > 1 ? "sont" : "est"} écartée${otherSeasonCount > 1 ? "s" : ""}, ses seuils n'étant pas comparables.`
+            : otherBenchmarkCount > 0
+              ? `L'historique ne montre que la saison courante : ${otherBenchmarkCount} passe${otherBenchmarkCount > 1 ? "s" : ""} d'une saison précédente en ${otherBenchmarkCount > 1 ? "sont" : "est"} écartée${otherBenchmarkCount > 1 ? "s" : ""}, ses seuils n'étant pas comparables.`
               : "Saisis tes scores dans le tracker puis sauvegarde : la passe apparaîtra ici."}
         </Notice>
       ) : (
@@ -215,7 +224,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
 
             <ProgressChart
               tier={activeTier}
-              season={CURRENT_SEASON}
+              benchmarkId={DEFAULT_BENCHMARK_ID}
               points={points}
               subcategory={subcategory}
             />

@@ -12,7 +12,7 @@
  *    projet, débarrassé de sa marche « appartenance » : identité (401) avant
  *    tout, validation (400) ensuite, configuration (503), puis le quota (429)
  *    en dernier — c'est la seule marche qui coûte quelque chose ;
- * 2. **le contexte est plus large** : profil, dernier bench (de la saison de la
+ * 2. **le contexte est plus large** : profil, dernier bench (du benchmark de la
  *    passe), derniers matchs importés, derniers debriefs, derniers messages du
  *    fil. Tout est scellé, tout est du contexte — une lecture en échec dégrade
  *    la réponse, elle ne l'annule pas ;

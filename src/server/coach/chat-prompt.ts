@@ -32,7 +32,7 @@
  */
 
 import type { CoachDebrief } from "../../shared/coach-contract.js";
-import type { ScenarioGroup } from "../shared/scenarios.js";
+import { type ScenarioGroup, subcategoryNames } from "../shared/scenarios.js";
 import {
   type CoachBenchTiers,
   type CoachMessage,
@@ -79,6 +79,9 @@ export interface ChatContext {
  * assistant généraliste au premier message qui le lui demande, et l'utilisateur
  * paierait son quota d'entraînement pour des recettes de cuisine.
  */
+/** Les sous-catégories du benchmark, injectées : c'est de la donnée. */
+const SUBCATEGORIES = subcategoryNames().join(", ");
+
 export const COACH_CHAT_SYSTEM_PROMPT = [
   "Tu es le coach d'AimForge, un hub d'entraînement pour joueurs de Valorant qui travaillent leur",
   "visée sur KovaaK's (benchmark Voltaic S5). Tu discutes avec le joueur d'un debrief que tu viens",
@@ -97,8 +100,8 @@ export const COACH_CHAT_SYSTEM_PROMPT = [
   "- Le bloc <scenarios_autorises> liste les seuls scénarios KovaaK's que tu as le droit de citer.",
   "- Utilise UNIQUEMENT ces noms exacts, recopiés au mot près : ni raccourci (le préfixe et le",
   "  palier font partie du nom), ni reformulé, ni traduit.",
-  "- Si aucun scénario de la liste ne convient, nomme la SOUS-CATÉGORIE (Dynamic, Static, Precise,",
-  "  Reactive, Speed, Evasive, Stability, Control…) sans inventer de nom de scénario.",
+  `- Si aucun scénario de la liste ne convient, nomme la SOUS-CATÉGORIE (${SUBCATEGORIES})`,
+  "  sans inventer de nom de scénario.",
   "- N'invente jamais un nom de scénario et n'en emprunte pas à un autre palier : un nom absent de",
   "  la liste n'existe pas dans le jeu du joueur, et le conseil devient inapplicable.",
   "- Les conseils sans scénario (échauffement libre, deathmatch, range, placement de viseur,",

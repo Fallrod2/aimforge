@@ -8,10 +8,11 @@
  *
  * 1. **Les noms de scénarios** du Benchmark Tracker sont exactement ceux du
  *    tableur Voltaic, suffixés du marqueur de saison (`VT Pasu Novice S5`) —
- *    marqueur qui vit dans la définition de saison. La correspondance
- *    est de 18/18 sur les trois paliers. On la fait quand même par
- *    normalisation plutôt que par découpe littérale : une variante de casse ou
- *    une double espace ne doit pas faire perdre un scénario.
+ *    marqueur qui vit dans la définition du benchmark (`kovaaks.scenarioSuffix`),
+ *    d'où `normalizedScenarioKey` le tire. La correspondance est de 18/18 sur
+ *    les trois paliers. On la fait quand même par normalisation plutôt que par
+ *    découpe littérale : une variante de casse ou une double espace ne doit pas
+ *    faire perdre un scénario.
  * 2. **Les scores sont en centièmes** (`96840` pour `968.4`). Rien ne le
  *    documente, donc on ne fait pas confiance à la division : chaque score est
  *    recoupé avec le rang annoncé pour ce scénario et ses seuils de rangs, que
@@ -27,21 +28,39 @@
 import { z } from "zod";
 import type { MissingScenario } from "../../client/data/linked-accounts-contract.js";
 import {
-  getSeason,
+  type BenchmarkDefinition,
+  type BenchmarkId,
+  EnergyError,
+  getBenchmark,
   listScenariosFor,
-  type SeasonDefinition,
-  type SeasonId,
+  normalizedScenarioKey,
   type TierId,
 } from "../../lib/energy/index.js";
 
 /**
- * L'identifiant du benchmark officiel à interroger pour un palier.
+ * L'identifiant du benchmark officiel du Benchmark Tracker à interroger pour un
+ * palier.
  *
- * Il change à chaque saison Voltaic (le Benchmark Tracker republie), d'où sa
- * place dans la définition de saison plutôt qu'en dur ici (SPEC §5 quinquies).
+ * Il change à chaque publication (le Benchmark Tracker republie), d'où sa place
+ * dans la définition du benchmark plutôt qu'en dur ici (SPEC §5 quinquies). Un
+ * benchmark qui ne s'importe pas depuis KovaaK's, ou un palier qu'il n'y publie
+ * pas, lève : c'est un appel qui n'a pas de réponse, pas un appel qui vaut zéro.
  */
-export function kovaaksBenchmarkId(season: SeasonId, tier: TierId): number {
-  return getSeason(season).kovaaks.benchmarkIds[tier];
+export function kovaaksBenchmarkId(benchmarkId: BenchmarkId, tier: TierId): number {
+  const kovaaks = getBenchmark(benchmarkId).kovaaks;
+
+  if (kovaaks === null) {
+    throw new EnergyError(`Benchmark non importable depuis KovaaK's: "${benchmarkId}"`);
+  }
+
+  const id = kovaaks.benchmarkIds[tier];
+
+  if (id === undefined) {
+    throw new EnergyError(
+      `Aucun benchmark KovaaK's pour le palier "${tier}" (benchmark ${benchmarkId})`,
+    );
+  }
+  return id;
 }
 
 /** Facteur d'échelle des scores renvoyés par le Benchmark Tracker. */
@@ -82,53 +101,57 @@ export type KovaaksBenchmarkProgress = z.infer<typeof kovaaksBenchmarkProgressSc
 
 /**
  * Forme comparable d'un nom de scénario : casse ignorée, espaces normalisés,
- * marqueur de saison final retiré (`… Novice S5` → `… novice`).
+ * marqueur d'import final retiré (`… Novice S5` → `… novice`).
+ *
+ * Le marqueur retiré est celui **déclaré par le benchmark**, et non plus un
+ * motif générique (`\ss\d+$`) qui amputait au jugé tout nom finissant par une
+ * lettre et un chiffre.
  */
-export function normalizeScenarioName(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/\ss\d+$/, "");
+export function normalizeScenarioName(benchmarkId: BenchmarkId, raw: string): string {
+  return normalizedScenarioKey(benchmarkId, raw);
 }
 
-const namesBySeason = new WeakMap<SeasonDefinition, Map<TierId, ReadonlyMap<string, string>>>();
+const namesByBenchmark = new WeakMap<
+  BenchmarkDefinition,
+  Map<TierId, ReadonlyMap<string, string>>
+>();
 
 /**
- * Nom normalisé → nom officiel du palier, pour une saison. Construit une fois
- * par couple (saison, palier).
+ * Nom normalisé → nom officiel du palier, pour un benchmark. Construit une fois
+ * par couple (benchmark, palier).
  *
  * Deux clés par scénario : le nom du tableur, et ce même nom **suffixé du
- * marqueur de saison** — la forme exacte que publie KovaaK's. La normalisation
- * fait tomber les deux au même endroit tant que le marqueur ressemble à
- * « S5 » ; elle ne le ferait plus si une saison le notait autrement, et c'est
- * précisément pour ce jour-là que la clé explicite est posée.
+ * marqueur d'import** — la forme exacte que publie KovaaK's. La normalisation
+ * fait tomber les deux au même endroit puisqu'elle retire ce marqueur ; la clé
+ * explicite reste posée pour le benchmark qui n'en déclarerait pas.
  */
-function officialNames(season: SeasonId, tier: TierId): ReadonlyMap<string, string> {
-  const definition = getSeason(season);
-  const byTier = namesBySeason.get(definition) ?? new Map();
+function officialNames(benchmarkId: BenchmarkId, tier: TierId): ReadonlyMap<string, string> {
+  const definition = getBenchmark(benchmarkId);
+  const byTier = namesByBenchmark.get(definition) ?? new Map();
   const cached = byTier.get(tier);
 
   if (cached !== undefined) return cached;
 
   const built = new Map<string, string>();
+  const suffix = definition.kovaaks?.scenarioSuffix ?? "";
 
-  for (const scenario of listScenariosFor(season, tier)) {
-    built.set(normalizeScenarioName(scenario.name), scenario.name);
-    built.set(
-      normalizeScenarioName(`${scenario.name}${definition.kovaaks.scenarioSuffix}`),
-      scenario.name,
-    );
+  for (const scenario of listScenariosFor(benchmarkId, tier)) {
+    built.set(normalizeScenarioName(benchmarkId, scenario.name), scenario.name);
+    built.set(normalizeScenarioName(benchmarkId, `${scenario.name}${suffix}`), scenario.name);
   }
 
   byTier.set(tier, built);
-  namesBySeason.set(definition, byTier);
+  namesByBenchmark.set(definition, byTier);
   return built;
 }
 
 /** Le nom officiel correspondant, ou `null` si le scénario n'est pas du palier. */
-export function voltaicScenarioName(season: SeasonId, tier: TierId, raw: string): string | null {
-  return officialNames(season, tier).get(normalizeScenarioName(raw)) ?? null;
+export function voltaicScenarioName(
+  benchmarkId: BenchmarkId,
+  tier: TierId,
+  raw: string,
+): string | null {
+  return officialNames(benchmarkId, tier).get(normalizeScenarioName(benchmarkId, raw)) ?? null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -164,8 +187,8 @@ export function scoreMatchesRank(
 
 export interface MappedBenchmark {
   readonly tier: TierId;
-  /** Saison des seuils et des noms utilisés pour la correspondance. */
-  readonly season: SeasonId;
+  /** Le benchmark dont les seuils et les noms ont servi à la correspondance. */
+  readonly benchmarkId: BenchmarkId;
   /** Nom officiel du scénario → score dans l'unité du tableur. */
   readonly scores: Readonly<Record<string, number>>;
   /** Les scénarios du palier restés sans score, et pourquoi. */
@@ -186,7 +209,7 @@ function toScoreUnit(raw: number): number {
  * en silence.
  */
 export function mapBenchmarkProgress(
-  season: SeasonId,
+  benchmarkId: BenchmarkId,
   tier: TierId,
   progress: KovaaksBenchmarkProgress,
 ): MappedBenchmark {
@@ -196,7 +219,7 @@ export function mapBenchmarkProgress(
 
   for (const category of Object.values(progress.categories)) {
     for (const [rawName, entry] of Object.entries(category.scenarios)) {
-      const scenario = voltaicScenarioName(season, tier, rawName);
+      const scenario = voltaicScenarioName(benchmarkId, tier, rawName);
 
       if (scenario === null) {
         unknown.push(rawName);
@@ -219,12 +242,12 @@ export function mapBenchmarkProgress(
 
   // Les 18 du palier font foi : un scénario que la source n'a pas mentionné du
   // tout est `absent`, et doit se voir dans le rapport comme les autres.
-  const missing = listScenariosFor(season, tier)
+  const missing = listScenariosFor(benchmarkId, tier)
     .filter((scenario) => scores[scenario.name] === undefined)
     .map((scenario) => ({
       scenario: scenario.name,
       reason: reasons.get(scenario.name) ?? "absent",
     }));
 
-  return { tier, season, scores, missing, unknown };
+  return { tier, benchmarkId, scores, missing, unknown };
 }

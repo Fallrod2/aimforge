@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CURRENT_SEASON, getTier } from "../../lib/energy";
+import { DEFAULT_BENCHMARK_ID, getTier } from "../../lib/energy";
 import type { BenchRunDetail, BenchRunSummary } from "../data";
 import { buildSeries, runRankColor } from "./series";
 
@@ -7,7 +7,7 @@ function summary(overrides: Partial<BenchRunSummary> & Pick<BenchRunSummary, "id
   return {
     date: "2026-03-01T13:00:00.000Z",
     tier: "novice",
-    season: CURRENT_SEASON,
+    benchmarkId: DEFAULT_BENCHMARK_ID,
     overall: 447.36,
     rank: "Gold",
     complete: false,
