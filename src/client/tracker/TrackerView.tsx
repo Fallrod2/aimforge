@@ -47,8 +47,10 @@ import {
 } from "../../lib/energy";
 import { useActiveBenchmark } from "../app/active-benchmark";
 import { BenchmarkNote } from "../components/BenchmarkNote";
+import { ConfirmButton, UndoToast } from "../components/Destructive";
 import { RankBadge } from "../components/RankBadge";
 import { Segmented } from "../components/Segmented";
+import { useConfirm, usePendingUndo } from "../components/useConfirm";
 import {
   type BenchRunSummary,
   importKovaaksScores,
@@ -67,6 +69,7 @@ import {
   draftScores,
   emptyDraft,
   setScoreInput,
+  type TierDraft,
   tierDraft,
 } from "./draft";
 import { GoalPanel } from "./GoalPanel";
@@ -105,6 +108,22 @@ interface TrackerViewProps {
   /** Ouvre l'historique sur la passe qui vient d'être enregistrée. */
   readonly onSaved: (run: BenchRunSummary) => void;
 }
+
+/**
+ * Le brouillon mis de côté par « Effacer la saisie », le temps de l'annuler.
+ *
+ * Il emporte son **palier** : cinq secondes suffisent à en changer, et remettre
+ * dix-huit scores Novice dans la grille Intermediate serait pire que de les
+ * avoir perdus.
+ */
+interface ClearedDraft {
+  readonly tier: TierId;
+  readonly scores: TierDraft;
+  readonly state: ImportState;
+}
+
+/** La clé du seul bouton destructif de l'écran (cf. `components/confirm.ts`). */
+const CLEAR_DRAFT = "tracker:effacer-la-saisie";
 
 /**
  * Les paliers proposés : ceux du benchmark **actif**, dans son ordre.
@@ -183,6 +202,16 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
    */
   const [manual, setManual] = useState<ManualTiers>(NO_MANUAL);
   const manualOpen = isManualOpen(manual, tier);
+  /** La confirmation en deux appuis d'« Effacer la saisie » (V5-A §5.4). */
+  const confirm = useConfirm();
+  /**
+   * Le brouillon effacé, gardé cinq secondes.
+   *
+   * Rien à faire au terme du délai : l'effacement a déjà eu lieu à l'écran, et
+   * aucun appel n'attend. Le délai ne sert qu'à garder de quoi revenir en
+   * arrière — passé lui, on lâche simplement la copie.
+   */
+  const cleared = usePendingUndo<ClearedDraft>(() => {});
 
   const importState = importStateFor(imports, tier);
   const importedTier = isImportedTier(imports, tier);
@@ -356,15 +385,52 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   function reset() {
     setSaved(null);
     setError(null);
+    // Le brouillon est **gardé cinq secondes** avant d'être vraiment perdu
+    // (V5-A §5.4) : dix-huit scores tapés à la main ne se rejouent pas, et
+    // l'effacement local est le seul de ces gestes qui soit réversible sans
+    // rien demander au serveur.
+    cleared.schedule({
+      tier,
+      scores: tierDraft(draft, tier),
+      state: importStateFor(imports, tier),
+    });
     setDraft((current) => clearTier(current, tier));
     // Effacer la saisie efface aussi sa provenance : ce qui sera tapé ensuite
     // ne vient plus de l'import. Les autres paliers gardent la leur.
     setImports((current) => clearImportState(current, tier));
   }
 
+  /** Remet le brouillon effacé, tel qu'il était, palier compris. */
+  function restore(): void {
+    const snapshot = cleared.pending;
+
+    if (snapshot === null) return;
+    setDraft((current) => ({ ...current, [snapshot.tier]: snapshot.scores }));
+    setImports((current) => withImportState(current, snapshot.tier, snapshot.state));
+    cleared.undo();
+  }
+
+  /**
+   * Le compte vierge lit le bandeau **avant** le reste (V5-A §5.5e).
+   *
+   * Sur téléphone, la colonne latérale passe la première dans le flux : c'est
+   * ce qu'on veut d'ordinaire — palier, énergie, objectif —, mais pas à
+   * quelqu'un qui n'a encore rien saisi. Il y voyait un panneau d'énergie vide
+   * et un objectif de rang sans repère avant qu'on lui ait dit d'où viennent
+   * les scores. L'ordre s'inverse donc dans ce seul cas, et seulement sous `lg`,
+   * où les deux colonnes sont côte à côte de toute façon.
+   */
+  const onboarding = showsOnboarding({
+    hasRuns: start.status === "ready" ? start.hasRuns : null,
+    hasDraft: !tierEmpty,
+    dismissed,
+  });
+
   return (
     <div className="grid gap-6 pb-24 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:pb-0">
-      <aside className="flex flex-col gap-4 lg:order-2 lg:sticky lg:top-24">
+      <aside
+        className={`flex flex-col gap-4 lg:order-2 lg:sticky lg:top-24 ${onboarding ? "order-2" : ""}`}
+      >
         <div>
           <p className="mb-2 text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
             Palier
@@ -401,21 +467,20 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
             saving={saving}
             hasDraft={Object.keys(tierDraft(draft, tier)).length > 0}
             onSave={save}
-            onReset={reset}
+            resetArmed={confirm.armed(CLEAR_DRAFT)}
+            onReset={() => {
+              if (confirm.press(CLEAR_DRAFT)) reset();
+            }}
           />
           <Feedback error={error} invalid={invalid} saved={saved} />
         </div>
       </aside>
 
-      <div className="flex flex-col gap-8 lg:order-1">
+      <div className={`flex flex-col gap-8 lg:order-1 ${onboarding ? "order-1" : ""}`}>
         {/* Les trois étapes, une seule fois, à un compte qui n'a ni passe ni
             saisie en cours. Elles passent **avant** l'import : c'est la seule
             chose à lire quand on ne sait pas encore d'où viennent les scores. */}
-        {showsOnboarding({
-          hasRuns: start.status === "ready" ? start.hasRuns : null,
-          hasDraft: !tierEmpty,
-          dismissed,
-        }) ? (
+        {onboarding ? (
           <OnboardingBanner
             benchmark={benchmark}
             onDismiss={() => {
@@ -522,7 +587,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           désormais l'overall dès qu'il existe, et l'énergie **partielle**
           étiquetée avant cela (§4.7), recalculée à chaque frappe comme le reste
           de l'écran. */}
-      <div className="fixed inset-x-0 bottom-16 z-10 border-t border-steel-800 bg-steel-950/95 px-4 py-3 backdrop-blur lg:hidden">
+      <div className="fixed inset-x-0 bottom-16 z-10 border-t border-steel-800 bg-surface/95 px-4 py-3 shadow-[var(--shadow-overlay)] backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="flex items-baseline gap-1.5">
@@ -547,9 +612,14 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
                 </span>
               ) : null}
             </p>
-            <p className="mt-1 truncate text-[11px] text-steel-500">
+            {/* « sous-cat. » et non « sous-catégories » : sur 390 px, la ligne
+                entière tenait dans la largeur restante puis se coupait en
+                « 1/9 sous… » — une troncature qui enlève précisément le mot qui
+                dit de quoi on parle (V5-A §5.5d). L'abréviation, elle, se lit
+                en entier. */}
+            <p className="mt-1 truncate text-[11px] text-steel-400">
               {computed.scores.length}/{scenarios.length} scénarios
-              {showPartial ? ` · ${partial.counted}/${partial.total} sous-catégories` : ""}
+              {showPartial ? ` · ${partial.counted}/${partial.total} sous-cat.` : ""}
             </p>
           </div>
           <RankBadge
@@ -564,6 +634,12 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           <Feedback error={error} invalid={invalid} saved={saved} />
         </div>
       </div>
+
+      {cleared.pending === null ? null : (
+        <UndoToast message="Saisie effacée." onUndo={restore}>
+          Le brouillon reste récupérable quelques secondes.
+        </UndoToast>
+      )}
     </div>
   );
 }
@@ -639,7 +715,7 @@ export function ImportPanel({
           type="button"
           disabled={busy}
           onClick={onRefresh}
-          className="shrink-0 rounded-md border border-steel-700 px-2.5 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:border-steel-800 disabled:text-steel-600"
+          className="shrink-0 rounded-md border border-steel-700 px-2.5 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:border-steel-800 disabled:text-steel-500"
         >
           {busy ? "Récupération…" : "Rafraîchir"}
         </button>
@@ -755,7 +831,7 @@ function TierSkeleton({ tier }: { readonly tier: TierId }) {
               >
                 <div className="flex items-baseline justify-between gap-3 border-b border-steel-800 pb-2">
                   <h3 className="text-sm font-medium text-steel-400">{subcategory.name}</h3>
-                  <p className="font-mono text-xs tabular-nums text-steel-600">—</p>
+                  <p className="font-mono text-xs tabular-nums text-steel-500">—</p>
                 </div>
                 <div className="divide-y divide-steel-800/70">
                   {subcategory.scenarios.map((scenario) => (
@@ -803,21 +879,23 @@ function SaveButton({ canSave, saving, onSave, compact = false }: SaveButtonProp
 
 interface SaveActionsProps extends SaveButtonProps {
   readonly hasDraft: boolean;
+  /** « Effacer la saisie » attend sa confirmation. */
+  readonly resetArmed: boolean;
   readonly onReset: () => void;
 }
 
-function SaveActions({ canSave, saving, hasDraft, onSave, onReset }: SaveActionsProps) {
+function SaveActions({ canSave, saving, hasDraft, onSave, resetArmed, onReset }: SaveActionsProps) {
   return (
     <div className="flex flex-col gap-2">
       <SaveButton canSave={canSave} saving={saving} onSave={onSave} />
-      <button
-        type="button"
+      <ConfirmButton
+        label="Effacer la saisie"
+        question="Effacer ?"
+        armed={resetArmed}
         disabled={!hasDraft || saving}
-        onClick={onReset}
-        className="rounded-lg border border-steel-700 px-4 py-2.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
-      >
-        Effacer la saisie
-      </button>
+        onPress={onReset}
+        sizeClasses="w-full px-4 py-2.5"
+      />
     </div>
   );
 }

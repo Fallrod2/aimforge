@@ -55,7 +55,10 @@ export function OnboardingBanner({ benchmark, onDismiss }: OnboardingBannerProps
         <button
           type="button"
           onClick={onDismiss}
-          className="shrink-0 rounded-md border border-steel-700 px-2 py-1 text-[11px] font-medium text-steel-400 transition-colors hover:border-steel-600 hover:text-steel-100"
+          // 44 px de cible (V5-A §5.5b) : le bouton en faisait 26,5, et c'est le
+          // seul geste que le bandeau propose. Un bouton qu'on rate trois fois
+          // n'est pas discret, il est agaçant.
+          className="inline-flex min-h-11 shrink-0 items-center rounded-md border border-steel-700 px-3 text-[11px] font-medium text-steel-400 transition-colors hover:border-steel-600 hover:text-steel-100"
         >
           J'ai compris
         </button>

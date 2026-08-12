@@ -3,5 +3,15 @@
   "framework": "vite",
   "installCommand": "bun install",
   "buildCommand": "bun run build",
-  "outputDirectory": "dist/client"
+  "outputDirectory": "dist/client",
+  "redirects": [
+    { "source": "/accueil", "destination": "/#/accueil", "permanent": false },
+    { "source": "/perfs", "destination": "/#/perfs", "permanent": false },
+    { "source": "/coach", "destination": "/#/coach", "permanent": false },
+    { "source": "/profil", "destination": "/#/profil", "permanent": false },
+    { "source": "/demo", "destination": "/#/demo", "permanent": false },
+    { "source": "/confidentialite", "destination": "/#/confidentialite", "permanent": false },
+    { "source": "/cgu", "destination": "/#/cgu", "permanent": false },
+    { "source": "/mentions-legales", "destination": "/#/mentions-legales", "permanent": false }
+  ]
 }

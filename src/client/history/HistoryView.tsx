@@ -33,8 +33,10 @@ import {
 } from "../../lib/energy";
 import { useActiveBenchmark } from "../app/active-benchmark";
 import { BenchmarkNote } from "../components/BenchmarkNote";
+import { UndoToast } from "../components/Destructive";
 import { Notice } from "../components/Notice";
 import { Segmented } from "../components/Segmented";
+import { useConfirm, usePendingUndo } from "../components/useConfirm";
 import { type BenchRunSummary, deleteBenchRun, listBenchRuns, listScenarioScores } from "../data";
 import { previousRun } from "../run-delta";
 import { benchRunsCsv, type CsvRun, csvFileName } from "./csv";
@@ -47,6 +49,21 @@ interface HistoryViewProps {
   /** Passe dépliée, portée par la route (un lien vers une passe reste valide). */
   readonly focusRunId: number | null;
   readonly onFocusRun: (runId: number | null) => void;
+  /**
+   * La vue est à l'écran.
+   *
+   * Elle reste **montée quand elle ne l'est pas** (`perfs/mounted.ts`) : elle
+   * porte la fenêtre d'annulation de cinq secondes d'une suppression, et la
+   * démonter la refermerait sur-le-champ. La contrepartie est ici — le
+   * démontage rechargeait la liste gratuitement, donc c'est le retour à l'écran
+   * qui s'en charge désormais. Sans quoi une passe enregistrée à la saisie, qui
+   * navigue justement jusqu'ici, manquerait à la liste au moment précis où l'on
+   * vient la voir.
+   *
+   * Par défaut `true` : montée, une vue est visible — c'est Perfs, et lui seul,
+   * qui en cache une.
+   */
+  readonly visible?: boolean;
 }
 
 type Loadable =
@@ -86,14 +103,12 @@ function downloadText(content: string, fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
+export function HistoryView({ focusRunId, onFocusRun, visible = true }: HistoryViewProps) {
   const { benchmarkId, benchmark } = useActiveBenchmark();
   const tierOptions = useMemo(() => tierOptionsFor(benchmarkId), [benchmarkId]);
   const [state, setState] = useState<Loadable>({ status: "loading" });
   const [tier, setTier] = useState<TierId | null>(null);
   const [subcategory, setSubcategory] = useState<string | null>(null);
-  const [confirmingId, setConfirmingId] = useState<number | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -136,11 +151,34 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
     }
   }, []);
 
+  // Au premier affichage, puis à chaque retour à l'écran. Rien n'est lu tant
+  // que la vue est cachée : une liste qu'on ne regarde pas n'a pas à être
+  // fraîche, et le nombre de requêtes reste celui d'avant, quand chaque retour
+  // remontait le composant.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (visible) void load();
+  }, [load, visible]);
 
-  const runs = state.status === "ready" ? state.runs : [];
+  /** La confirmation en deux appuis, partagée par toutes les lignes. */
+  const confirm = useConfirm();
+  /**
+   * La passe supprimée qui attend son « Annuler ».
+   *
+   * Elle est **cachée** de la liste plutôt qu'enlevée : l'annulation n'a alors
+   * rien à réinsérer, et surtout rien à re-trier.
+   *
+   * Le filtre est posé **à la source**, sur `runs`, et pas au moment d'afficher
+   * les lignes : tout ce qui compte des passes en dérive — le décompte par
+   * palier, celui des autres barèmes, la passe précédente, l'export CSV. Filtrer
+   * plus bas aurait laissé la passe supprimée dans les totaux et dans le
+   * fichier exporté pendant cinq secondes.
+   */
+  const removed = usePendingUndo<BenchRunSummary>((run) => void commitDelete(run));
+  const hiddenId = removed.pending?.id ?? null;
+  const runs = useMemo(
+    () => (state.status === "ready" ? state.runs.filter((run) => run.id !== hiddenId) : []),
+    [state, hiddenId],
+  );
   /**
    * Le palier affiché, **ramené dans le benchmark actif**.
    *
@@ -200,7 +238,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
 
   function changeTier(next: TierId): void {
     setTier(next);
-    setConfirmingId(null);
+    confirm.cancel();
     setDeleteError(null);
     onFocusRun(null);
   }
@@ -248,34 +286,72 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
     }
   }
 
-  async function confirmDelete(id: number): Promise<void> {
-    setDeletingId(id);
+  /**
+   * La suppression **différée** (V5-A §5.4).
+   *
+   * L'appel ne part qu'au bout de cinq secondes. Entre-temps la passe a
+   * simplement disparu de la liste — c'est le filtre `hiddenId` ci-dessus qui
+   * l'escamote, pas une modification de `state`. Rien n'a donc à être remis à sa
+   * place si l'utilisateur annule : la liste n'a jamais changé, et l'ordre
+   * chronologique se retrouve intact sans qu'on ait à le recalculer.
+   */
+  async function commitDelete(run: BenchRunSummary): Promise<void> {
     setDeleteError(null);
     try {
-      await deleteBenchRun(id);
+      await deleteBenchRun(run.id);
       setState((current) =>
         current.status === "ready"
-          ? { status: "ready", runs: current.runs.filter((run) => run.id !== id) }
+          ? { status: "ready", runs: current.runs.filter((entry) => entry.id !== run.id) }
           : current,
       );
-      details.forget(id);
-      setConfirmingId(null);
-      if (focusRunId === id) onFocusRun(null);
+      details.forget(run.id);
     } catch (cause) {
+      // Le délai est passé, l'appel a échoué : la passe **réapparaît**, puisque
+      // rien n'a été retiré de la liste. L'erreur dit pourquoi.
       setDeleteError(failureMessage(cause, "La suppression a échoué."));
-    } finally {
-      setDeletingId(null);
     }
   }
 
+  function askDelete(run: BenchRunSummary): void {
+    if (!confirm.press(`run-${run.id}`)) return;
+    if (focusRunId === run.id) onFocusRun(null);
+    removed.schedule(run);
+  }
+
+  /**
+   * Le toast d'annulation, rendu par **les trois** sorties de la fonction.
+   *
+   * Il ne dépend pas de l'état de chargement : la suppression est en attente,
+   * qu'on soit en train de relire la liste ou qu'on ait échoué à la relire. Le
+   * laisser sous le seul rendu nominal le faisait disparaître pendant le
+   * rechargement déclenché au retour à l'écran — c'est-à-dire précisément
+   * pendant la seconde où l'utilisateur revient pour cliquer « Annuler ».
+   */
+  const undo =
+    removed.pending === null ? null : (
+      <UndoToast message="Passe supprimée." onUndo={removed.undo} />
+    );
+
   if (state.status === "loading") {
-    return <Notice tone="loading" title="Chargement de l'historique…" />;
+    return (
+      <>
+        <Notice tone="loading" title="Chargement de l'historique…" />
+        {undo}
+      </>
+    );
   }
   if (state.status === "error") {
     return (
-      <Notice tone="error" title="L'historique n'a pas pu être chargé." onRetry={() => void load()}>
-        {state.message}
-      </Notice>
+      <>
+        <Notice
+          tone="error"
+          title="L'historique n'a pas pu être chargé."
+          onRetry={() => void load()}
+        >
+          {state.message}
+        </Notice>
+        {undo}
+      </>
     );
   }
 
@@ -307,7 +383,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
               type="button"
               onClick={() => void exportCsv()}
               disabled={exporting}
-              className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
+              className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-500"
             >
               {exporting ? "Export…" : "Exporter (CSV)"}
             </button>
@@ -341,7 +417,10 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
                 <select
                   value={subcategory ?? ""}
                   onChange={(event) => setSubcategory(event.target.value || null)}
-                  className="min-w-0 rounded-lg border border-steel-700 bg-steel-800 px-2.5 py-1.5 text-xs text-steel-100 transition-colors hover:border-steel-600"
+                  // Même plancher tactile que le sélecteur d'objectif de rang
+                  // (V5-A §5.5c) : deux `select` de hauteurs différentes dans
+                  // la même application, c'est un des deux qui est faux.
+                  className="min-h-11 min-w-0 rounded-lg border border-steel-700 bg-steel-800 px-2.5 py-1.5 text-xs text-steel-100 transition-colors hover:border-steel-600"
                 >
                   <option value="">Aucune</option>
                   {listSubcategories(activeTier).map((sub) => (
@@ -387,19 +466,18 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
                 detailError={focusRunId === run.id ? details.error : null}
                 expanded={focusRunId === run.id}
                 onToggle={() => {
-                  setConfirmingId(null);
+                  confirm.cancel();
                   onFocusRun(focusRunId === run.id ? null : run.id);
                 }}
-                confirming={confirmingId === run.id}
-                deleting={deletingId === run.id}
-                onAskDelete={() => setConfirmingId(run.id)}
-                onCancelDelete={() => setConfirmingId(null)}
-                onConfirmDelete={() => void confirmDelete(run.id)}
+                deleteArmed={confirm.armed(`run-${run.id}`)}
+                onPressDelete={() => askDelete(run)}
               />
             ))}
           </ul>
         </>
       )}
+
+      {undo}
     </div>
   );
 }

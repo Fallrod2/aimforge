@@ -1,0 +1,16 @@
+# AimForge — https://aimforge.alexabriel.com
+#
+# Rien à cacher aux robots : la seule chose qu'un crawler puisse obtenir sans
+# session, c'est la page d'entrée, la démonstration et les pages légales. Tout
+# le reste de l'application est derrière une authentification côté client, donc
+# derrière un écran de connexion pour qui n'a pas de session — un `Disallow`
+# n'ajouterait aucune protection, il ne ferait que documenter des chemins.
+#
+# Les routes de l'application sont des fragments (`/#/perfs`) : un fragment
+# n'est jamais envoyé au serveur, donc jamais visible d'un robot. Il n'y a rien
+# à autoriser ou à interdire à ce niveau-là.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://aimforge.alexabriel.com/sitemap.xml

@@ -81,10 +81,18 @@ export function GenerationProgress({
   );
 }
 
+/**
+ * Trois clartés pour trois états, toutes au-dessus d'AA (V5-A §5.1).
+ *
+ * L'étape à venir était en `steel-600` — 1,93:1 sur une carte, c'est-à-dire
+ * illisible. La remonter a demandé de redescendre l'étape franchie d'un cran,
+ * sans quoi les deux se seraient confondues : ce qui compte ici n'est pas la
+ * teinte, c'est qu'on voie d'un coup d'œil où en est la génération.
+ */
 const LABEL_CLASSES: Readonly<Record<StepState, string>> = {
-  done: "text-steel-500",
+  done: "text-steel-400",
   active: "text-steel-200",
-  pending: "text-steel-600",
+  pending: "text-steel-500",
 };
 
 function Step({ step }: { readonly step: RenderedStep }) {
@@ -113,7 +121,7 @@ function Bullet({ state }: { readonly state: StepState }) {
     <span
       aria-hidden="true"
       className={`inline-block size-3 shrink-0 rounded-full border-2 ${
-        state === "done" ? "border-steel-600 bg-steel-600" : "border-steel-800"
+        state === "done" ? "border-steel-500 bg-steel-500" : "border-steel-700"
       }`}
     />
   );

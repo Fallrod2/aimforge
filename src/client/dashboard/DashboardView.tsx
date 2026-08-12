@@ -99,7 +99,7 @@ const COACH_HASH = routeHash({ view: "coach" });
 
 /** Le geste principal d'un emplacement vide. Un seul par carte, jamais deux. */
 const PRIMARY_ACTION =
-  "rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500";
+  "rounded-lg bg-brand-fill px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-fill-hover";
 
 function historyHash(runId: number | null): string {
   const route: RouteTarget = { view: "perfs", tab: "historique", runId };

@@ -110,7 +110,7 @@ export function DemoView() {
           </div>
         </div>
 
-        <p className="text-xs leading-relaxed text-steel-600">
+        <p className="text-xs leading-relaxed text-steel-500">
           La démo ne montre ni tes parties Valorant ni le coach : les deux dépendent de tes propres
           données, et un exemple de réponse d'IA n'en serait pas un.
         </p>
@@ -137,7 +137,7 @@ function DemoBanner() {
       </p>
       <a
         href={AUTH_HASH}
-        className="shrink-0 rounded-lg bg-ember-600 px-4 py-2 text-center text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 sm:ml-auto"
+        className="shrink-0 rounded-lg bg-brand-fill px-4 py-2 text-center text-xs font-semibold text-white transition-colors hover:bg-brand-fill-hover sm:ml-auto"
       >
         Créer un compte
       </a>

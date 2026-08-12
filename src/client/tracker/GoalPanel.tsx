@@ -46,7 +46,10 @@ export function GoalPanel({ tier, tierLabel, goal, progress, onGoalChange }: Goa
         id={selectId}
         value={goal ?? ""}
         onChange={(event) => onGoalChange(event.target.value === "" ? null : event.target.value)}
-        className="mt-2 w-full rounded-lg border border-steel-700 bg-steel-800 px-2.5 py-2 text-xs text-steel-100 transition-colors hover:border-steel-600"
+        // 44 px (V5-A §5.5c) : il en faisait 35. Un `select` natif ne se règle
+        // pas par le padding sur tous les navigateurs — c'est `min-h-11` qui
+        // fait foi ici.
+        className="mt-2 min-h-11 w-full rounded-lg border border-steel-700 bg-steel-800 px-2.5 py-2 text-xs text-steel-100 transition-colors hover:border-steel-600"
       >
         <option value="">Aucun</option>
         {ranks.map((rank) => (

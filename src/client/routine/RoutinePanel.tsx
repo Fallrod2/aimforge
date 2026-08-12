@@ -46,8 +46,10 @@ import { DUREE_PRESETS, MAX_FOCUS_LENGTH, type StoredRoutine } from "../../share
 import { GenerationProgress } from "../coach/GenerationProgress";
 import { upsertById, useGeneration } from "../coach/generation-store";
 import { ROUTINE_EXPECTATION, ROUTINE_STEPS } from "../coach/progress";
+import { UndoToast } from "../components/Destructive";
 import { Notice } from "../components/Notice";
 import { QuotaNote } from "../components/QuotaNote";
+import { useConfirm, usePendingUndo } from "../components/useConfirm";
 import { deleteRoutine, listRoutines, setRoutineDone } from "../data";
 import { formatDuration, normalizeFocus, parseDuration } from "./duration";
 import { routineGeneration } from "./generation";
@@ -85,9 +87,17 @@ export function RoutinePanel() {
   const [freshId, setFreshId] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
-  const [confirmingId, setConfirmingId] = useState<number | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
+  /** La confirmation en deux appuis, partagée par la carte du jour et les passées. */
+  const confirm = useConfirm();
+  /**
+   * La routine supprimée qui attend son « Annuler » (V5-A §5.4).
+   *
+   * Elle est **cachée** de la liste plutôt qu'enlevée : l'annulation n'a alors
+   * rien à réinsérer, et la routine du jour retrouve sa place — y compris son
+   * statut de routine du jour, que `latestOfLocalDay` recalcule tout seul.
+   */
+  const removed = usePendingUndo<StoredRoutine>((routine) => void commitDelete(routine));
   /** Le formulaire, quand une routine du jour existe déjà : replié par défaut. */
   const [formOpen, setFormOpen] = useState(false);
   const [pastOpen, setPastOpen] = useState(false);
@@ -191,27 +201,37 @@ export function RoutinePanel() {
     }
   }
 
-  async function confirmDelete(id: number): Promise<void> {
-    setDeletingId(id);
+  /** L'appel réel, cinq secondes après le geste — s'il n'a pas été annulé. */
+  async function commitDelete(routine: StoredRoutine): Promise<void> {
     setRowError(null);
     try {
-      await deleteRoutine(id);
+      await deleteRoutine(routine.id);
       setHistory((current) =>
         current.status === "ready"
-          ? { status: "ready", routines: current.routines.filter((entry) => entry.id !== id) }
+          ? {
+              status: "ready",
+              routines: current.routines.filter((entry) => entry.id !== routine.id),
+            }
           : current,
       );
-      setConfirmingId(null);
-      if (freshId === id) setFreshId(null);
-      if (expandedId === id) setExpandedId(null);
     } catch (cause) {
+      // Rien n'avait été retiré de la liste : la routine réapparaît d'elle-même,
+      // et le message dit pourquoi.
       setRowError(cause instanceof Error ? cause.message : "La suppression a échoué.");
-    } finally {
-      setDeletingId(null);
     }
   }
 
-  const routines = history.status === "ready" ? history.routines : [];
+  function askDelete(routine: StoredRoutine): void {
+    if (!confirm.press(`routine-${routine.id}`)) return;
+    if (freshId === routine.id) setFreshId(null);
+    if (expandedId === routine.id) setExpandedId(null);
+    removed.schedule(routine);
+  }
+
+  const hiddenId = removed.pending?.id ?? null;
+  const routines = (history.status === "ready" ? history.routines : []).filter(
+    (routine) => routine.id !== hiddenId,
+  );
   const today = latestOfLocalDay(routines);
   const past = routines.filter((routine) => routine.id !== today?.id);
   // La régularité se lit dans la liste déjà chargée : aucune requête de plus.
@@ -229,16 +249,13 @@ export function RoutinePanel() {
       fresh: routine.id === freshId,
       expanded: routine.id === expandedId,
       onToggle: () => {
-        setConfirmingId(null);
+        confirm.cancel();
         setExpandedId(expandedId === routine.id ? null : routine.id);
       },
       toggling: togglingId === routine.id,
       onToggleDone: () => void toggleDone(routine),
-      confirming: confirmingId === routine.id,
-      deleting: deletingId === routine.id,
-      onAskDelete: () => setConfirmingId(routine.id),
-      onCancelDelete: () => setConfirmingId(null),
-      onConfirmDelete: () => void confirmDelete(routine.id),
+      deleteArmed: confirm.armed(`routine-${routine.id}`),
+      onPressDelete: () => askDelete(routine),
     };
   }
 
@@ -368,7 +385,7 @@ export function RoutinePanel() {
                   aria-invalid={showDurationError}
                   aria-describedby={showDurationError ? "routine-duree-error" : undefined}
                   onChange={(event) => setLibre(event.target.value)}
-                  className="w-full max-w-56 rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 font-mono text-sm text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none"
+                  className="w-full max-w-56 rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 font-mono text-sm text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500"
                 />
                 {showDurationError ? (
                   <p id="routine-duree-error" className="text-xs text-ember-400">
@@ -392,7 +409,7 @@ export function RoutinePanel() {
               disabled={generating}
               placeholder="Ex. tracking, ou entrées sur A"
               onChange={(event) => setFocus(event.target.value)}
-              className="w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60"
+              className="w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500 disabled:opacity-60"
             />
           </div>
 
@@ -448,6 +465,10 @@ export function RoutinePanel() {
             </ul>
           ) : null}
         </div>
+      )}
+
+      {removed.pending === null ? null : (
+        <UndoToast message="Routine supprimée." onUndo={removed.undo} />
       )}
     </section>
   );

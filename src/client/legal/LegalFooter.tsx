@@ -22,7 +22,12 @@ interface LegalFooterProps {
 export function LegalFooter({ className = "" }: LegalFooterProps) {
   return (
     <footer className={`border-t border-steel-900 ${className}`}>
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-6 text-xs text-steel-600 sm:px-6">
+      {/* `steel-400` et non `steel-500` : le pied de page est le seul endroit
+          qui se lise sur le fond nu **et** au bas d'une page dense, où l'œil
+          arrive fatigué. Il était en `steel-600` — 2,00:1, soit trois fois moins
+          que le seuil AA — ; `steel-400` le remonte à 5,40:1 sans en faire une
+          navigation (cf. `contrast.test.ts`). */}
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-6 text-xs text-steel-400 sm:px-6">
         <span>© 2026 AimForge</span>
         <nav
           aria-label="Informations légales"

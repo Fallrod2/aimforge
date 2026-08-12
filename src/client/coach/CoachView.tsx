@@ -208,7 +208,7 @@ export function CoachView({ initialStats }: CoachViewProps = {}) {
           placeholder={PLACEHOLDER}
           aria-describedby="coach-stats-count"
           onChange={(event) => setStats(event.target.value)}
-          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 font-mono text-xs leading-relaxed text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60"
+          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 font-mono text-xs leading-relaxed text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500 disabled:opacity-60"
         />
 
         <div className="flex flex-wrap items-center gap-3">

@@ -204,9 +204,11 @@ function SubcategoryProgress({
 }) {
   return (
     <div>
-      <div className="h-2.5 w-full overflow-hidden rounded-full bg-steel-800">
+      {/* Mêmes jetons que `EnergyRail` : deux jauges côte à côte qui ne se
+          liraient pas pareil seraient deux échelles différentes. */}
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-rail-track">
         <div
-          className="h-full rounded-full bg-steel-500 transition-[width] duration-300 ease-out"
+          className="h-full rounded-full bg-rail-fill transition-[width] duration-300 ease-out"
           style={{ width: `${(counted / total) * 100}%` }}
         />
       </div>

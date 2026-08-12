@@ -151,7 +151,10 @@ export function AppLayout({ route, children }: AppLayoutProps) {
 
       <nav
         aria-label="Sections"
-        className={`fixed inset-x-0 bottom-0 z-20 border-t border-steel-800 bg-steel-950/95 backdrop-blur lg:hidden ${BOTTOM_BAR_HEIGHT}`}
+        // Même recette d'élévation que la barre de sauvegarde du tracker : ce
+        // qui flotte se dit d'une seule façon (jetons `--shadow-overlay` et
+        // `--color-surface`, V5-A §5.2).
+        className={`fixed inset-x-0 bottom-0 z-20 border-t border-steel-800 bg-surface/95 shadow-[var(--shadow-overlay)] backdrop-blur lg:hidden ${BOTTOM_BAR_HEIGHT}`}
       >
         {/* Trois colonnes, imposées : `grid-cols-3` plutôt qu'un `grid-flow-col`
             qui suivrait le nombre d'entrées. La largeur d'une cible est une

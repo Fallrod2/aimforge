@@ -10,10 +10,12 @@
 
 import type { Session, User } from "@supabase/supabase-js";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { syncCurrentBenchmark } from "../../lib/energy";
 import { supabase } from "../supabase/client";
 import { browserRecoveryStore, clearRecoveryPending, trackRecovery } from "./recovery";
+import { type AuthStatus, sessionEffect } from "./session-effect";
 
-export type AuthStatus = "loading" | "anonymous" | "authenticated";
+export type { AuthStatus };
 
 export interface AuthState {
   readonly status: AuthStatus;
@@ -45,6 +47,27 @@ const AuthContext = createContext<AuthState | null>(null);
  */
 const recoveryStore = browserRecoveryStore();
 
+/**
+ * Retire à `src/lib/energy` le benchmark du compte qui s'en va (cause racine
+ * relevée en revue V4-B, élargie en revue V5-A).
+ *
+ * La lib garde son benchmark dans un **pointeur de module**, hors de React :
+ * `ActiveBenchmarkProvider` l'aligne à l'ouverture de session, mais rien ne le
+ * remettait en place à la fermeture. Un compte réglé sur Viscose laissait donc
+ * ce pointeur derrière lui, et l'écran suivant — landing, démo publique, ou une
+ * autre session ouverte dans le même onglet — calculait des énergies avec les
+ * seuils d'un barème que personne n'avait choisi.
+ *
+ * Deux appelants, une seule décision (`sessionEffect`) : le rappel de session,
+ * qui couvre **toutes** les déconnexions y compris celles que personne n'a
+ * demandées, et `signOut`, qui la joue en plus avant son appel réseau.
+ */
+function releaseBenchmark(): void {
+  const { benchmarkReset } = sessionEffect(false);
+
+  if (benchmarkReset !== null) syncCurrentBenchmark(benchmarkReset);
+}
+
 export function AuthProvider({ children }: { readonly children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [session, setSession] = useState<Session | null>(null);
@@ -66,8 +89,19 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
     const apply = (event: string, next: Session | null) => {
       if (!active) return;
       settled = true;
+
+      /**
+       * Toute la conséquence d'un changement de session passe par ici, y
+       * compris les déconnexions que personne n'a demandées — jeton expiré,
+       * session révoquée ailleurs (`./session-effect.ts`). C'est le seul point
+       * que tous les chemins traversent : `signOut` en fait aussi partie, via
+       * le `SIGNED_OUT` qu'il déclenche.
+       */
+      const effect = sessionEffect(next !== null);
+
       setSession(next);
-      setStatus(next === null ? "anonymous" : "authenticated");
+      setStatus(effect.status);
+      if (effect.benchmarkReset !== null) syncCurrentBenchmark(effect.benchmarkReset);
       setRecovering(trackRecovery(recoveryStore, event, next?.user.id ?? null));
     };
 
@@ -80,7 +114,12 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
         if (!settled) apply("INITIAL_SESSION", data.session);
       })
       .catch(() => {
-        if (active && !settled) setStatus("anonymous");
+        if (!active || settled) return;
+        // Une session illisible est une session absente : mêmes conséquences,
+        // pointeur de benchmark compris. Le marqueur de récupération, lui,
+        // n'est pas touché — on ne sait rien, on ne conclut rien à son sujet.
+        setStatus(sessionEffect(false).status);
+        releaseBenchmark();
       });
 
     const { data } = supabase.auth.onAuthStateChange((event, next) => {
@@ -108,6 +147,10 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
         // derrière elle. `SIGNED_OUT` le nettoiera de nouveau, sans effet.
         clearRecoveryPending(recoveryStore);
         setRecovering(false);
+        // Comme le marqueur : **avant** l'appel réseau. `apply` le refera au
+        // `SIGNED_OUT`, sans effet — mais une déconnexion qui échoue côté
+        // serveur ne doit pas laisser derrière elle le barème du compte.
+        releaseBenchmark();
         await supabase.auth.signOut();
       },
       endRecovery: () => {

@@ -77,7 +77,7 @@ export function RecoveryView() {
         <button
           type="submit"
           disabled={busy}
-          className="rounded-lg bg-ember-600 px-4 py-3 text-sm font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
+          className="rounded-lg bg-brand-fill px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:opacity-50"
         >
           {busy ? "Enregistrement…" : "Enregistrer"}
         </button>

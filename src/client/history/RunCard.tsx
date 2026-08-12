@@ -8,6 +8,7 @@
 
 import { getTierFor, listScenariosFor } from "../../lib/energy";
 import { DeltaBadge } from "../components/Delta";
+import { ConfirmButton } from "../components/Destructive";
 import { EnergyRail } from "../components/EnergyRail";
 import { RankBadge } from "../components/RankBadge";
 import type { BenchRunDetail, BenchRunSummary } from "../data";
@@ -28,12 +29,10 @@ interface RunCardProps {
   readonly detailError: string | null;
   readonly expanded: boolean;
   readonly onToggle: () => void;
-  /** `true` tant que l'utilisateur n'a pas confirmé la suppression. */
-  readonly confirming: boolean;
-  readonly deleting: boolean;
-  readonly onAskDelete: () => void;
-  readonly onCancelDelete: () => void;
-  readonly onConfirmDelete: () => void;
+  /** Le bouton attend sa confirmation (`../components/confirm.ts`). */
+  readonly deleteArmed: boolean;
+  /** Les deux appuis passent par le même rappel : la machine les distingue. */
+  readonly onPressDelete: () => void;
 }
 
 export function RunCard({
@@ -43,11 +42,8 @@ export function RunCard({
   detailError,
   expanded,
   onToggle,
-  confirming,
-  deleting,
-  onAskDelete,
-  onCancelDelete,
-  onConfirmDelete,
+  deleteArmed,
+  onPressDelete,
 }: RunCardProps) {
   // Les libellés, l'échelle et les seuils viennent du benchmark **de la
   // passe** : une passe d'archive ne se relit pas avec les seuils du jour.
@@ -100,36 +96,19 @@ export function RunCard({
             <RunDetailBody detail={detail} previous={previous} />
           )}
 
+          {/* La suppression tient désormais dans un seul bouton (V5-A §5.4) :
+              il devient « Supprimer définitivement ? » pendant quatre secondes,
+              puis la passe part — avec cinq secondes pour l'annuler. Le panneau
+              de confirmation qui poussait la mise en page vers le bas a
+              disparu : rien ne bouge sous le doigt entre les deux appuis. */}
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
-            {confirming ? (
-              <>
-                <p className="mr-auto text-xs text-steel-400">Supprimer définitivement ?</p>
-                <button
-                  type="button"
-                  onClick={onCancelDelete}
-                  disabled={deleting}
-                  className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:text-steel-100 disabled:opacity-50"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="button"
-                  onClick={onConfirmDelete}
-                  disabled={deleting}
-                  className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
-                >
-                  {deleting ? "Suppression…" : "Confirmer"}
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={onAskDelete}
-                className="ml-auto rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-400 transition-colors hover:border-ember-600 hover:text-ember-400"
-              >
-                Supprimer cette passe
-              </button>
-            )}
+            <ConfirmButton
+              label="Supprimer cette passe"
+              question="Supprimer définitivement ?"
+              armed={deleteArmed}
+              onPress={onPressDelete}
+              className="ml-auto"
+            />
           </div>
         </div>
       ) : null}
@@ -189,7 +168,7 @@ function RunDetailBody({
                   {sub.energy > 0 ? (
                     formatEnergy(sub.energy)
                   ) : (
-                    <span className="text-steel-600">—</span>
+                    <span className="text-steel-500">—</span>
                   )}
                 </span>
                 <DeltaBadge delta={deltas.get(sub.name) ?? null} label={sub.name} size="sm" />
@@ -217,10 +196,10 @@ function RunDetailBody({
                   {scenarioLabel(scenario.name, tier.label, detail.benchmarkId)}
                 </span>
                 <span className="text-right font-mono text-xs tabular-nums text-steel-200">
-                  {row ? formatScore(row.score) : <span className="text-steel-600">—</span>}
+                  {row ? formatScore(row.score) : <span className="text-steel-500">—</span>}
                 </span>
                 <span className="text-right font-mono text-xs tabular-nums text-steel-400">
-                  {row ? formatEnergy(row.energy) : <span className="text-steel-600">—</span>}
+                  {row ? formatEnergy(row.energy) : <span className="text-steel-500">—</span>}
                 </span>
               </li>
             );

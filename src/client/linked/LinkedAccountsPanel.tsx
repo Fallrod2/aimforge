@@ -33,7 +33,7 @@ import { routeHash } from "../route";
 import type { LinkedAccountsHandle } from "./useLinkedAccounts";
 
 const CONTROL_CLASSES =
-  "w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60";
+  "w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500 disabled:opacity-60";
 
 const PRIMARY_BUTTON =
   "rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500";
@@ -46,7 +46,7 @@ const PRIMARY_BUTTON =
  * `inline-flex` recentre le libellé dans la hauteur ainsi imposée.
  */
 const GHOST_BUTTON =
-  "inline-flex min-h-8 items-center rounded-lg border border-steel-700 px-3 py-2 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600";
+  "inline-flex min-h-8 items-center rounded-lg border border-steel-700 px-3 py-2 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-500";
 
 function message(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;

@@ -156,7 +156,7 @@ export function AuthView() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3 text-[11px] tracking-[0.18em] text-steel-600 uppercase">
+        <div className="flex items-center gap-3 text-[11px] tracking-[0.18em] text-steel-500 uppercase">
           <span className="h-px flex-1 bg-steel-800" />
           ou
           <span className="h-px flex-1 bg-steel-800" />
@@ -204,7 +204,7 @@ export function AuthView() {
           <button
             type="submit"
             disabled={busy !== null || consentMissing}
-            className="rounded-lg bg-ember-600 px-4 py-3 text-sm font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
+            className="rounded-lg bg-brand-fill px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:opacity-50"
           >
             {busy === "form" ? "Un instant…" : SUBMIT_LABEL[mode]}
           </button>

@@ -127,6 +127,17 @@ exemple », aucun appel réseau, pas de faux coach ni de fausses conversations.
 La landing rend les mêmes composants en visuels vivants plutôt que des
 captures figées : impossible à désynchroniser du produit.
 
+## D17 — SEO : redirections d'URLs propres maintenant, routing history différé
+Basculer tout le routeur en history (`/perfs` au lieu de `/#/perfs`) en fin de
+run autonome, juste après une refonte de navigation fraîchement testée, est le
+genre de changement large qui mérite une session dédiée avec vérification
+humaine. Fait cette nuit : robots.txt, sitemap.xml, page 404, et des
+redirections Vercel `/perfs` → `/#/perfs` (URLs propres partageables — 90 % de
+la valeur pour 5 % du risque). Différés avec ce raisonnement : routing history
+complet + prerender/SSG de la landing (le `<head>` OG/description est déjà
+statique dans index.html, les crawlers modernes exécutent le JS — la perte
+SEO immédiate est faible).
+
 ## D9 — Piège d'outillage : gabarit d'environnement masqué par le sandbox
 Le sandbox de la session refuse la lecture des fichiers d'environnement à la
 racine : git voit alors le gabarit d'exemple comme « supprimé » alors qu'il

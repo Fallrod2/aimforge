@@ -125,7 +125,7 @@ export function LandingView() {
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <a
               href={AUTH_HASH}
-              className="rounded-lg bg-ember-600 px-5 py-3 text-center text-sm font-semibold text-steel-100 transition-colors hover:bg-ember-500"
+              className="rounded-lg bg-brand-fill px-5 py-3 text-center text-sm font-semibold text-white transition-colors hover:bg-brand-fill-hover"
             >
               Créer un compte
             </a>
@@ -136,7 +136,7 @@ export function LandingView() {
               Voir la démo
             </a>
           </div>
-          <p className="mt-3 text-xs text-steel-600">
+          <p className="mt-3 text-xs text-steel-500">
             La démo s'ouvre sans compte : chiffres d'exemple, vrais écrans.
           </p>
         </section>
@@ -223,14 +223,14 @@ export function LandingView() {
             </ul>
             <a
               href={AUTH_HASH}
-              className="mt-5 inline-block rounded-lg bg-ember-600 px-5 py-3 text-sm font-semibold text-steel-100 transition-colors hover:bg-ember-500"
+              className="mt-5 inline-block rounded-lg bg-brand-fill px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-fill-hover"
             >
               Créer un compte
             </a>
           </div>
         </Section>
 
-        <p className="mt-12 text-xs text-steel-600">
+        <p className="mt-12 text-xs text-steel-500">
           Tes données t'appartiennent : chaque compte ne lit et n'écrit que ses propres lignes.
         </p>
       </main>

@@ -159,7 +159,7 @@ function Live({ account }: { readonly account: LinkedAccount }) {
           type="button"
           disabled={refreshing}
           onClick={() => void refresh()}
-          className="ml-auto rounded-lg border border-steel-700 px-3 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
+          className="ml-auto rounded-lg border border-steel-700 px-3 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-500"
         >
           {refreshing ? "Mise à jour…" : "Rafraîchir"}
         </button>

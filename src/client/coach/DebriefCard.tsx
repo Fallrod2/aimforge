@@ -142,7 +142,7 @@ export function DebriefCard({
                     type="button"
                     onClick={onConfirmDelete}
                     disabled={deleting}
-                    className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
+                    className="rounded-lg bg-brand-fill px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:opacity-50"
                   >
                     {deleting ? "Suppression…" : "Confirmer"}
                   </button>

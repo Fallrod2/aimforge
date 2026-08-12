@@ -71,7 +71,7 @@ export function ScenarioRow({
           aria-invalid={invalid}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className={`h-11 w-full rounded-md border bg-steel-800 px-3 text-right font-mono text-base tabular-nums text-steel-100 transition-colors placeholder:text-steel-600 @lg:h-10 @lg:text-sm ${
+          className={`h-11 w-full rounded-md border bg-steel-800 px-3 text-right font-mono text-base tabular-nums text-steel-100 transition-colors placeholder:text-steel-400 @lg:h-10 @lg:text-sm ${
             invalid
               ? "border-ember-500 text-ember-400"
               : beatsBest
@@ -92,7 +92,11 @@ export function ScenarioRow({
 
       <div className="col-start-1 flex min-w-0 flex-col gap-1.5 @lg:col-start-3">
         <EnergyRail tier={tier} energy={energy} />
-        <p className="truncate text-[11px] text-steel-500">
+        {/* `steel-400` (5,21:1) et non `steel-500` : cette ligne porte « Non
+            joué », c'est-à-dire l'état d'un scénario, en 11 px. La mesure de
+            production la donnait à ~4:1 — sous AA pour le seul texte qui dise
+            qu'il n'y a rien à lire au-dessus. */}
+        <p className="truncate text-[11px] text-steel-400">
           {invalid ? (
             <span className="text-ember-400">Score attendu : un nombre positif</span>
           ) : target ? (
@@ -108,7 +112,7 @@ export function ScenarioRow({
       </div>
 
       <p className="self-start text-right font-mono text-sm tabular-nums text-steel-300 @lg:self-center">
-        {energy > 0 ? formatEnergy(energy) : <span className="text-steel-600">—</span>}
+        {energy > 0 ? formatEnergy(energy) : <span className="text-steel-500">—</span>}
       </p>
     </div>
   );

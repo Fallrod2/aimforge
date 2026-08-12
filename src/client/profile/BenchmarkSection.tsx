@@ -50,7 +50,7 @@ export function BenchmarkSection() {
           disabled={alone || saving}
           onChange={(event) => setBenchmarkId(toBenchmarkId(event.target.value))}
           aria-describedby="profile-benchmark-hint"
-          className="w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60"
+          className="w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors hover:border-steel-600 focus:border-ember-500 disabled:opacity-60"
         >
           {options.map((benchmark) => (
             <option key={benchmark.id} value={benchmark.id}>
@@ -79,7 +79,7 @@ export function BenchmarkSection() {
         )}
 
         {alone ? (
-          <p className="text-[11px] text-steel-600">D'autres benchmarks arriveront.</p>
+          <p className="text-[11px] text-steel-500">D'autres benchmarks arriveront.</p>
         ) : null}
         {error !== null ? (
           <p aria-live="polite" className="text-[11px] text-ember-400">

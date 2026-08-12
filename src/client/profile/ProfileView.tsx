@@ -282,7 +282,7 @@ export function ProfileView() {
                 setSaved(false);
                 setSaveError(null);
               }}
-              className="rounded-lg border border-steel-700 px-4 py-2.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
+              className="rounded-lg border border-steel-700 px-4 py-2.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-500"
             >
               Annuler les modifications
             </button>
@@ -360,7 +360,7 @@ interface FieldProps {
 }
 
 const CONTROL_CLASSES =
-  "w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60";
+  "w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500 disabled:opacity-60";
 
 function Field({ spec, value, disabled, onChange }: FieldProps) {
   const id = `profile-${spec.name}`;

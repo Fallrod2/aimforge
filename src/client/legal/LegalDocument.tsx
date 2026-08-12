@@ -48,7 +48,7 @@ export function LegalSection({ title, children }: LegalSectionProps) {
 
 /** Une liste à puces, au style unique des trois documents. */
 export function LegalList({ children }: { readonly children: ReactNode }) {
-  return <ul className="flex list-disc flex-col gap-2 pl-5 marker:text-steel-600">{children}</ul>;
+  return <ul className="flex list-disc flex-col gap-2 pl-5 marker:text-steel-500">{children}</ul>;
 }
 
 /** L'allure d'un lien dans un document légal : souligné, jamais coloré en accent. */

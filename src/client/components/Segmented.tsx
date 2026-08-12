@@ -1,4 +1,14 @@
-/** Sélecteur à segments (palier, filtre). Braise sur le segment actif. */
+/**
+ * Sélecteur à segments (palier, filtre). Braise sur le segment actif.
+ *
+ * Les segments font **44 px de haut** (V5-A §5.5a), et pas seulement sur
+ * téléphone : ils en faisaient 32, c'est-à-dire sous le plancher tactile, pour
+ * ce qui est le contrôle le plus utilisé de l'application — on change de palier
+ * bien plus souvent qu'on ne sauvegarde. Rendre la cible conforme au doigt
+ * seulement en dessous de `sm` aurait demandé de garder deux hauteurs pour un
+ * même composant ; à 44 px partout, il n'y a qu'une règle à retenir, et le
+ * bandeau ne prend qu'une douzaine de pixels de plus au-dessus des grilles.
+ */
 
 interface SegmentedOption<T extends string> {
   readonly value: T;
@@ -32,7 +42,7 @@ export function Segmented<T extends string>({
             type="button"
             aria-pressed={active}
             onClick={() => onChange(option.value)}
-            className={`rounded-md px-3 py-2 text-xs font-semibold tracking-wide uppercase transition-colors ${
+            className={`inline-flex min-h-11 items-center justify-center rounded-md px-3 py-2 text-xs font-semibold tracking-wide uppercase transition-colors ${
               active
                 ? "bg-ember-500/15 text-ember-400 shadow-[inset_0_0_0_1px_var(--color-ember-500)]"
                 : "text-steel-400 hover:bg-steel-800 hover:text-steel-200"

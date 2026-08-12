@@ -18,18 +18,35 @@
  *    aucune raison de les télécharger. Le `Suspense` est ici et non dans `App`
  *    pour que l'en-tête et le sélecteur restent à l'écran pendant le
  *    téléchargement — sinon la page entière clignote ;
- * 3. **le tracker survit à un aller-retour vers l'historique.** Sa saisie n'est
- *    pas persistée (c'est un choix, cf. `tracker/draft.ts`) : le démonter parce
- *    qu'on est allé regarder une courbe jetterait dix-huit scores tapés à la
- *    main. Il est donc caché, pas démonté — mais seulement une fois qu'il a
- *    servi : arriver directement sur `#/perfs?vue=historique` ne doit pas
- *    déclencher l'import KovaaK's d'un écran que personne ne regarde.
+ * 3. **les deux sous-vues survivent à un aller-retour.** Leur saisie et leur
+ *    attente ne sont pas persistées : les démonter jetterait dix-huit scores
+ *    tapés à la main d'un côté, la fenêtre d'annulation d'une suppression de
+ *    l'autre. Elles sont donc cachées, pas démontées — mais seulement une fois
+ *    qu'elles ont servi : arriver directement sur `#/perfs?vue=historique` ne
+ *    doit pas déclencher l'import KovaaK's d'un écran que personne ne regarde.
+ *    La règle vit dans `./mounted.ts`, où elle se teste.
+ *
+ * La symétrie est arrivée en revue V5-A : seul le tracker était protégé, et
+ * l'historique, lui, portait depuis les cinq secondes d'annulation d'une
+ * suppression (`components/useConfirm.ts`). Le démonter exécute l'attente
+ * sur-le-champ — c'est ce qu'il doit faire, un geste confirmé ne s'évapore pas
+ * — et emporte le toast « Annuler ». Toucher l'onglet « Saisie » refermait donc
+ * la fenêtre sans rien dire, à un clic du bouton.
+ *
+ * **Ce que garder l'historique monté coûte, et comment c'est payé.** Il ne se
+ * rechargeait plus en revenant dessus, alors qu'une passe enregistrée à la
+ * saisie y navigue justement (`onSaved` → `onFocusRun`) : la liste aurait été
+ * en retard d'une passe, exactement au moment où l'on vient la voir. D'où la
+ * prop `visible` : l'historique relit sa liste quand il **redevient** visible,
+ * ce que son démontage faisait gratuitement jusqu'ici. Même nombre de requêtes
+ * qu'avant, sans perdre l'attente en cours.
  */
 
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Segmented } from "../components/Segmented";
 import type { PerfsTab } from "../route";
 import { TrackerView } from "../tracker/TrackerView";
+import { isMounted, type MountedTabs, NOTHING_MOUNTED, visit } from "./mounted";
 
 /**
  * `HistoryView` est un export nommé, `lazy` attend un export par défaut : on
@@ -55,13 +72,13 @@ interface PerfsViewProps {
 
 export function PerfsView({ tab, focusRunId, onTabChange, onFocusRun }: PerfsViewProps) {
   const showTracker = tab === "saisie";
-  // Le tracker n'est monté qu'à partir du moment où il a été demandé une fois ;
-  // ensuite il ne redescend plus (cf. l'en-tête du module).
-  const [trackerMounted, setTrackerMounted] = useState(showTracker);
+  // Une sous-vue est montée à partir du moment où elle a été demandée une fois ;
+  // ensuite elle ne redescend plus (cf. l'en-tête du module et `./mounted.ts`).
+  const [mounted, setMounted] = useState<MountedTabs>(() => visit(NOTHING_MOUNTED, tab));
 
   useEffect(() => {
-    if (showTracker) setTrackerMounted(true);
-  }, [showTracker]);
+    setMounted((current) => visit(current, tab));
+  }, [tab]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -80,19 +97,27 @@ export function PerfsView({ tab, focusRunId, onTabChange, onFocusRun }: PerfsVie
         />
       </div>
 
-      {trackerMounted ? (
+      {isMounted(mounted, "saisie") ? (
         <div className={showTracker ? undefined : "hidden"}>
           <TrackerView onSaved={(run) => onFocusRun(run.id)} />
         </div>
       ) : null}
 
-      {showTracker ? null : (
-        // Un cadre muet le temps du téléchargement, pas un écran de chargement :
-        // l'en-tête et le sélecteur, eux, restent en place.
-        <Suspense fallback={<div className="min-h-[50dvh]" aria-busy="true" />}>
-          <HistoryView focusRunId={focusRunId} onFocusRun={onFocusRun} />
-        </Suspense>
-      )}
+      {isMounted(mounted, "historique") ? (
+        <div className={showTracker ? "hidden" : undefined}>
+          {/* Un cadre muet le temps du téléchargement, pas un écran de
+              chargement : l'en-tête et le sélecteur, eux, restent en place. */}
+          <Suspense fallback={<div className="min-h-[50dvh]" aria-busy="true" />}>
+            <HistoryView
+              focusRunId={focusRunId}
+              onFocusRun={onFocusRun}
+              // C'est cette prop, et non le montage, qui décide des lectures :
+              // l'historique relit sa liste chaque fois qu'il redevient visible.
+              visible={!showTracker}
+            />
+          </Suspense>
+        </div>
+      ) : null}
     </div>
   );
 }

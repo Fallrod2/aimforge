@@ -44,8 +44,10 @@ import {
   THREAD_MESSAGE_MAX,
   type ThreadMessage,
 } from "../../shared/coach-thread-contract";
+import { ConfirmButton } from "../components/Destructive";
 import { Notice } from "../components/Notice";
 import { QuotaNote } from "../components/QuotaNote";
+import { useConfirm } from "../components/useConfirm";
 import { clearThread, listDebriefs, listThreadMessages } from "../data";
 import { CoachView } from "./CoachView";
 import { DebriefCard } from "./DebriefCard";
@@ -80,6 +82,9 @@ const ANALYSE_LAST_MATCH = "Analyse mon dernier match";
 const NO_MATCH_TO_DEBRIEF =
   "Aucun match importé en attente de debrief. Rafraîchis le bloc Valorant de l'accueil, ou colle tes stats dans l'historique ci-dessous.";
 
+/** La clé du bouton destructif du fil (cf. `../components/confirm.ts`). */
+const CLEAR_THREAD = "coach:effacer-le-fil";
+
 const CARD_NOT_POSTED =
   "Le debrief est généré, mais sa carte n'a pas pu être posée dans le fil. Il est ouvert dans l'historique, juste en dessous.";
 
@@ -107,7 +112,17 @@ export function CoachThreadView() {
   /** L'échec de l'effacement du fil : le seul qui ne vienne pas d'une génération. */
   const [clearFailure, setClearFailure] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<number | null>(null);
-  const [confirmingClear, setConfirmingClear] = useState(false);
+  /**
+   * L'effacement du fil demande deux appuis (V5-A §5.4).
+   *
+   * Il n'a **pas** de toast « Annuler », et c'est délibéré : contrairement à une
+   * passe ou à une routine, un fil effacé n'est pas récupérable côté serveur —
+   * différer l'appel ne ferait que promettre un retour en arrière qu'on ne
+   * saurait pas tenir. La confirmation est donc la seule barrière, et c'est
+   * pour ça qu'elle nomme ce qui reste (les debriefs) plutôt que de se contenter
+   * d'un « Confirmer ? ».
+   */
+  const confirm = useConfirm();
   const [clearing, setClearing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scrollToCard, setScrollToCard] = useState<number | null>(null);
@@ -306,7 +321,6 @@ export function CoachThreadView() {
       await clearThread();
       setThread({ status: "ready", messages: [] });
       setSuggestion(null);
-      setConfirmingClear(false);
     } catch (cause) {
       setClearFailure(cause instanceof Error ? cause.message : "Le fil n'a pas pu être effacé.");
     } finally {
@@ -329,39 +343,26 @@ export function CoachThreadView() {
           </p>
         </div>
 
-        {count > 0 && !confirmingClear ? (
-          <button
-            type="button"
-            onClick={() => setConfirmingClear(true)}
-            className="rounded-lg border border-steel-800 px-3 py-1.5 text-xs font-medium text-steel-500 transition-colors hover:border-ember-600 hover:text-ember-400"
-          >
-            Effacer le fil
-          </button>
+        {count > 0 ? (
+          <ConfirmButton
+            label="Effacer le fil"
+            // La question porte ce qui est en jeu **et** ce qui ne l'est pas :
+            // on efface la conversation, pas les debriefs.
+            question="Effacer tout le fil ?"
+            busyLabel="Effacement…"
+            armed={confirm.armed(CLEAR_THREAD)}
+            busy={clearing}
+            onPress={() => {
+              if (confirm.press(CLEAR_THREAD)) void confirmClear();
+            }}
+          />
         ) : null}
       </div>
 
-      {confirmingClear ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-steel-800 bg-steel-900/60 px-4 py-3">
-          <p className="mr-auto text-xs text-steel-400">
-            Effacer tout le fil ? Tes debriefs, eux, restent dans l'historique.
-          </p>
-          <button
-            type="button"
-            onClick={() => setConfirmingClear(false)}
-            disabled={clearing}
-            className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:text-steel-100 disabled:opacity-50"
-          >
-            Annuler
-          </button>
-          <button
-            type="button"
-            onClick={() => void confirmClear()}
-            disabled={clearing}
-            className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
-          >
-            {clearing ? "Effacement…" : "Confirmer"}
-          </button>
-        </div>
+      {confirm.armed(CLEAR_THREAD) ? (
+        <p aria-live="polite" className="-mt-3 text-xs text-steel-400">
+          Tes debriefs, eux, restent dans l'historique.
+        </p>
       ) : null}
 
       <section className="flex flex-col gap-3">
@@ -501,7 +502,7 @@ export function CoachThreadView() {
           placeholder={PLACEHOLDER}
           aria-describedby="coach-thread-count"
           onChange={(event) => setDraft(event.target.value)}
-          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2 text-sm leading-relaxed text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60"
+          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2 text-sm leading-relaxed text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500 disabled:opacity-60"
         />
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
