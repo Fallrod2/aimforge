@@ -171,9 +171,79 @@ faire relire par un juriste » — je ne le suis pas.
   routine avec SOURCES, courbe exemple, « Gratuit pendant la bêta ») + démo
   `#/demo` sans compte calculée par le vrai moteur.
 
-## Vague 5 : entamée ensuite — ordre par valeur/risque : confirmations
-destructives, contrastes WCAG mesurés + focus, design tokens, robots/sitemap/
-404, puis routing history + prerender (les plus risqués, en dernier).
+## Vague 5 — Design et finition : FAITE (commit `b37f2ed`)
+
+- **Contrastes WCAG mesurés, pas estimés** : lib de mesure en tests
+  (`contrast.ts` lit les tokens réels d'index.css), 18 paires corrigées avec
+  ratios avant/après, 6 recalculées indépendamment par le reviewer (exactes
+  au centième). Le piège annoncé est confirmé par la mesure (#E6E8EC sur
+  #B4520A = 4,12:1 → blanc pur, 5,06:1, verrouillé par un test négatif).
+- **Tokens sémantiques** (surface/surface-raised/surface-overlay/brand/
+  brand-fill accessibles) + échelle d'élévation ; focus clavier visible
+  partout (8 `focus:outline-none` supprimés).
+- **Cibles tactiles ≥ 44 px** (Segmented 32→44, onboarding 26,5→44, selects).
+- **Confirmations destructives** : machine à états pure (confirmer 4 s,
+  suppression différée 5 s + toast Annuler) sur fil, routines, passes,
+  saisie. Deux findings de revue corrigés et couverts : reset du benchmark
+  sur TOUTES les déconnexions (y compris passives), fenêtre d'annulation qui
+  survit au changement d'onglet Perfs.
+- **SEO faible risque** (D17) : robots.txt, sitemap, 404 autonome (mécanisme
+  Vercel vérifié dans le code source de la plateforme), redirections 307
+  d'URLs propres. Routing history complet + prerender : différés sciemment.
+- 1855 tests verts.
+
+## Reste à faire (assumé, documenté)
+
+1. Appliquer les templates email (`supabase/templates/README.md`) et la
+   migration 0018 APRÈS déploiement du nouveau client.
+2. Relecture juridique des 3 pages légales ; coordonnées d'hébergeurs à
+   compléter (non inventées).
+3. Vérifier la clé HenrikDev en prod (non lisible depuis le repo) ; trancher
+   la divergence d'IDs de benchmarks KovaaK's (459/458/460 vs 432/431/427)
+   par un import réel.
+4. Routing history + prerender de la landing (D17) ; `trailingSlash` à
+   trancher ; `/connexion` sans redirection propre.
+5. Bordures de champs (1,43:1) et ~15 `disabled:opacity-50` préexistants :
+   décision graphique à prendre ; `text-ember-300` classe morte à trancher.
+6. Visibilité du toast Annuler pendant qu'on est sur l'autre onglet de
+   Perfs (arbitrage portail vs état remonté, laissé ouvert).
+7. Budget de jetons face aux non-livraisons `reasoning_budget` de DeepSeek
+   (1/20 constaté) : levier coût, décision d'Alex. Envisager aussi un modèle
+   plateforme au français plus sûr — mesures à l'appui dans ce rapport.
+8. Le levier « chat_daily » en réglage de plateforme (constante aujourd'hui).
+
+## Nettoyage de fin de session
+
+- Compte de test `ui-test@aimforge.local` : SUPPRIMÉ en fin de session (voir
+  D12) — à recréer proprement via l'API admin si besoin.
+- Wrapper à clé OpenRouter du scratchpad : supprimé (la clé plateforme n'a
+  jamais quitté la base ni été affichée).
+- La session de dev sur :5273 n'a pas été arrêtée (elle préexistait).
+
+## Vérification visuelle finale (b37f2ed → c87c951)
+
+Passe complète, compte de test vierge, 7 écrans × 2 tailles : **0 erreur
+console, 0 débordement horizontal, toutes les cibles retouchées mesurées à
+44 px, focus clavier visible, flux confirmation → toast → Annuler vérifié de
+bout en bout (le score revient)**. Les deux trous relevés par cette passe ont
+été corrigés dans la foulée (`c87c951`) : le style de CTA unifié sur les 9
+sites restants — dont « Sauvegarder », le bouton le plus utilisé de l'app —
+avec un test qui interdit la réintroduction de l'ancien couple, et
+« Effacer la saisie » désormais présent sur mobile (même machine de
+confirmation, toast repositionné au-dessus des barres collantes).
+
+Note d'environnement : l'encart « Réglages IA n'ont pas pu être chargés » vu
+sur le Profil en local vient du fait que `vite` seul ne sert pas `/api/**`
+(constaté dès la première passe) — utiliser `bunx vercel dev` pour tester les
+fonctions en local.
+
+## État final
+
+Branche `nuit-2026-08-12`, 16 commits, `bun run check` vert : **1858 tests**
+(1351 au départ, +507). Pas de push (D1) : à relire, puis merger dans `main`
+pour déployer, appliquer les templates email, et appliquer la migration 0018
+une fois le nouveau client en production. Une revue `/code-review ultra` de
+la branche est recommandée avant merge, vu sa taille.
 
 ## Templates email (Vague 3.6, fait en avance car sans conflit)
 `supabase/templates/` : 5 templates FR aux couleurs AimForge (contrastes
