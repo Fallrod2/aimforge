@@ -47,8 +47,24 @@
  * — un compteur à regarder, pas un verdict qui bloque une réponse.
  */
 
-/** Le rôle d'un champ : un titre n'a pas à être une phrase complète. */
-export type FrenchRole = "phrase" | "titre";
+/**
+ * Le rôle d'un champ : tous les textes n'ont pas à être des phrases.
+ *
+ * Trois rôles, et la distinction vient d'une campagne réelle (20 routines, 20
+ * fils, `deepseek/deepseek-v4-flash-0731`) où la moitié des signalements
+ * étaient faux faute de l'avoir faite :
+ *
+ * - `titre` — « Bloc de tracking ». Aucun contrôle de phrase ;
+ * - `consigne` — le `detail` d'un exercice, la réponse du fil. La phrase
+ *   nominale y est **correcte** : « Deux runs de cinq minutes. », « Objectif
+ *   concret : atteindre 480. » sont du français juste, et c'est la forme qu'on
+ *   veut dans une consigne d'entraînement. Elle n'est signalée que si elle
+ *   trahit une **rupture** — commencer par une minuscule, ou n'être qu'une
+ *   subordonnée ;
+ * - `phrase` — le résumé d'un debrief, un conseil, un focus. Là, une phrase
+ *   sans verbe est une phrase inachevée.
+ */
+export type FrenchRole = "phrase" | "consigne" | "titre";
 
 /** Une correction mécanique, donc appliquée. */
 export type FrenchFixKind =
@@ -335,6 +351,7 @@ function erForms(stem: string): readonly string[] {
  * forme d'un faux positif silencieux dans un journal.
  */
 const ER_STEMS: readonly string[] = [
+  "activ",
   "ajust",
   "altern",
   "amélior",
@@ -350,18 +367,23 @@ const ER_STEMS: readonly string[] = [
   "cherch",
   "cibl",
   "command",
+  "commenc",
   "compar",
   "compt",
   "concentr",
   "continu",
   "corrig",
+  "coup",
   "coût",
   "demand",
   "démarr",
   "dur",
   "échauff",
   "écout",
+  "enchaîn",
+  "enchain",
   "entraîn",
+  "étir",
   "évit",
   "expliqu",
   "ferm",
@@ -385,13 +407,17 @@ const ER_STEMS: readonly string[] = [
   "pass",
   "pens",
   "plac",
+  "point",
   "pouss",
   "prépar",
+  "privilégi",
   "progress",
   "ralent",
   "rat",
   "regard",
   "relâch",
+  "relanc",
+  "renforc",
   "replac",
   "rest",
   "sécuris",
@@ -792,22 +818,322 @@ const CLITICS: ReadonlySet<string> = new Set([
 const VERB_ENDING = /(?:ent|ons|ez|ais|ait|aient|rai|ras|ra|rons|rez|ront|is|it|es|e|s|t)$/u;
 
 /**
+ * Les terminaisons qui, à elles seules, disent le verbe : imparfait,
+ * conditionnel, futur, passé simple.
+ *
+ * Elles ne dépendent d'aucune liste de radicaux, et c'est tout leur intérêt —
+ * « pointait », « verrais », « stabiliseront » sont reconnus sans que personne
+ * ait eu à penser au verbe. Les terminaisons ambiguës du présent (`-e`, `-es`,
+ * `-ent`, `-ons`) en sont **exclues** : « séance », « moment », « talent »,
+ * « bons » les portent aussi, et les accepter noierait la détection.
+ */
+const TENSE_ENDING =
+  /(?:ais|ait|aient|erai|eras|era|erons|erez|eront|irai|iras|ira|irons|irez|iront|issons|issez|issent|èrent)$/u;
+
+/**
+ * Les mots qui portent une terminaison verbale sans être des verbes.
+ *
+ * Presque tous en `-ait` / `-ais` : c'est la rançon d'une règle purement
+ * morphologique, et elle se paie par une liste — courte, parce que ces
+ * homographes-là sont peu nombreux.
+ */
+const NOT_A_VERB: ReadonlySet<string> = new Set([
+  "trait",
+  "portrait",
+  "retrait",
+  "extrait",
+  "attrait",
+  "souhait",
+  "forfait",
+  "parfait",
+  "imparfait",
+  "lait",
+  "plait",
+  "palais",
+  "marais",
+  "jamais",
+  "mais",
+  "désormais",
+  "biais",
+  "balais",
+  "relais",
+  "essais",
+  "délais",
+  "frais",
+  "vrais",
+  "gais",
+  "rais",
+  "opéra",
+  "caméra",
+]);
+
+/**
+ * Les classes **fermées** du français : déterminants, numéraux, pronoms,
+ * prépositions, conjonctions, adverbes courants.
+ *
+ * C'est l'inversion qui rend la reconnaissance de l'impératif tenable. Les
+ * verbes forment une classe ouverte — on ne peut pas les lister —, mais ce qui
+ * ouvre une phrase **sans** être un verbe appartient presque toujours à une
+ * classe fermée, elle, énumérable. On ne dit donc pas « ce mot est un verbe »,
+ * on dit « ce mot n'est aucune des choses qu'un verbe n'est pas ».
+ */
+const CLOSED_CLASS: ReadonlySet<string> = new Set([
+  // déterminants et pronoms
+  "le",
+  "la",
+  "les",
+  "l'",
+  "un",
+  "une",
+  "des",
+  "du",
+  "de",
+  "d'",
+  "ce",
+  "cet",
+  "cette",
+  "ces",
+  "mon",
+  "ma",
+  "mes",
+  "ton",
+  "ta",
+  "tes",
+  "son",
+  "sa",
+  "ses",
+  "notre",
+  "nos",
+  "votre",
+  "vos",
+  "leur",
+  "leurs",
+  "chaque",
+  "quelque",
+  "quelques",
+  "plusieurs",
+  "certains",
+  "certaines",
+  "tout",
+  "toute",
+  "toutes",
+  "tous",
+  "même",
+  "mêmes",
+  "autre",
+  "autres",
+  "tel",
+  "telle",
+  "aucun",
+  "aucune",
+  "je",
+  "tu",
+  "il",
+  "elle",
+  "on",
+  "nous",
+  "vous",
+  "ils",
+  "elles",
+  // numéraux
+  "deux",
+  "trois",
+  "quatre",
+  "cinq",
+  "six",
+  "sept",
+  "huit",
+  "neuf",
+  "dix",
+  "onze",
+  "douze",
+  "quinze",
+  "vingt",
+  "trente",
+  "quarante",
+  "cinquante",
+  "soixante",
+  "cent",
+  "mille",
+  "premier",
+  "première",
+  "deuxième",
+  "troisième",
+  // prépositions, conjonctions, adverbes
+  "à",
+  "au",
+  "aux",
+  "en",
+  "y",
+  "par",
+  "pour",
+  "sans",
+  "sous",
+  "sur",
+  "dans",
+  "vers",
+  "dès",
+  "lors",
+  "avec",
+  "avant",
+  "après",
+  "pendant",
+  "depuis",
+  "malgré",
+  "selon",
+  "contre",
+  "entre",
+  "comme",
+  "sauf",
+  "hors",
+  "près",
+  "ensuite",
+  "puis",
+  "ainsi",
+  "alors",
+  "encore",
+  "aussi",
+  "ici",
+  "donc",
+  "enfin",
+  "bref",
+  "juste",
+  "presque",
+  "plutôt",
+  "jamais",
+  "toujours",
+  "souvent",
+  "parfois",
+  "autant",
+  "davantage",
+  "mieux",
+  "pire",
+  "moins",
+  "plus",
+  "très",
+  "trop",
+  "assez",
+  "beaucoup",
+  "peu",
+  "moitié",
+  "seulement",
+]);
+
+/**
+ * Ce qui ouvre un complément d'objet : déterminants et clitiques, rien d'autre.
+ *
+ * Y ajouter les prépositions (« de », « pour », « sur ») ferait passer « Deux
+ * runs pour travailler la souplesse » — une phrase nominale parfaitement
+ * correcte — pour un impératif, et on perdrait la détection qu'on cherche à
+ * garder.
+ */
+const COMPLEMENT_STARTERS: ReadonlySet<string> = new Set([
+  "le",
+  "la",
+  "l'",
+  "les",
+  "un",
+  "une",
+  "des",
+  "du",
+  "ce",
+  "cet",
+  "cette",
+  "ces",
+  "mon",
+  "ma",
+  "mes",
+  "ton",
+  "ta",
+  "tes",
+  "son",
+  "sa",
+  "ses",
+  "notre",
+  "nos",
+  "votre",
+  "vos",
+  "toi",
+  "y",
+  "en",
+  "chaque",
+  "deux",
+  "trois",
+  "quatre",
+  "cinq",
+  "six",
+  "sept",
+  "huit",
+  "neuf",
+  "dix",
+]);
+
+/** Terminaisons d'un impératif ou d'un présent aux deux premières personnes. */
+const IMPERATIVE_SHAPE = /(?:e|es|is|ds|ts|ez|ons)$/u;
+
+/** Combien de mots de classe fermée on traverse avant de chercher le verbe. */
+const LEADING_SKIP = 3;
+
+/**
+ * La phrase commence-t-elle par un impératif ?
+ *
+ * « Coupe le chat vocal », « Étire tes balayages », « Enchaîne 3 runs » : le
+ * verbe est en tête, sans sujet, et c'est du français juste — c'est même le
+ * registre naturel d'une consigne d'entraînement. On l'identifie par sa
+ * **place** et par ce qui le suit, jamais par une liste de verbes.
+ *
+ * Une amorce adverbiale est traversée (« Ici aussi, privilégie… », « Ensuite,
+ * garde… ») : sans cela, la moitié des impératifs du corpus réel passaient
+ * pour des phrases nominales.
+ */
+function startsWithImperative(words: readonly string[]): boolean {
+  let index = 0;
+
+  while (index < Math.min(LEADING_SKIP, words.length) && CLOSED_CLASS.has(words[index] ?? "")) {
+    index += 1;
+  }
+
+  const candidate = words[index];
+  const next = words[index + 1];
+
+  if (candidate === undefined || next === undefined) return false;
+  if (candidate.length < 4 || CLOSED_CLASS.has(candidate)) return false;
+  if (!IMPERATIVE_SHAPE.test(candidate)) return false;
+  return COMPLEMENT_STARTERS.has(next) || /^\p{N}+$/u.test(next);
+}
+
+/**
  * La phrase contient-elle un verbe conjugué ?
  *
- * Deux voies : une forme de la liste fermée, ou un mot à terminaison verbale
- * placé juste après un pronom sujet ou un clitique — c'est la position qui fait
- * le verbe (« se construira », « tu tiens », « il progresse »).
+ * Quatre voies, de la plus sûre à la plus contextuelle : une forme de la liste
+ * fermée ; une terminaison de temps sans ambiguïté (imparfait, futur,
+ * conditionnel, passé simple) ; un mot à terminaison verbale placé juste après
+ * un pronom sujet ou un clitique — c'est la position qui fait le verbe
+ * (« se construira ») ; et l'impératif en tête de phrase.
+ *
+ * Elle rend `false` par défaut, donc **elle se trompe du côté du signalement**
+ * pour les verbes qu'aucune des quatre voies n'attrape. C'est la raison d'être
+ * du rôle `consigne` : là où la phrase nominale est légitime, l'absence de
+ * verbe ne suffit plus à faire une faute.
  */
 export function hasConjugatedVerb(sentence: string): boolean {
+  // Une inversion interrogative **est** une conjugaison : seul un verbe
+  // conjugué peut porter un sujet postposé (« Remarques-tu… »).
+  if (HAS_INVERSION.test(sentence)) return true;
+
   const words = frenchTokens(sentence);
 
-  return words.some((word, index) => {
+  const found = words.some((word, index) => {
     if (CONJUGATED.has(word)) return true;
+    if (NOT_A_VERB.has(word)) return false;
+    if (word.length >= 5 && TENSE_ENDING.test(word)) return true;
 
     const previous = index === 0 ? null : (words[index - 1] ?? null);
 
     return previous !== null && CLITICS.has(previous) && word.length >= 3 && VERB_ENDING.test(word);
   });
+
+  return found || startsWithImperative(words);
 }
 
 /* ------------------------------------------------------------------ */
@@ -880,13 +1206,62 @@ const NO_SUBJECT_START: ReadonlySet<string> = new Set([
   "suffisent",
 ]);
 
-/** Un déterminant collé à un verbe : le nom qui devait porter le sujet a sauté. */
-const DETERMINER_THEN_VERB =
-  /\b(?:ton|ta|tes|son|sa|ses|mon|ma|mes|ce|cet|cette|ces|le|la|les|un|une)\s+(?:est|sont|était|étaient|sera|seront|reste|restent|mérite|méritent|semble|semblent|manque|manquent|montre|montrent|permet|permettent|a|ont)\b/giu;
+/**
+ * Bornes de mot **compatibles Unicode**.
+ *
+ * `\b` de JavaScript est défini sur `[A-Za-z0-9_]`, y compris avec le drapeau
+ * `u` : il voit donc une frontière entre « ô » et « l ». La campagne réelle l'a
+ * payé — `\ble\s+est` s'accrochait au milieu de « contrô|le est mesurée » et
+ * signalait un sujet manquant dans une phrase parfaitement construite. Ces deux
+ * bornes-ci comptent les lettres accentuées comme des lettres.
+ */
+const LEFT_EDGE = "(?<![\\p{L}\\p{N}'’-])";
+const RIGHT_EDGE = "(?![\\p{L}\\p{N}])";
 
-/** Une citation chiffrée en position de sujet : la faute que la Vague 3.1 vise. */
-const CITATION_AS_SUBJECT =
-  /\[[^\]\n]*\]\s+(?:est|sont|était|étaient|sera|seront|reste|restent|mérite|méritent|montre|montrent|demande|demandent|semble|semblent)\b/giu;
+/**
+ * Un déterminant collé à un verbe : le nom qui devait porter le sujet a sauté.
+ *
+ * Les deux listes sont **étroites**, et chaque exclusion vient d'un faux
+ * positif observé :
+ *
+ * - `le`, `la`, `les`, `un`, `une` sont exclus des déterminants : ce sont aussi
+ *   des pronoms objets, et « tu **les as** vus » ou « il **la voit** » sont du
+ *   français juste. `ce` l'est également — « **ce sont** précisément ces deux
+ *   familles » est la tournure présentative normale ;
+ * - `reste`, `manque`, `mérite`, `montre` sont exclus des verbes : ce sont
+ *   aussi des noms communs, et « tout **le reste** », « **son manque** de
+ *   structure » ont tous deux été signalés à tort. Leurs formes plurielles,
+ *   elles, ne sont que des verbes et restent surveillées.
+ */
+const DETERMINER_THEN_VERB = new RegExp(
+  `${LEFT_EDGE}(?:ton|ta|tes|son|sa|ses|mon|ma|mes|notre|nos|votre|vos|cet|cette|ces)\\s+(?:est|sont|était|étaient|sera|seront|serait|seraient|ont|avait|avaient|aura|auront|restent|méritent|manquent|montrent|semble|semblent|permet|permettent)${RIGHT_EDGE}`,
+  "giu",
+);
+
+/**
+ * N'importe quel segment entre crochets : marqueur de citation, `[SOURCES]`.
+ *
+ * Deux constantes pour un seul motif, et ce n'est pas un doublon : `.test()`
+ * sur une regex globale avance son `lastIndex` et rend un résultat différent
+ * à l'appel suivant. La version non globale existe pour cet usage-là.
+ */
+const ANY_MARKER = /\[[^\]\n]*\]/gu;
+const HAS_MARKER = /\[[^\]\n]*\]/u;
+
+/**
+ * Le texte tel qu'il s'**affichera** : marqueurs retirés, espaces recollés.
+ *
+ * Même geste que `../routine/citations.ts` avant l'affichage, en plus large
+ * (ici on ne demande pas au marqueur d'être une citation bien formée). C'est ce
+ * texte-là qu'il faut lire pour juger une phrase : le marqueur ne survit pas à
+ * l'écran.
+ */
+function withoutMarkers(text: string): string {
+  return text
+    .replace(ANY_MARKER, "")
+    .replace(/[ \t]{2,}/gu, " ")
+    .replace(/[ \t]+([,;:.!?…])/gu, "$1");
+}
 
 /** Un participe passé ou un infinitif directement après « tu ». */
 const BAD_AFTER_TU: ReadonlySet<string> = new Set([
@@ -937,12 +1312,44 @@ const BAD_AFTER_TU: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * L'**inversion interrogative** : le sujet passe derrière le verbe, soudé par
+ * un trait d'union — « Veux-tu », « As-tu », « a-t-il », « peut-on ».
+ *
+ * Elle a coûté quatre signalements faux sur une campagne réelle. La règle
+ * « après *tu*, le verbe finit par s ou x » lisait « Veux-**tu** que je te
+ * **propose** » et prenait `propose` pour le verbe de ce `tu` — alors que le
+ * verbe est devant, et que la phrase est impeccable.
+ *
+ * Deux constantes pour un motif : `.test()` sur une regex globale avance son
+ * `lastIndex` et rend un résultat différent à l'appel suivant.
+ */
+const INVERSION =
+  /(?<![\p{L}\p{N}-])(\p{L}+)-(?:t-)?(?:je|tu|il|elle|on|nous|vous|ils|elles)(?![\p{L}\p{N}])/giu;
+const HAS_INVERSION =
+  /(?<![\p{L}\p{N}-])\p{L}+-(?:t-)?(?:je|tu|il|elle|on|nous|vous|ils|elles)(?![\p{L}\p{N}])/iu;
+
+/**
+ * La même phrase, sujets postposés retirés : il ne reste que le verbe.
+ *
+ * On ne supprime pas la tournure, on la remet à l'endroit — « Veux-tu que… »
+ * devient « Veux que… ». Le `tu` inversé disparaît donc de la liste des mots,
+ * et la règle de la deuxième personne ne le confond plus avec un sujet
+ * antéposé.
+ */
+function withoutInversion(sentence: string): string {
+  return sentence.replace(INVERSION, "$1");
+}
+
+/**
  * Après « tu », le verbe se termine par `s` ou `x` — sans exception en
  * français. Les clitiques intercalés (« tu ne », « tu te », « tu l' ») sont
  * traversés avant de regarder la forme.
+ *
+ * L'inversion est neutralisée d'abord : elle place un `tu` qui n'est pas le
+ * sujet de ce qui suit.
  */
 function badSecondPerson(sentence: string): string | null {
-  const words = frenchTokens(sentence);
+  const words = frenchTokens(withoutInversion(sentence));
 
   for (const [index, word] of words.entries()) {
     if (word !== "tu") continue;
@@ -963,6 +1370,31 @@ function badSecondPerson(sentence: string): string | null {
 }
 
 /**
+ * Les phrases d'un texte où le **sujet manque** : un déterminant collé à un
+ * verbe, ou une clause qui s'ouvre sur un verbe conjugué.
+ *
+ * Sortie : des extraits, pas des positions. Ils servent deux fois — tels quels
+ * sur le texte, et sur le texte débarrassé de ses marqueurs — et c'est la
+ * **différence** entre les deux qui dénonce une citation employée comme sujet.
+ */
+function subjectFaults(text: string): readonly string[] {
+  const found: string[] = [];
+
+  for (const match of text.matchAll(DETERMINER_THEN_VERB)) found.push(excerpt(match[0]));
+
+  for (const sentence of splitFrenchSentences(text)) {
+    const first = frenchTokens(sentence)[0] ?? "";
+
+    // « Est-ce que… » ouvre bien sur `est`, et c'est une question, pas un sujet
+    // manquant. La forme se reconnaît au trait d'union, que la tokenisation perd.
+    if (NO_SUBJECT_START.has(first) && !/^est-ce\b/iu.test(sentence)) {
+      found.push(excerpt(sentence));
+    }
+  }
+  return found;
+}
+
+/**
  * Les défauts de structure d'un texte. **Aucune** correction ici : cette
  * fonction lit, elle ne touche à rien.
  */
@@ -980,12 +1412,32 @@ export function detectFrenchIssues(
     issues.push({ kind: "minuscule_apres_point", excerpt: excerpt(match[0]) });
   }
 
-  for (const match of text.matchAll(CITATION_AS_SUBJECT)) {
-    issues.push({ kind: "citation_sujet", excerpt: excerpt(match[0]) });
-  }
+  const faults = subjectFaults(text);
 
-  for (const match of text.matchAll(DETERMINER_THEN_VERB)) {
-    issues.push({ kind: "sujet_manquant", excerpt: excerpt(match[0]) });
+  for (const fault of faults) issues.push({ kind: "sujet_manquant", excerpt: fault });
+
+  /*
+   * La citation en position de sujet, jugée comme le lecteur la jugera.
+   *
+   * La campagne réelle a montré que le modèle **suit** la consigne « le
+   * marqueur est un complément » à la lettre tout en la manquant : il écrit
+   * « ton [HS% 25.1] est ta base », avec un déterminant devant — mais c'est le
+   * marqueur qui tient la place du nom. Une fois retiré avant l'affichage, il
+   * reste « ton est ta base ».
+   *
+   * On ne cherche donc pas un motif de crochets : on retire les marqueurs et on
+   * regarde ce qui reste. Un défaut qui n'apparaît **qu'**après retrait est,
+   * par construction, causé par le marqueur. C'est exactement la relecture que
+   * le prompt demande au modèle, appliquée par la machine.
+   */
+  if (HAS_MARKER.test(text)) {
+    const known = new Set(faults);
+
+    for (const fault of subjectFaults(withoutMarkers(text))) {
+      if (known.has(fault)) continue;
+      known.add(fault);
+      issues.push({ kind: "citation_sujet", excerpt: fault });
+    }
   }
 
   for (const sentence of splitFrenchSentences(text)) {
@@ -993,18 +1445,23 @@ export function detectFrenchIssues(
     const first = words[0] ?? "";
     const last = words[words.length - 1] ?? "";
     const bad = badSecondPerson(sentence);
+    const fragment = SUBORDINATE_START.has(first) || (words.length > 1 && DANGLING_END.has(last));
 
     if (bad !== null) issues.push({ kind: "conjugaison_2e_personne", excerpt: excerpt(sentence) });
-    if (NO_SUBJECT_START.has(first)) {
-      issues.push({ kind: "sujet_manquant", excerpt: excerpt(sentence) });
-    }
     if (role === "titre") continue;
-    if (SUBORDINATE_START.has(first) || (words.length > 1 && DANGLING_END.has(last))) {
-      issues.push({ kind: "fragment_subordonne", excerpt: excerpt(sentence) });
-    }
-    if (words.length >= MIN_WORDS_FOR_VERB && !hasConjugatedVerb(sentence)) {
-      issues.push({ kind: "phrase_sans_verbe", excerpt: excerpt(sentence) });
-    }
+    if (fragment) issues.push({ kind: "fragment_subordonne", excerpt: excerpt(sentence) });
+
+    if (words.length < MIN_WORDS_FOR_VERB || hasConjugatedVerb(sentence)) continue;
+
+    // Le rôle `consigne` tolère la phrase nominale : « Deux runs de cinq
+    // minutes. » est la forme juste d'une consigne d'exercice, pas une faute.
+    // Elle ne le devient que si elle porte une marque de rupture — une
+    // minuscule initiale (la phrase d'avant s'est arrêtée en plein milieu) ou
+    // une subordonnée laissée seule.
+    const broken = fragment || /^\p{Ll}/u.test(sentence);
+
+    if (role === "consigne" && !broken) continue;
+    issues.push({ kind: "phrase_sans_verbe", excerpt: excerpt(sentence) });
   }
   return issues;
 }

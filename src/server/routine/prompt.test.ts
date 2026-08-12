@@ -468,3 +468,50 @@ describe("routineSystemPrompt — police de français", () => {
     expect(prompt).not.toContain("VT Pasu");
   });
 });
+
+/**
+ * Le durcissement de la Vague 3.1 après la campagne réelle (20 routines,
+ * `deepseek/deepseek-v4-flash-0731`) : 5 sorties sur 20 écrivaient
+ * « ton [HS% 25.1] est ta base », qui devient « ton est ta base » une fois le
+ * marqueur retiré. La règle existait dans la section « Français » et n'était
+ * pas appliquée — elle est désormais au contact des consignes de citation, et
+ * répétée en dernière position du message.
+ */
+describe("routineSystemPrompt — la citation n'est jamais le sujet", () => {
+  it("porte la règle dans la section des citations, pas seulement dans celle du français", () => {
+    const prompt = routineSystemPrompt(IDENTITY);
+    const citations = prompt.slice(
+      prompt.indexOf("Citations chiffrées"),
+      prompt.indexOf("Contenu attendu"),
+    );
+
+    expect(citations).toContain("LE MARQUEUR N'EST JAMAIS LE NOM NI LE SUJET");
+    expect(citations).toContain("RELECTURE OBLIGATOIRE");
+  });
+
+  it("montre le contre-exemple et sa correction", () => {
+    const prompt = routineSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain('INTERDIT : "Ton [HS% 23] est trop bas."');
+    expect(prompt).toContain(
+      'CORRECT : "Ton pourcentage de tirs à la tête [HS% 23] est trop bas."',
+    );
+  });
+
+  it("verrouille les clés françaises et l'objet unique", () => {
+    const prompt = routineSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("N'écris jamais name, duration, exercises, label ni details.");
+    expect(prompt).toContain("Un seul objet");
+  });
+});
+
+describe("buildRoutineUserMessage — la relecture en dernière position", () => {
+  it("répète la relecture des crochets après les données", () => {
+    const message = buildRoutineUserMessage(context());
+
+    expect(message).toContain("retire mentalement le marqueur");
+    // Dernière position : rien de plus lourd ne doit passer après elle.
+    expect(message.trimEnd().endsWith("avec son sujet en toutes lettres.")).toBe(true);
+  });
+});

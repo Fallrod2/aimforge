@@ -153,6 +153,15 @@ export function routineSystemPrompt(identity: PromptIdentity): string {
     "  citation fausse fait rejeter toute la routine.",
     "- Si <donnees_citables> est vide, n'écris aucun marqueur.",
     "- N'écris pas les crochets ailleurs que pour un marqueur.",
+    "- LE MARQUEUR N'EST JAMAIS LE NOM NI LE SUJET DE LA PHRASE. Il est retiré du texte avant",
+    "  l'affichage : ce que le joueur lit, c'est ta phrase SANS les crochets. Nomme donc la donnée en",
+    "  toutes lettres, et place le marqueur à côté, en complément.",
+    '  INTERDIT : "Ton [HS% 23] est trop bas." → le joueur lira "Ton est trop bas."',
+    '  CORRECT : "Ton pourcentage de tirs à la tête [HS% 23] est trop bas." → le joueur lira une',
+    "  phrase complète.",
+    "- RELECTURE OBLIGATOIRE avant de rendre : pour chaque phrase qui contient un crochet, retire",
+    "  mentalement le marqueur et son contenu. Si ce qui reste n'est pas une phrase française complète,",
+    "  réécris-la.",
     "",
     "Contenu attendu :",
     "- La somme des durées des blocs doit tenir dans le temps disponible annoncé.",
@@ -186,6 +195,10 @@ export function routineSystemPrompt(identity: PromptIdentity): string {
     "- `items[].detail` : 1 à 2 phrases — nombre de runs, intention, point d'attention.",
     "- `objectif_game` : une consigne mesurable à appliquer en partie classée après la séance.",
     "- `conseil` : une seule phrase, le conseil à retenir de cette séance.",
+    "- Les clés sont en français et les mêmes pour TOUS les blocs et TOUS les items : nom, duree,",
+    "  items, texte, detail. N'écris jamais name, duration, exercises, label ni details.",
+    "- Un seul objet : une accolade ouvrante au début, une fermante à la fin. Ne referme pas l'objet",
+    "  avant d'avoir écrit objectif_game et conseil.",
   ].join("\n");
 }
 
@@ -447,6 +460,13 @@ export function buildRoutineUserMessage(context: RoutineContext): string {
     `Rends la routine du jour pour ${context.dureeMinutes} minutes. N'utilise que les scénarios de`,
     "<scenarios_autorises>, cités au mot près, et que les marqueurs de <donnees_citables>, recopiés",
     "tels quels. Réponds uniquement avec l'objet JSON décrit, sans markdown.",
+    // La consigne de relecture est répétée **ici**, en dernière position, parce
+    // que c'est celle qui pèse le plus. Une campagne réelle a montré le modèle
+    // respectant la règle dans la section « Français » tout en écrivant
+    // « ton [HS% 25.1] est ta base » cinq fois sur vingt : la règle avait été
+    // lue, pas appliquée au moment d'écrire.
+    "Avant de rendre : relis chaque phrase qui contient un crochet, retire mentalement le marqueur —",
+    "la phrase qui reste doit être complète, avec son sujet en toutes lettres.",
   ].join("\n");
 }
 

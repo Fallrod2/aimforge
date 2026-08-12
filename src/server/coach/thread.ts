@@ -92,8 +92,10 @@ export function parseThreadAnswer(raw: string, allowed: readonly string[]): Thre
   // doit être celle du texte livré (`../shared/french-guard.ts`). Il passe aussi
   // après le retrait du marqueur, qui n'est pas du français et n'a rien à faire
   // dans une analyse de phrases.
+  // `consigne` : la réponse du fil est une consigne d'entraînement, où la
+  // phrase nominale (« Objectif : 480 sur ces deux scénarios. ») est correcte.
   const guard = frenchGuard("coach-thread", { protectedNames: allowed });
-  const answer = guard.apply(trimmed, "answer");
+  const answer = guard.apply(trimmed, "answer", "consigne");
 
   guard.flush();
 

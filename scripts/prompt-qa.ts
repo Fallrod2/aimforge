@@ -18,11 +18,13 @@
  *
  * ## Trois règles qui font sa valeur
  *
- * 1. **Aucun prompt n'est recopié ici.** Le script importe les vrais
- *    constructeurs du serveur (`routineSystemPrompt`, `buildRoutineMessages`,
- *    `coachThreadSystemPrompt`, `buildThreadMessages`) et les vraies polices
- *    de sortie (`parseRoutine`, `parseThreadAnswer`). Un harnais qui aurait sa
- *    propre copie du prompt mesurerait la copie.
+ * 1. **Rien n'est recopié ici — ni prompt, ni cycle de génération.** Le script
+ *    appelle `generateRoutine` et `generateThreadAnswer`, c'est-à-dire les
+ *    fonctions que les endpoints appellent : mêmes prompts, mêmes polices de
+ *    sortie, et surtout **la même relance corrective**. La première campagne
+ *    s'en passait et comptait pour des échecs deux routines que la production
+ *    aurait rejouées ; un harnais qui mesure moins que la production mesure
+ *    autre chose.
  * 2. **Aucun appel à l'API du produit, aucune base.** Il parle directement au
  *    fournisseur. Il ne consomme donc ni quota, ni compteur, et n'écrit nulle
  *    part ailleurs que dans son dossier de sortie.
@@ -60,22 +62,21 @@ import {
   type ScoreMap,
   type TierId,
 } from "../src/lib/energy/index.js";
-import { createAsk, ModelError, type ProviderConfig } from "../src/server/ai/index.js";
+import {
+  createAsk,
+  ModelError,
+  type ModelMessage,
+  type ProviderConfig,
+} from "../src/server/ai/index.js";
 import {
   type BenchRunForCoach,
   type ScenarioScoreForCoach,
   summarizeTierBench,
 } from "../src/server/coach/bench.js";
 import { extractJsonObject } from "../src/server/coach/parse.js";
+import { type CoachBenchTiers, type CoachProfile, identityOf } from "../src/server/coach/prompt.js";
+import { generateThreadAnswer, stripDebriefSuggestion } from "../src/server/coach/thread.js";
 import {
-  type CoachBenchTiers,
-  type CoachMessage,
-  type CoachProfile,
-  identityOf,
-} from "../src/server/coach/prompt.js";
-import { parseThreadAnswer, stripDebriefSuggestion } from "../src/server/coach/thread.js";
-import {
-  buildThreadMessages,
   coachThreadSystemPrompt,
   type ThreadContext,
   type ThreadDebrief,
@@ -84,14 +85,9 @@ import {
   type RoutineBenchTiers,
   summarizeTierBenchForRoutine,
 } from "../src/server/routine/bench.js";
+import { generateRoutine } from "../src/server/routine/generate.js";
 import { summarizeIngameForRoutine } from "../src/server/routine/ingame.js";
-import { parseRoutine } from "../src/server/routine/parse.js";
-import {
-  buildRoutineMessages,
-  citableFacts,
-  type RoutineContext,
-  routineSystemPrompt,
-} from "../src/server/routine/prompt.js";
+import { type RoutineContext, routineSystemPrompt } from "../src/server/routine/prompt.js";
 import {
   type FrenchFix,
   type FrenchIssue,
@@ -616,7 +612,10 @@ function routineFields(raw: string): readonly FieldText[] | null {
         {
           field: `blocs[${index}].items[${item_index}].detail`,
           text: item.detail,
-          role: "phrase" as const,
+          // Même rôle que la police serveur (`src/server/routine/parse.ts`) :
+          // mesurer avec des règles plus dures que celles de la production
+          // ferait un chiffre qui ne parle de rien.
+          role: "consigne" as const,
         },
       ]),
     ]),
@@ -635,11 +634,58 @@ interface Generation {
   readonly label: string;
   /** Le verdict de la police de sortie du produit, ou l'erreur d'appel. */
   readonly verdict: string;
+  /** La sortie a-t-elle fini par être livrée au joueur ? */
+  readonly delivered: boolean;
+  /** 1, ou 2 quand la relance corrective de production a dû jouer. */
+  readonly attempts: number;
+  /** La réponse **livrée** — la dernière tentative, celle que le joueur lit. */
   readonly raw: string;
   readonly issues: readonly FrenchIssue[];
   readonly fixes: readonly FrenchFix[];
 }
 
+/**
+ * Le port du modèle, qui **retient** chaque réponse brute.
+ *
+ * `generateRoutine` et `generateThreadAnswer` rendent la sortie déjà analysée
+ * et déjà passée au garde-fou ; or ce qu'on veut mesurer, c'est le français
+ * **avant** garde-fou. Le port est le seul endroit où le texte brut existe
+ * encore, et l'enregistrer là évite de refaire à côté un cycle de génération
+ * qui ne serait plus celui de la production.
+ */
+function recordingAsk(
+  options: Options,
+  apiKey: string,
+  system: string,
+  maxTokens: number,
+): {
+  readonly ask: (messages: readonly ModelMessage[]) => Promise<string>;
+  readonly raws: readonly string[];
+} {
+  const ask = createAsk(providerConfig(options, apiKey), { system, maxTokens });
+  const raws: string[] = [];
+
+  return {
+    raws,
+    ask: async (messages) => {
+      const answer = await ask(messages, TIMEOUT_MS);
+
+      raws.push(answer.text);
+      return answer.text;
+    },
+  };
+}
+
+/**
+ * Une génération, **par le chemin de production**.
+ *
+ * `generateRoutine` / `generateThreadAnswer` plutôt qu'un appel suivi de
+ * `parseRoutine` : ces fonctions portent la **relance corrective**, qui fait
+ * partie de ce que le produit livre. La première campagne s'en passait et
+ * comptait donc comme des échecs deux routines (clés en anglais, accolade en
+ * trop) que la production aurait rejouées avec une raison nominative. Un
+ * harnais qui mesure moins que la production mesure autre chose.
+ */
 async function runOne(
   options: Options,
   index: number,
@@ -651,49 +697,62 @@ async function runOne(
   if (spec === undefined) throw new Error("aucun profil : la table des profils est vide");
 
   const base = { index, profile: spec.key, label: spec.label };
+  const identity = identityOf(spec.profile);
+  const empty = { issues: [], fixes: [] };
 
   try {
     if (options.target === "routine") {
       const context = routineContextFor(spec, index, now);
       const allowed = scenarioNames(context.scenarios);
-      const ask = createAsk(providerConfig(options, apiKey), {
-        system: routineSystemPrompt(identityOf(spec.profile)),
-        maxTokens: MAX_TOKENS.routine,
-      });
-      const answer = await ask(buildRoutineMessages(context) as CoachMessage[], TIMEOUT_MS);
-      const parsed = parseRoutine(answer.text, allowed, citableFacts(context));
-      const fields = routineFields(answer.text);
-      const analysis = fields === null ? { issues: [], fixes: [] } : analyse(fields, [...allowed]);
+      const port = recordingAsk(options, apiKey, routineSystemPrompt(identity), MAX_TOKENS.routine);
+      const result = await generateRoutine(port.ask, context, allowed);
+      const raw = port.raws[port.raws.length - 1] ?? "";
+      const fields = routineFields(raw);
+      const analysis = fields === null ? empty : analyse(fields, [...allowed]);
 
       return {
         ...base,
-        verdict: parsed.ok ? "police OK" : `police KO : ${parsed.reason}`,
-        raw: answer.text,
+        verdict: result.ok ? "police OK" : `police KO : ${result.reason}`,
+        delivered: result.ok,
+        attempts: result.attempts,
+        raw,
         ...analysis,
       };
     }
 
     const context = threadContextFor(spec, index, now);
     const allowed = scenarioNames(context.scenarios);
-    const ask = createAsk(providerConfig(options, apiKey), {
-      system: coachThreadSystemPrompt(identityOf(spec.profile)),
-      maxTokens: MAX_TOKENS.thread,
-    });
-    const answer = await ask(buildThreadMessages(context), TIMEOUT_MS);
-    const parsed = parseThreadAnswer(answer.text, allowed);
-    const text = stripDebriefSuggestion(answer.text).text.trim();
-    const analysis = analyse([{ field: "answer", text, role: "phrase" }], [...allowed]);
+    const port = recordingAsk(
+      options,
+      apiKey,
+      coachThreadSystemPrompt(identity),
+      MAX_TOKENS.thread,
+    );
+    const result = await generateThreadAnswer(port.ask, context);
+    const raw = port.raws[port.raws.length - 1] ?? "";
+    const text = stripDebriefSuggestion(raw).text.trim();
+    const analysis =
+      text === "" ? empty : analyse([{ field: "answer", text, role: "consigne" }], [...allowed]);
 
     return {
       ...base,
-      verdict: parsed.ok ? "police OK" : `police KO : ${parsed.reason}`,
-      raw: answer.text,
+      verdict: result.ok ? "police OK" : `police KO : ${result.reason}`,
+      delivered: result.ok,
+      attempts: result.attempts,
+      raw,
       ...analysis,
     };
   } catch (cause) {
     const detail = cause instanceof ModelError ? cause.message : String(cause);
 
-    return { ...base, verdict: `appel en échec : ${detail}`, raw: "", issues: [], fixes: [] };
+    return {
+      ...base,
+      verdict: `appel en échec : ${detail}`,
+      delivered: false,
+      attempts: 0,
+      raw: "",
+      ...empty,
+    };
   }
 }
 
@@ -727,12 +786,17 @@ async function runAll(options: Options, apiKey: string, now: Date): Promise<Gene
 const OUT_DIR =
   "/private/tmp/claude-501/-Users-alexabriel-Projects-aimforge/fbab6e8a-7c22-44f6-8016-d822d78fddb4/scratchpad/prompt-qa";
 
+/**
+ * « Sans faute » = livrée, sans défaut de structure, et sans même une
+ * correction mécanique à rattraper.
+ *
+ * La **relance** n'entre pas dans ce jugement : une routine rejouée une fois
+ * puis livrée est, pour le joueur, une routine juste. Elle coûte des jetons et
+ * de la latence, ce qui est une autre question — comptée à part, ligne
+ * « relances ».
+ */
 function clean(generation: Generation): boolean {
-  return (
-    generation.verdict === "police OK" &&
-    generation.issues.length === 0 &&
-    generation.fixes.length === 0
-  );
+  return generation.delivered && generation.issues.length === 0 && generation.fixes.length === 0;
 }
 
 function report(options: Options, generations: readonly Generation[]): string {
@@ -749,7 +813,9 @@ function report(options: Options, generations: readonly Generation[]): string {
     const mark = clean(generation) ? "OK " : "FAUTE";
     const number = String(generation.index + 1).padStart(2, "0");
 
-    lines.push(`#${number} [${mark}] ${generation.profile} — ${generation.verdict}`);
+    const retried = generation.attempts > 1 ? " · relancée" : "";
+
+    lines.push(`#${number} [${mark}] ${generation.profile}${retried} — ${generation.verdict}`);
 
     for (const fix of generation.fixes) {
       lines.push(`      (rattrapé par le garde-fou) ${fix.kind} ×${fix.count}`);
@@ -766,10 +832,16 @@ function report(options: Options, generations: readonly Generation[]): string {
   }
 
   const passed = generations.filter(clean).length;
+  const retried = generations.filter((generation) => generation.attempts > 1).length;
+  const undelivered = generations.filter((generation) => !generation.delivered).length;
 
   lines.push(
     "",
     `TOTAL : ${passed}/${generations.length} générations sans faute`,
+    // Trois chiffres et pas un seul : « sans faute » parle du français,
+    // « relances » du coût, « non livrées » de la fiabilité. Les confondre
+    // ferait passer une panne de fournisseur pour une faute de grammaire.
+    `Fiabilité : ${retried} relance(s) corrective(s) · ${undelivered} non livrée(s)`,
     kinds.size === 0
       ? "Aucune faute de structure relevée."
       : `Par type : ${[...kinds].map(([kind, count]) => `${kind} ${count}`).join(" · ")}`,

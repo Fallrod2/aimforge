@@ -128,7 +128,11 @@ export function guardRoutineFrench(
       nom: guard.apply(bloc.nom, `blocs[${index}].nom`, "titre"),
       items: bloc.items.map((item, item_index) => ({
         texte: guard.apply(item.texte, `blocs[${index}].items[${item_index}].texte`, "titre"),
-        detail: guard.apply(item.detail, `blocs[${index}].items[${item_index}].detail`),
+        // `consigne` et non `phrase` : « Deux runs de cinq minutes. » est la
+        // forme juste d'une consigne d'exercice. Une campagne réelle a montré
+        // que l'exiger en phrase complète produisait presque uniquement des
+        // signalements faux (`../shared/french-guard.ts`).
+        detail: guard.apply(item.detail, `blocs[${index}].items[${item_index}].detail`, "consigne"),
       })),
     })),
     objectif_game: guard.apply(routine.objectif_game, "objectif_game"),

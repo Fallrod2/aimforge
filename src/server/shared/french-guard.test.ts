@@ -289,3 +289,213 @@ describe("frenchGuard", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Le corpus de la campagne réelle (20 routines + 20 fils,
+ * `deepseek/deepseek-v4-flash-0731`, 12/08/2026).
+ *
+ * Chaque cas ci-dessous est une phrase **effectivement produite**, et chaque
+ * attente dit ce que la campagne a appris : la moitié des signalements étaient
+ * faux, et les faire taire ne doit rien coûter aux vraies fautes. Les fixtures
+ * historiques (« si tu tenus », « mérite un travail ciblé », « car se
+ * construira ») restent vérifiées plus haut : c'est le contrat de non-régression
+ * de ce recalibrage.
+ */
+describe("detectFrenchIssues — corpus de production", () => {
+  it("ne voit plus un sujet manquant au milieu d'un mot accentué", () => {
+    // `\b` de JavaScript coupait « contrô|le est » et signalait « le est ».
+    const issues = detectFrenchIssues(
+      "Ta stabilité en contrôle est mesurée à [Control Advanced 933.3].",
+    );
+
+    expect(kinds(issues)).not.toContain("sujet_manquant");
+  });
+
+  it("laisse passer les noms communs homographes d'un verbe", () => {
+    expect(
+      kinds(detectFrenchIssues("Ta stabilité est un socle pour tout le reste.")),
+    ).not.toContain("sujet_manquant");
+    expect(
+      kinds(detectFrenchIssues("Le problème n'est pas ton volume, c'est son manque de structure.")),
+    ).not.toContain("sujet_manquant");
+  });
+
+  it("laisse passer la tournure présentative « ce sont »", () => {
+    const issues = detectFrenchIssues("Or, sur Valorant, ce sont ces deux familles qui comptent.");
+
+    expect(kinds(issues)).not.toContain("sujet_manquant");
+  });
+
+  it("reconnaît un impératif en tête de phrase", () => {
+    expect(hasConjugatedVerb("Étire tes balayages sans perdre le contrôle")).toBe(true);
+    expect(hasConjugatedVerb("Coupe le chat vocal pendant la séance")).toBe(true);
+    expect(hasConjugatedVerb("Enchaîne 3 runs sur ce scénario")).toBe(true);
+  });
+
+  it("reconnaît un impératif derrière une amorce adverbiale", () => {
+    expect(hasConjugatedVerb("Ici aussi, privilégie la netteté de chaque clic")).toBe(true);
+  });
+
+  it("reconnaît l'imparfait, le futur et le conditionnel", () => {
+    expect(hasConjugatedVerb("Ton debrief d'Ascent pointait déjà le placement")).toBe(true);
+    expect(hasConjugatedVerb("Ta régularité progressera sur deux semaines")).toBe(true);
+    expect(hasConjugatedVerb("Une passe complète clarifierait ton palier")).toBe(true);
+  });
+
+  it("ne prend pas un nom en « -ait » pour un verbe", () => {
+    expect(hasConjugatedVerb("Un portrait précis de ton palier")).toBe(false);
+    expect(hasConjugatedVerb("Trois runs de suite, jamais deux")).toBe(false);
+  });
+
+  it("tolère la phrase nominale dans une consigne, mais pas dans une phrase", () => {
+    const nominal = "Deux runs de cinq minutes.";
+
+    expect(kinds(detectFrenchIssues(nominal, { role: "consigne" }))).not.toContain(
+      "phrase_sans_verbe",
+    );
+    expect(kinds(detectFrenchIssues(nominal, { role: "phrase" }))).toContain("phrase_sans_verbe");
+  });
+
+  it("tolère les consignes nominales relevées dans la campagne", () => {
+    for (const sentence of [
+      "Objectif concret : atteindre 480 sur ces deux scénarios d'ici deux semaines.",
+      "Cinq minutes d'échauffement libre dans le range, sans aucune pression de score.",
+      "Cette épreuve conclut la partie réactive du palier.",
+      "Trois runs sur ce scénario, avec un point d'attention sur les rebonds multiples.",
+    ]) {
+      expect(kinds(detectFrenchIssues(sentence, { role: "consigne" }))).not.toContain(
+        "phrase_sans_verbe",
+      );
+    }
+  });
+
+  it("signale quand même une consigne qui reprend en minuscule : la rupture reste une faute", () => {
+    const issues = detectFrenchIssues("Trois runs sans forcer. deux minutes de pause ensuite.", {
+      role: "consigne",
+    });
+
+    expect(kinds(issues)).toContain("minuscule_apres_point");
+    expect(kinds(issues)).toContain("phrase_sans_verbe");
+  });
+
+  it("signale quand même une subordonnée orpheline dans une consigne", () => {
+    const issues = detectFrenchIssues("Car se construira bloc par bloc.", { role: "consigne" });
+
+    expect(kinds(issues)).toContain("fragment_subordonne");
+  });
+
+  it("signale toujours la citation en position de sujet, la vraie faute résiduelle", () => {
+    for (const sentence of [
+      "[HS% 25.1] est encore trop bas pour ton palier.",
+      "[Dynamic Novice 33.3] est ce qui te freine le plus.",
+      "[Evasive Novice 33.3] est le point à travailler.",
+    ]) {
+      expect(kinds(detectFrenchIssues(sentence, { role: "consigne" }))).toContain("citation_sujet");
+    }
+  });
+
+  it("ne signale pas une citation employée en complément", () => {
+    const issues = detectFrenchIssues(
+      "Ton pourcentage de tirs à la tête [HS% 25.1] est encore trop bas.",
+      { role: "consigne" },
+    );
+
+    expect(kinds(issues)).not.toContain("citation_sujet");
+    expect(kinds(issues)).not.toContain("sujet_manquant");
+  });
+
+  it("ne prend pas une question pour un sujet manquant", () => {
+    expect(kinds(detectFrenchIssues("Est-ce que tu tiens ce rythme ?"))).not.toContain(
+      "sujet_manquant",
+    );
+  });
+});
+
+/**
+ * La forme exacte que le modèle a produite cinq fois sur vingt : le
+ * déterminant est là, la consigne « le marqueur est un complément » a l'air
+ * suivie, mais c'est le marqueur qui tient la place du **nom**.
+ */
+describe("citation_sujet — le marqueur à la place du nom", () => {
+  const PRODUCTION = [
+    "Continue à viser les têtes, même si ton [ADR 135.6] est proche de la moyenne.",
+    "Adapte ta vitesse de suivi, car ton [Dynamic Novice 33.3] est bas.",
+    "Utilise tes duels d'entrée, puisque ton [Winrate 59.1] est bon.",
+    "Ton [HS% 25.1] est ta base à entretenir.",
+    "Travaille le suivi plus que l'éclatement, ta [Dynamic Intermediate 400] est ta faiblesse.",
+  ];
+
+  it("signale chacune des cinq phrases de la campagne", () => {
+    for (const sentence of PRODUCTION) {
+      expect(kinds(detectFrenchIssues(sentence, { role: "consigne" }))).toContain("citation_sujet");
+    }
+  });
+
+  it("montre dans l'extrait ce que le joueur lirait, marqueur retiré", () => {
+    const issues = detectFrenchIssues("Ton [HS% 25.1] est ta base à entretenir.", {
+      role: "consigne",
+    });
+    const citation = issues.find((issue) => issue.kind === "citation_sujet");
+
+    expect(citation?.excerpt).toContain("Ton est");
+  });
+
+  it("ne signale pas la même phrase écrite correctement", () => {
+    const correct = PRODUCTION.map((sentence) =>
+      sentence.replace(/(ton|ta) \[/giu, "$1 pourcentage de tirs à la tête ["),
+    );
+
+    for (const sentence of correct) {
+      expect(kinds(detectFrenchIssues(sentence, { role: "consigne" }))).not.toContain(
+        "citation_sujet",
+      );
+    }
+  });
+});
+
+/**
+ * L'inversion interrogative, quatre fois signalée à tort sur la seconde
+ * campagne (`thread-openrouter-2026-08-12T11-31-52`, générations 9, 14 et 18).
+ * La règle « après *tu*, le verbe finit par s ou x » lisait « Veux-**tu** que
+ * je te **propose** » et jugeait `propose` — alors que le verbe est devant.
+ */
+describe("conjugaison_2e_personne — l'inversion interrogative", () => {
+  const PRODUCTION = [
+    "Veux-tu que je te propose une analyse complète de cette partie ?",
+    "Veux-tu que je te propose un debrief structuré de la défaite sur Ascent ?",
+    "Veux-tu qu'on analyse le match non débriefé du 12 août pour croiser les deux ?",
+    "As-tu remarqué que ton HS % descend quand tu enchaînes des parties le même jour ?",
+  ];
+
+  it("ne signale rien sur les quatre phrases de la campagne", () => {
+    for (const sentence of PRODUCTION) {
+      expect(detectFrenchIssues(sentence, { role: "consigne" })).toEqual([]);
+    }
+  });
+
+  it("reconnaît les autres formes d'inversion, « -t- » compris", () => {
+    for (const sentence of [
+      "Peut-il tenir ce rythme sur deux semaines ?",
+      "Où en es-tu sur ce palier ?",
+      "Que reste-t-il à jouer avant la fin du bench ?",
+      "Faut-il enchaîner deux blocs de suite ?",
+    ]) {
+      expect(kinds(detectFrenchIssues(sentence, { role: "consigne" }))).not.toContain(
+        "conjugaison_2e_personne",
+      );
+    }
+  });
+
+  it("compte l'inversion comme un verbe conjugué", () => {
+    expect(hasConjugatedVerb("Remarques-tu la différence sur ce bloc ?")).toBe(true);
+  });
+
+  it("laisse intacte la détection d'un sujet antéposé fautif", () => {
+    expect(kinds(detectFrenchIssues("Tes stabilisations si tu tenus ces deux blocs."))).toContain(
+      "conjugaison_2e_personne",
+    );
+    expect(kinds(detectFrenchIssues("Veux-tu savoir si tu tenus ces blocs ?"))).toContain(
+      "conjugaison_2e_personne",
+    );
+  });
+});

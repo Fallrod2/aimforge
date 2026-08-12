@@ -53,8 +53,10 @@ export function parseChatAnswer(raw: string, allowed: readonly string[]): ChatAn
   // Le garde-fou passe **avant** la borne de longueur : la longueur mesurée
   // doit être celle du texte livré, pas celle d'un texte qu'on va encore
   // retoucher (`../shared/french-guard.ts`).
+  // `consigne` : la réponse du coach est une consigne d'entraînement, où la
+  // phrase nominale (« Trois passes par semaine. ») est correcte.
   const guard = frenchGuard("coach-chat", { protectedNames: allowed });
-  const answer = guard.apply(trimmed, "answer");
+  const answer = guard.apply(trimmed, "answer", "consigne");
 
   guard.flush();
 
