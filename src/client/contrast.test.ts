@@ -17,7 +17,7 @@
  *   partir des jetons, jamais recopiées.
  */
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -31,8 +31,20 @@ import {
   toHex,
 } from "./contrast";
 
-const CSS = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.css"), "utf8");
+const CLIENT = dirname(fileURLToPath(import.meta.url));
+const CSS = readFileSync(join(CLIENT, "index.css"), "utf8");
 const TOKENS = readColorTokens(CSS);
+
+/** Tous les fichiers de `src/client`, chemin et contenu. */
+function clientSources(directory = CLIENT): readonly (readonly [string, string])[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+
+    if (entry.isDirectory()) return clientSources(path);
+    if (!/\.tsx?$/.test(entry.name) || entry.name.includes(".test.")) return [];
+    return [[path.slice(CLIENT.length + 1), readFileSync(path, "utf8")] as const];
+  });
+}
 
 /** La valeur d'un jeton, ou l'échec du test s'il a disparu. */
 function token(name: string): string {
@@ -152,7 +164,13 @@ describe("braise", () => {
     expect(ratioOf("#ffffff", token("ember-600"))).toBeLessThan(AA_TEXT);
   });
 
-  it("le bouton primaire (encre sombre sur brand) tient largement AA", () => {
+  it("l'ancien bouton plein passait AA — ce n'est pas le contraste qui l'a écarté", () => {
+    // `bg-ember-500` + `text-steel-950` valait 6,63:1, mieux que son
+    // remplaçant. Il a disparu parce qu'il **coexistait** avec l'autre style :
+    // deux boutons pleins de couleurs différentes pour la même intention ne se
+    // lisent pas comme un choix. Le noter ici évite qu'on le rétablisse un jour
+    // « parce qu'il était plus lisible » — il l'était, et ce n'était pas la
+    // question.
     expect(ratioOf(token("surface"), token("brand"))).toBeGreaterThanOrEqual(AA_TEXT);
     expect(ratioOf(token("surface"), token("ember-400"))).toBeGreaterThanOrEqual(AA_TEXT);
   });
@@ -160,6 +178,38 @@ describe("braise", () => {
   it("l'anneau de focus se voit sur les trois surfaces", () => {
     for (const surface of ["surface", "surface-raised", "surface-overlay"]) {
       expect(ratioOf(token("brand"), token(surface))).toBeGreaterThanOrEqual(AA_NON_TEXT);
+    }
+  });
+});
+
+describe("un seul style de bouton plein", () => {
+  /**
+   * Le couple de l'ancien CTA, cherché dans les sources.
+   *
+   * `text-steel-950` est sans ambiguïté : l'encre presque noire n'a jamais servi
+   * qu'à écrire sur la braise vive. Sa présence signifie donc qu'un second style
+   * de bouton plein est réapparu — ce que douze migrations, puis neuf autres en
+   * vérification visuelle, ont mis deux passes à éliminer.
+   */
+  const OLD_FILLED_CTA = ["text-steel-950", "hover:bg-ember-400"] as const;
+
+  it.each(OLD_FILLED_CTA)("`%s` n'existe plus dans src/client", (needle) => {
+    const offenders = clientSources()
+      .filter(([, source]) => source.includes(needle))
+      .map(([path]) => path);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("le style unique est bien celui qui est mesuré", () => {
+    const filled = clientSources().filter(([, source]) => source.includes("bg-brand-fill"));
+
+    // Le seuil n'est pas décoratif : il dit que le style est *partagé*, et pas
+    // qu'un composant isolé l'utilise pendant que le reste a divergé.
+    expect(filled.length).toBeGreaterThanOrEqual(10);
+    for (const [path, source] of filled) {
+      // Le blanc pur voyage avec le fond : c'est la règle du jeton.
+      expect(source.includes("text-white"), `${path} peint brand-fill sans blanc pur`).toBe(true);
     }
   });
 });

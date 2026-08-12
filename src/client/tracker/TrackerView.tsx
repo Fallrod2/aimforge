@@ -302,6 +302,14 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   );
 
   const canSave = computed.scores.length > 0 && invalid.length === 0 && !saving;
+  /**
+   * Il y a quelque chose à effacer.
+   *
+   * Calculé une fois : les deux affordances d'effacement — celle du panneau
+   * latéral et celle du téléphone — répondent à la même question, et deux
+   * expressions séparées finiraient par ne plus dire la même chose.
+   */
+  const hasDraft = Object.keys(tierDraft(draft, tier)).length > 0;
 
   async function save() {
     setSaving(true);
@@ -400,6 +408,18 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
     setImports((current) => clearImportState(current, tier));
   }
 
+  /**
+   * L'appui sur « Effacer la saisie », d'où qu'il vienne.
+   *
+   * Un seul rappel pour les deux boutons — celui du panneau latéral et celui du
+   * téléphone — donc une seule confirmation en cours, une seule fenêtre de
+   * quatre secondes, un seul toast. Deux machines parallèles auraient permis
+   * d'armer les deux à la fois si l'écran changeait de largeur entre les appuis.
+   */
+  function pressClear(): void {
+    if (confirm.press(CLEAR_DRAFT)) reset();
+  }
+
   /** Remet le brouillon effacé, tel qu'il était, palier compris. */
   function restore(): void {
     const snapshot = cleared.pending;
@@ -465,12 +485,10 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           <SaveActions
             canSave={canSave}
             saving={saving}
-            hasDraft={Object.keys(tierDraft(draft, tier)).length > 0}
+            hasDraft={hasDraft}
             onSave={save}
             resetArmed={confirm.armed(CLEAR_DRAFT)}
-            onReset={() => {
-              if (confirm.press(CLEAR_DRAFT)) reset();
-            }}
+            onReset={pressClear}
           />
           <Feedback error={error} invalid={invalid} saved={saved} />
         </div>
@@ -504,6 +522,39 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           }}
           onToggleManual={() => setManual((current) => toggleManual(current, tier))}
         />
+
+        {/*
+          « Effacer la saisie » sur téléphone (V5-A, vérification visuelle).
+
+          Le geste n'existait que sur grand écran : `SaveActions` vit dans un
+          bloc `hidden lg:flex`, et la barre du pouce ne porte que
+          « Sauvegarder ». Quelqu'un qui s'était trompé de palier n'avait aucun
+          moyen de repartir de zéro — sinon en vidant dix-huit champs à la main.
+
+          Il est **au-dessus de la grille** et non dans la barre collante : à
+          390 px, celle-ci tient déjà l'overall, l'étiquette « Partiel », le
+          compte de scénarios, le badge de rang et « Sauvegarder ». Un sixième
+          élément l'aurait comprimée, et un bouton destructif collé au bouton de
+          sauvegarde est exactement le voisinage qu'on évite. Ici il est là où
+          l'on tape, il ne paraît que s'il y a quelque chose à effacer, et il
+          part avec la saisie qu'il efface.
+
+          Même machine que le panneau latéral (`pressClear`), donc même
+          confirmation en deux appuis, même fenêtre de quatre secondes et même
+          toast « Annuler ».
+        */}
+        {hasDraft ? (
+          <div className="flex justify-end lg:hidden">
+            <ConfirmButton
+              label="Effacer la saisie"
+              question="Effacer ?"
+              armed={confirm.armed(CLEAR_DRAFT)}
+              disabled={saving}
+              onPress={pressClear}
+              sizeClasses="inline-flex min-h-11 items-center px-4"
+            />
+          </div>
+        ) : null}
 
         {showSkeleton ? <TierSkeleton tier={tier} /> : null}
 
@@ -636,7 +687,12 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
       </div>
 
       {cleared.pending === null ? null : (
-        <UndoToast message="Saisie effacée." onUndo={restore}>
+        // `bottom-40` (160 px) : le tracker empile **deux** barres collantes
+        // sur téléphone — celle du pouce (`bottom-0`, 64 px) et la sienne
+        // (`bottom-16`, ~64 px, jusqu'à ~84 px quand un message d'erreur s'y
+        // ajoute). Au défaut de 80 px, le toast se serait posé derrière la
+        // seconde, donc hors de portée du doigt qui vient annuler.
+        <UndoToast message="Saisie effacée." offset="bottom-40 lg:bottom-6" onUndo={restore}>
           Le brouillon reste récupérable quelques secondes.
         </UndoToast>
       )}
@@ -868,7 +924,7 @@ function SaveButton({ canSave, saving, onSave, compact = false }: SaveButtonProp
       type="button"
       disabled={!canSave}
       onClick={onSave}
-      className={`rounded-lg bg-ember-500 font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500 ${
+      className={`rounded-lg bg-brand-fill font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500 ${
         compact ? "shrink-0 px-4 py-2.5 text-sm" : "w-full px-4 py-3 text-sm"
       }`}
     >
@@ -894,7 +950,10 @@ function SaveActions({ canSave, saving, hasDraft, onSave, resetArmed, onReset }:
         armed={resetArmed}
         disabled={!hasDraft || saving}
         onPress={onReset}
-        sizeClasses="w-full px-4 py-2.5"
+        // Même hauteur que « Sauvegarder » juste au-dessus (`py-3` ≈ 44 px) :
+        // deux boutons empilés de hauteurs différentes se lisent comme une
+        // erreur de gabarit, et 44 px est de toute façon le plancher tactile.
+        sizeClasses="inline-flex min-h-11 w-full items-center justify-center px-4"
       />
     </div>
   );

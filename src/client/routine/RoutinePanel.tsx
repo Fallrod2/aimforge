@@ -417,7 +417,7 @@ export function RoutinePanel() {
             <button
               type="submit"
               disabled={!canSubmit}
-              className="rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
+              className="rounded-lg bg-brand-fill px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
             >
               {generating ? "Génération…" : "Générer ma routine"}
             </button>

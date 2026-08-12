@@ -84,6 +84,16 @@ interface UndoToastProps {
   /** Ce qui vient d'être fait, au passé : « Passe supprimée ». */
   readonly message: string;
   readonly onUndo: () => void;
+  /**
+   * Où le toast se pose, verticalement.
+   *
+   * Le défaut dégage la barre de navigation du pouce (`h-16`) et rien d'autre.
+   * Un écran qui empile une seconde barre collante par-dessus — le tracker et
+   * sa ligne de sauvegarde — doit monter d'autant : sinon le toast se glisse
+   * **derrière** elle, c'est-à-dire hors de portée au moment précis où il
+   * propose d'annuler.
+   */
+  readonly offset?: string;
   /** Une précision facultative, sur la ligne du dessous. */
   readonly children?: ReactNode;
 }
@@ -99,13 +109,18 @@ interface UndoToastProps {
  * `role="status"` et non `alert` : c'est une confirmation, pas une urgence — un
  * lecteur d'écran l'annonce sans couper ce qu'il était en train de dire.
  */
-export function UndoToast({ message, onUndo, children }: UndoToastProps) {
+export function UndoToast({
+  message,
+  onUndo,
+  offset = "bottom-20 lg:bottom-6",
+  children,
+}: UndoToastProps) {
   return (
     <div
       role="status"
       aria-live="polite"
       // Au-dessus de la barre du pouce sur téléphone, en bas d'écran ailleurs.
-      className="fixed inset-x-0 bottom-20 z-30 flex justify-center px-4 lg:bottom-6"
+      className={`fixed inset-x-0 z-30 flex justify-center px-4 ${offset}`}
     >
       <div className="flex max-w-full items-center gap-3 rounded-xl border border-border bg-surface-overlay px-4 py-2.5 shadow-[var(--shadow-overlay)]">
         <p className="min-w-0 text-xs text-steel-200">

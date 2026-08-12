@@ -211,7 +211,7 @@ export function RoutineCard({
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
                 routine.done
                   ? "border border-steel-700 text-steel-300 hover:text-steel-100"
-                  : "bg-ember-500 text-steel-950 hover:bg-ember-400"
+                  : "bg-brand-fill text-white hover:bg-brand-fill-hover"
               }`}
             >
               {toggling
