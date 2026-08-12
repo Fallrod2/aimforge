@@ -12,6 +12,7 @@
       "!**/dist",
       "!**/node_modules",
       "!**/voltaic-s5-data.json",
+      "!**/viscose-s2-data.json",
       "!src/client/supabase/database-types.ts"
     ]
   },

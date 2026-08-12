@@ -204,8 +204,13 @@ export type RefreshResponse = z.infer<typeof refreshResponseSchema>;
  * validation passe donc par `toTierId`, qui interroge le benchmark — Zod reste
  * la frontière, le registre reste la référence (DECISIONS.md D5).
  *
- * Le benchmark est celui par défaut tant que la sélection par l'utilisateur
- * n'existe pas (DECISIONS.md D6) : c'est aussi celui que l'import interroge.
+ * Le benchmark de référence est celui **par défaut**, et non le benchmark actif
+ * de l'utilisateur (qui existe depuis W1-B, DECISIONS.md D6) : le contrat de
+ * cet endpoint ne porte pas de `benchmarkId`, donc le palier reçu ne peut être
+ * validé que contre un benchmark connu des deux côtés. C'est sans conséquence
+ * aujourd'hui — le seul benchmark importable depuis KovaaK's est le benchmark
+ * par défaut — et c'est à étendre (champ `benchmarkId` dans la requête, de part
+ * et d'autre) le jour où un second benchmark s'importe.
  */
 export const tierSchema: z.ZodType<TierId> = z.string().superRefine((value, ctx) => {
   try {

@@ -27,6 +27,7 @@
 import {
   activeBenchmark,
   type BenchmarkId,
+  benchmarkData,
   DEFAULT_BENCHMARK_ID,
   getBenchmark,
 } from "./benchmarks.js";
@@ -44,9 +45,9 @@ import {
  * métadonnées. Ce sont des constantes de `DEFAULT_BENCHMARK_ID` : pour les
  * données d'une passe d'archive, passer par `getTierFor(run.benchmarkId, …)`.
  */
-export const TIERS: readonly Tier[] = getBenchmark(DEFAULT_BENCHMARK_ID).data.tiers;
+export const TIERS: readonly Tier[] = benchmarkData(DEFAULT_BENCHMARK_ID).tiers;
 
-export const META = getBenchmark(DEFAULT_BENCHMARK_ID).data.meta;
+export const META = benchmarkData(DEFAULT_BENCHMARK_ID).meta;
 
 interface BenchmarkIndex {
   readonly tiersById: ReadonlyMap<string, Tier>;
@@ -94,7 +95,9 @@ function indexOf(benchmarkId: BenchmarkId): BenchmarkIndex {
 
   if (cached !== undefined) return cached;
 
-  const built = buildIndex(definition.data);
+  // `benchmarkData` plutôt que `definition.data` : un benchmark incomplet n'a
+  // pas d'index à construire, il a une erreur à lever (`benchmarks.ts`).
+  const built = buildIndex(benchmarkData(benchmarkId));
 
   indexes.set(definition, built);
   return built;
@@ -106,7 +109,7 @@ function indexOf(benchmarkId: BenchmarkId): BenchmarkIndex {
 
 /** Les paliers d'un benchmark, dans l'ordre de progression. */
 export function listTiersFor(benchmarkId: BenchmarkId): readonly Tier[] {
-  return getBenchmark(benchmarkId).data.tiers;
+  return benchmarkData(benchmarkId).tiers;
 }
 
 /** Les identifiants des paliers d'un benchmark, dans l'ordre de progression. */

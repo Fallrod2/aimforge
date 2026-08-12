@@ -18,9 +18,9 @@
 
 import {
   type BenchmarkId,
-  computeBenchRun,
+  computeBenchRunFor,
   currentBenchmark,
-  scenarioNames,
+  scenarioNamesFor,
   type TierId,
 } from "../../lib/energy";
 import { supabase } from "../supabase/client";
@@ -82,7 +82,20 @@ export async function saveBenchRunTo(
   input: SaveBenchRunInput,
 ): Promise<BenchRunDetail> {
   const { tier, scores } = input;
-  const known = scenarioNames(tier);
+  /**
+   * Le benchmark de la passe, résolu **une fois** — et c'est lui qui sert aux
+   * trois usages : valider les noms de scénarios, calculer les énergies,
+   * estampiller la ligne.
+   *
+   * Avant, le calcul passait par les accesseurs non qualifiés (donc par le
+   * benchmark courant de la lib) pendant que l'estampille prenait
+   * `input.benchmarkId`. Les deux coïncident pour le tracker, qui passe le
+   * benchmark actif — mais un appelant qui en nommerait un autre aurait fait
+   * enregistrer une passe calculée sur le barème courant sous l'étiquette d'un
+   * autre barème, c'est-à-dire des énergies fausses et indétectables.
+   */
+  const benchmarkId = input.benchmarkId ?? currentBenchmark();
+  const known = scenarioNamesFor(benchmarkId, tier);
 
   for (const name of Object.keys(scores)) {
     if (!known.has(name)) {
@@ -90,7 +103,7 @@ export async function saveBenchRunTo(
     }
   }
 
-  const computed = computeBenchRun(tier, scores);
+  const computed = computeBenchRunFor(benchmarkId, tier, scores);
 
   if (computed.scores.length === 0) {
     throw new DataError("Aucun score à enregistrer.");
@@ -105,14 +118,12 @@ export async function saveBenchRunTo(
     // Une passe dont personne n'a dit d'où elle vient a été tapée à la main :
     // c'est le seul défaut qui ne surestime pas ce qu'on sait de la donnée.
     source: input.source ?? "manual",
-    // Le benchmark estampillé est celui que l'utilisateur a **actif** (D6), et
-    // c'est le même que celui dont les seuils ont servi à calculer les énergies
-    // trois lignes plus haut : le provider aligne le benchmark courant de la
-    // lib sur le benchmark actif, donc `computeBenchRun` et `currentBenchmark`
-    // parlent forcément du même (SPEC §5 quinquies). L'appelant peut le nommer
-    // — le tracker le fait, il tient le benchmark actif de son hook — mais il
-    // ne peut pas en choisir un autre que celui du calcul sans mentir.
-    benchmarkId: input.benchmarkId ?? currentBenchmark(),
+    // Le même identifiant que celui du calcul, par construction : l'appelant
+    // peut nommer son benchmark — le tracker le fait, il tient le benchmark
+    // actif de son hook — mais nommer, ici, veut dire *calculer dedans*. À
+    // défaut, c'est le benchmark courant de la lib, aligné sur le benchmark
+    // actif de l'utilisateur par le provider (D6, SPEC §5 quinquies).
+    benchmarkId,
   });
 
   try {

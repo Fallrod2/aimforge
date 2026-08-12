@@ -24,7 +24,7 @@
  * (fixture de test) laisse partir les siennes avec elle.
  */
 
-import { type BenchmarkId, getBenchmark } from "./benchmarks.js";
+import { type BenchmarkId, benchmarkData, getBenchmark } from "./benchmarks.js";
 
 /** Neutralise les métacaractères d'une chaîne de données utilisée en regex. */
 function escapeRegExp(literal: string): string {
@@ -60,6 +60,11 @@ function regexesFor(benchmarkId: BenchmarkId): NamingRegexes {
   const cached = regexes.get(definition);
 
   if (cached !== undefined) return cached;
+
+  // Un benchmark sans barème n'a pas de scénarios à nommer, à citer ou à faire
+  // correspondre : sa grammaire est vide, et une regex construite dessus
+  // (`\b\b`) reconnaîtrait n'importe quoi. Mieux vaut lever que reconnaître.
+  benchmarkData(benchmarkId);
 
   const { scenarioMarker, displayPrefix } = definition.naming;
   const suffix = definition.kovaaks?.scenarioSuffix;

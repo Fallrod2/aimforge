@@ -195,8 +195,20 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   const showGrid = !showSkeleton && (kovaaks === null || manualOpen);
 
   const { scores, invalid } = useMemo(() => draftScores(draft, tier), [draft, tier]);
-  const computed = useMemo(() => computeBenchRun(tier, scores), [tier, scores]);
-  const scenarios = useMemo(() => listScenarios(tier), [tier]);
+  /**
+   * `benchmarkId` est dans les dépendances alors qu'aucune de ces deux lignes ne
+   * le nomme : c'est justement le piège. `computeBenchRun` et `listScenarios`
+   * lisent le benchmark **courant** de la lib — un pointeur de module que
+   * `syncCurrentBenchmark` déplace, et dont React ne sait rien. Sans cette
+   * dépendance, changer de benchmark au Profil laisserait le tracker afficher
+   * les scénarios et les énergies de l'ancien barème jusqu'au prochain
+   * changement de palier ou de saisie.
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `computeBenchRun` lit le benchmark courant de la lib, que React ne voit pas.
+  const computed = useMemo(() => computeBenchRun(tier, scores), [tier, scores, benchmarkId]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: idem — `listScenarios` dépend du benchmark courant sans le nommer.
+  const scenarios = useMemo(() => listScenarios(tier), [tier, benchmarkId]);
+  // Lu à chaque rendu, donc déjà aligné sur le benchmark affiché.
   const tierData = getTier(tier);
 
   const update = useCallback(

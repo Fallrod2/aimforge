@@ -25,12 +25,12 @@ import {
   computeBenchRunFor,
   DEFAULT_BENCHMARK_ID,
   EnergyError,
-  getBenchmark,
   listBenchmarkIds,
   type ScoreMap,
 } from "../../lib/energy";
 import {
   activeBenchmark,
+  benchmarkData,
   registerBenchmark,
   setCurrentBenchmark,
   withBenchmark,
@@ -89,7 +89,7 @@ beforeAll(() => {
 
   const remove = registerBenchmark(
     benchmarkLike(DEFAULT_BENCHMARK_ID, FAKE_S6, {
-      data: harderData(getBenchmark(DEFAULT_BENCHMARK_ID).data),
+      data: harderData(benchmarkData(DEFAULT_BENCHMARK_ID)),
       kovaaks: {
         benchmarkIds: { novice: 1, intermediate: 2, advanced: 3 },
         scenarioSuffix: " S6",
@@ -223,6 +223,30 @@ describe("(b) une nouvelle passe s'estampille le benchmark courant", () => {
     await saveBenchRunTo(store, { tier: "novice", scores: goldScores });
 
     expect(written).toEqual([DEFAULT_BENCHMARK_ID]);
+  });
+
+  it("calcule dans le benchmark que l'appelant nomme, pas dans le courant", async () => {
+    // Le courant reste la S5 : c'est le cas qui piège. Nommer un benchmark et
+    // calculer dans un autre écrirait des énergies S5 sous l'étiquette S6 —
+    // fausses, et indétectables puisque la ligne aurait l'air cohérente.
+    const written: { benchmarkId: string; overall: number }[] = [];
+    const store: BenchRunStore = {
+      async insertRun(run) {
+        written.push({ benchmarkId: run.benchmarkId, overall: run.overall });
+        return { ...benchRow(run.benchmarkId), overall: run.overall, rank: run.rank };
+      },
+      async insertScores() {},
+      async deleteRun() {},
+    };
+
+    await saveBenchRunTo(store, {
+      tier: "novice",
+      scores: goldScores,
+      benchmarkId: FAKE_S6,
+    });
+
+    expect(written[0]?.benchmarkId).toBe(FAKE_S6);
+    expect(written[0]?.overall).toBeLessThan(20);
   });
 });
 

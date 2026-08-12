@@ -24,7 +24,12 @@
  */
 
 import { z } from "zod";
-import { type BenchmarkId, DEFAULT_BENCHMARK_ID, toBenchmarkId } from "../../lib/energy";
+import {
+  type BenchmarkId,
+  DEFAULT_BENCHMARK_ID,
+  getBenchmark,
+  toBenchmarkId,
+} from "../../lib/energy";
 import { GAME_IDS, type GameId } from "../../shared/game-vocab";
 import { supabase } from "../supabase/client";
 import { DataError, queryError } from "./errors";
@@ -69,10 +74,25 @@ export function toGame(value: unknown): GameId {
  * préférence d'affichage et de saisie. On retombe donc sur le défaut, en le
  * disant dans la console — la trace importe : c'est le seul indice qu'un
  * benchmark a disparu du registre alors qu'un profil le désignait encore.
+ *
+ * Même repli pour un benchmark **incomplet** (`viscose-s2`, DECISIONS.md D8) :
+ * le registre le connaît, donc `toBenchmarkId` l'accepte, mais il n'a pas de
+ * barème calculable. Le sélecteur ne le propose pas ; c'est ici qu'on ferme la
+ * dernière porte — une ligne de profil écrite à la main mettrait sinon tout
+ * l'écran (tracker, historique, coach) sur un benchmark qui lève au premier
+ * calcul.
  */
 export function toActiveBenchmark(value: string): BenchmarkId {
   try {
-    return toBenchmarkId(value);
+    const benchmarkId = toBenchmarkId(value);
+
+    if (getBenchmark(benchmarkId).status === "incomplete") {
+      console.warn(
+        `[profil] benchmark actif incomplet : « ${value} » — repli sur ${DEFAULT_BENCHMARK_ID}.`,
+      );
+      return DEFAULT_BENCHMARK_ID;
+    }
+    return benchmarkId;
   } catch {
     console.warn(
       `[profil] benchmark actif inconnu du registre : « ${value} » — repli sur ${DEFAULT_BENCHMARK_ID}.`,

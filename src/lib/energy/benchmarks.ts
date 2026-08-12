@@ -61,10 +61,12 @@ export type AimTrainer = "kovaaks" | "aimlabs";
 /**
  * Où en est le benchmark chez son éditeur.
  *
- * `incomplete` désigne un benchmark dont le jeu de données n'est pas fini
- * (seuils partiels, paliers manquants) : il reste enregistrable — pour être
- * travaillé, testé, comparé — mais `listBenchmarks()` ne le rend pas, donc
- * l'UI ne le propose jamais.
+ * `incomplete` désigne un benchmark **sans barème calculable** : ses seuils sont
+ * peut-être connus et versionnés (Viscose S2), mais il manque de quoi en tirer
+ * une énergie ou un rang, et le registre refuse de faire semblant. L'entrée
+ * existe pour être travaillée, citée, complétée — jamais pour calculer :
+ * `data` y vaut `null` (invariant vérifié à l'enregistrement) et
+ * `listBenchmarks()` ne la rend pas, donc l'UI ne la propose jamais.
  */
 export type BenchmarkStatus = "stable" | "beta" | "incomplete";
 
@@ -129,7 +131,15 @@ export interface BenchmarkDefinition {
   readonly aimTrainer: AimTrainer;
   readonly energyFormula: EnergyFormulaId;
   readonly naming: BenchmarkNaming;
-  readonly data: BenchmarkData;
+  /**
+   * Les seuils, ou `null` quand il n'y a **rien de calculable**.
+   *
+   * `data === null` ⟺ `status === "incomplete"` : l'équivalence est vérifiée à
+   * l'enregistrement (`checkedBenchmark`), et c'est elle qui rend le `null`
+   * sûr. Personne ne lit ce champ directement pour calculer : `benchmarkData`
+   * est le seul chemin, et il lève au lieu de rendre `null`.
+   */
+  readonly data: BenchmarkData | null;
   /** `null` pour un benchmark qui ne s'importe pas depuis KovaaK's. */
   readonly kovaaks: KovaaksImport | null;
 }
@@ -185,12 +195,80 @@ const VOLTAIC_S5: BenchmarkDefinition = {
 };
 
 /**
+ * Viscose S2 — entrée **honnête**, donc muette (DECISIONS.md D8).
+ *
+ * TODO: formule d'agrégation officielle Viscose non documentée — seuils par
+ * scénario vérifiés (API KovaaK's), voir viscose-s2-data.json
+ *
+ * Ce qui est vérifié : les seuils de score par rang, scénario par scénario, des
+ * quatre difficultés (API officielle `player-progress-rank-benchmark`,
+ * benchmarkId 2335-2338, recoupée avec le tableur officiel S1). Ils sont
+ * versionnés dans `viscose-s2-data.json`.
+ *
+ * Ce qui manque, et qui interdit tout calcul : la façon dont Viscose agrège un
+ * scénario en catégorie puis en rang global n'est publiée nulle part. D'où
+ * `data: null` — pas de barème calculable — plutôt qu'un jeu de données
+ * partiel qui laisserait `energy.ts` produire des rangs Voltaic sous un nom
+ * Viscose. Pour la même raison, `energyFormula` nomme une formule que le
+ * registre des formules ne connaît pas : la résoudre lève, au lieu de rendre
+ * silencieusement celle d'un autre éditeur.
+ *
+ * `kovaaks: null` alors que les identifiants de benchmark KovaaK's sont connus
+ * (ils sont dans le fichier de données) : l'import fait correspondre les noms
+ * ramenés aux scénarios **du barème**, et il n'y en a pas. Un import qui
+ * n'aboutit à rien doit lever, pas rendre dix-huit champs vides.
+ */
+const VISCOSE_S2: BenchmarkDefinition = {
+  id: "viscose-s2" as BenchmarkId,
+  name: "Viscose S2",
+  publisher: "Viscose",
+  season: "Season 2",
+  status: "incomplete",
+  sourceUrl:
+    "https://kovaaks.com/webapp-backend/benchmarks/player-progress-rank-benchmark?benchmarkId=2335",
+  dataVersion: "2026-08-12",
+  aimTrainer: "kovaaks",
+  // Volontairement absente du registre des formules : cf. l'en-tête.
+  energyFormula: "viscose-inconnue",
+  // Les noms de scénarios Viscose n'ont ni marqueur commun ni suffixe de
+  // palier : la grammaire est vide plutôt qu'inventée. Rien ne la lit — les
+  // accesseurs de nommage lèvent aussi sur un benchmark sans barème.
+  naming: {
+    scenarioMarker: "",
+    displayPrefix: "",
+    tierLabelSuffix: false,
+  },
+  data: null,
+  kovaaks: null,
+};
+
+/**
+ * L'invariant du registre : `data === null` ⟺ `status === "incomplete"`.
+ *
+ * Les deux moitiés comptent. Un benchmark `incomplete` qui garderait un barème
+ * laisserait calculer des énergies sur des seuils qu'on vient de déclarer
+ * insuffisants ; un benchmark sans barème qui ne se dirait pas `incomplete`
+ * serait proposé par `listBenchmarks()`, donc sélectionnable, donc affiché —
+ * et n'échouerait qu'au premier calcul, sous les yeux de l'utilisateur.
+ */
+function checkedBenchmark(benchmark: BenchmarkDefinition): BenchmarkDefinition {
+  if ((benchmark.data === null) !== (benchmark.status === "incomplete")) {
+    throw new EnergyError(
+      `Benchmark incohérent: "${benchmark.id}" — un benchmark incomplet n'a pas de barème (data: null), et un benchmark sans barème est incomplet (statut: ${benchmark.status}, barème: ${benchmark.data === null ? "absent" : "présent"}).`,
+    );
+  }
+  return benchmark;
+}
+
+/**
  * Le registre. Mutable parce qu'un test doit pouvoir y déposer un benchmark
  * factice le temps d'une assertion (cf. `registerBenchmark`) — le code
  * applicatif, lui, n'a accès qu'aux lectures et à l'alignement du courant :
  * `index.ts` n'exporte pas `registerBenchmark`.
  */
-const BENCHMARKS = new Map<string, BenchmarkDefinition>([[DEFAULT_BENCHMARK_ID, VOLTAIC_S5]]);
+const BENCHMARKS = new Map<string, BenchmarkDefinition>(
+  [VOLTAIC_S5, VISCOSE_S2].map((benchmark) => [benchmark.id, checkedBenchmark(benchmark)]),
+);
 
 /** Le benchmark courant effectif ; `DEFAULT_BENCHMARK_ID` hors surcharge de test. */
 let currentBenchmarkId: BenchmarkId = DEFAULT_BENCHMARK_ID;
@@ -252,6 +330,25 @@ export function getBenchmark(benchmarkId: BenchmarkId | string): BenchmarkDefini
 }
 
 /**
+ * Le barème d'un benchmark. Throw si le benchmark est incomplet.
+ *
+ * C'est **le** point de passage vers `data` : les accesseurs de `data.ts` et de
+ * `naming.ts` s'en servent plutôt que de lire le champ, pour qu'une tentative
+ * de calcul sur un benchmark sans barème produise une erreur qui dit ce qui se
+ * passe, et non un `TypeError` sur `null` trois appels plus loin.
+ */
+export function benchmarkData(benchmarkId: BenchmarkId | string): BenchmarkData {
+  const definition = getBenchmark(benchmarkId);
+
+  if (definition.data === null) {
+    throw new EnergyError(
+      `benchmark incomplet : pas de barème calculable pour "${definition.id}" (${definition.name}).`,
+    );
+  }
+  return definition.data;
+}
+
+/**
  * Une valeur brute (colonne `bench_runs.season`) → un `BenchmarkId` validé.
  * C'est la frontière : au-delà, un benchmark est forcément connu du registre.
  */
@@ -288,11 +385,17 @@ export function activeBenchmark(): BenchmarkId {
  * Une continuation `await` sortirait de la portée sans qu'on le voie : un `fn`
  * qui rend un thenable est donc refusé, plutôt que de laisser passer un calcul
  * dont la moitié aurait été résolue dans le mauvais benchmark.
+ *
+ * Un benchmark **incomplet** est refusé d'emblée (`benchmarkData`) : c'est la
+ * porte de tous les calculs qualifiés (`computeBenchRunFor`, `findRankFor`…),
+ * et il vaut mieux échouer avant d'entrer que sur le premier seuil manquant.
  */
 export function withBenchmark<T>(benchmarkId: BenchmarkId, fn: () => T): T {
   const previous = activeBenchmarkId;
+  const definition = getBenchmark(benchmarkId);
 
-  activeBenchmarkId = getBenchmark(benchmarkId).id;
+  benchmarkData(definition.id);
+  activeBenchmarkId = definition.id;
   try {
     const result = fn();
 
@@ -322,7 +425,7 @@ export function registerBenchmark(benchmark: BenchmarkDefinition): () => void {
   if (BENCHMARKS.has(benchmark.id)) {
     throw new EnergyError(`Benchmark déjà enregistré: "${benchmark.id}"`);
   }
-  BENCHMARKS.set(benchmark.id, benchmark);
+  BENCHMARKS.set(benchmark.id, checkedBenchmark(benchmark));
   return () => {
     BENCHMARKS.delete(benchmark.id);
   };

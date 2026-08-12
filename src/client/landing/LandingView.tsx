@@ -18,10 +18,10 @@ interface Module {
 
 const MODULES: readonly Module[] = [
   {
-    title: "Tracker Voltaic",
-    pitch: "Tes 18 scénarios S5, l'énergie calculée en direct.",
+    title: "Tracker de benchmarks",
+    pitch: "Tes scénarios de bench, l'énergie calculée en direct.",
     detail:
-      "Seuils officiels du barème Voltaic Season 5 : énergie par scénario, par sous-catégorie, overall, rang atteint et badge Complete. Historique et courbe de progression.",
+      "Énergie par scénario, par sous-catégorie, overall, rang atteint et badge Complete, aux seuils du barème dans lequel tu t'entraînes — Voltaic S5, telle que son éditeur la publie aujourd'hui (en bêta), d'autres benchmarks ensuite. Historique et courbe de progression.",
   },
   {
     title: "Coach post-game",
@@ -57,7 +57,7 @@ export function LandingView() {
       <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
         <section className="max-w-2xl">
           <p className="text-[11px] font-medium tracking-[0.18em] text-ember-500 uppercase">
-            Entraînement Valorant · Voltaic S5
+            Entraînement aim · FPS compétitifs
           </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-steel-100 sm:text-4xl">
             Mesure ton aim, comprends tes parties, sache quoi travailler demain.

@@ -34,6 +34,15 @@ describe("toActiveBenchmark", () => {
     expect(String(warn.mock.calls[0]?.[0])).toContain("voltaic-s9");
   });
 
+  it("refuse un benchmark incomplet, que le registre connaît pourtant", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // `viscose-s2` est au registre (une passe qui le porterait doit se relire),
+    // mais il n'a pas de barème : personne ne doit se retrouver à saisir dedans.
+    expect(toActiveBenchmark("viscose-s2")).toBe(DEFAULT_BENCHMARK_ID);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("incomplet");
+  });
+
   it("ne se plaint pas quand il n'y a rien à signaler", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
