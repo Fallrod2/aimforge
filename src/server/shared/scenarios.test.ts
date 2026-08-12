@@ -1,12 +1,26 @@
-import { describe, expect, it } from "vitest";
-import { listScenarios, TIER_IDS } from "../../lib/energy";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  type BenchmarkId,
+  DEFAULT_BENCHMARK_ID,
+  listScenarios,
+  tierIdsFor,
+} from "../../lib/energy";
+import { registerBenchmark } from "../../lib/energy/benchmarks";
+import { benchmarkLike } from "../../lib/energy/fixtures";
 import {
   scenarioCatalog,
   scenarioNames,
+  subcategoryNames,
   unknownScenarioMentions,
   unknownScenarioReason,
   unknownScenariosInTexts,
 } from "./scenarios";
+
+/**
+ * Les paliers du benchmark de référence. Ce n'est plus une constante de type :
+ * la liste appartient au benchmark, et se lit dans le registre (DECISIONS.md D5).
+ */
+const TIER_IDS = tierIdsFor(DEFAULT_BENCHMARK_ID);
 
 const NOVICE = scenarioCatalog("novice").names;
 
@@ -160,5 +174,69 @@ describe("unknownScenarioReason", () => {
 
     expect(reason).toContain("« d »");
     expect(reason).not.toContain("« e »");
+  });
+});
+
+describe("la police suit la grammaire du benchmark", () => {
+  const OTHER = "marqueur-factice" as BenchmarkId;
+  const removers: (() => void)[] = [];
+
+  afterEach(() => {
+    while (removers.length > 0) removers.pop()?.();
+  });
+
+  function registerOther(): void {
+    removers.push(
+      registerBenchmark(
+        benchmarkLike(DEFAULT_BENCHMARK_ID, OTHER, {
+          naming: { scenarioMarker: "AL", displayPrefix: "AL", tierLabelSuffix: true },
+        }),
+      ),
+    );
+  }
+
+  it("cherche le marqueur déclaré par le benchmark, pas « VT » en dur", () => {
+    registerOther();
+
+    const text = "Fais AL Sphere Novice puis VT Pasu Novice.";
+
+    // Sous ce benchmark, « AL » ouvre une citation — et « AL Sphere Novice »
+    // n'est pas dans la liste autorisée, donc il est signalé. « VT Pasu
+    // Novice », lui, n'est plus un marqueur : il passe comme du texte libre.
+    expect(unknownScenarioMentions(text, NOVICE, OTHER)).toEqual([
+      "AL Sphere Novice puis VT Pasu Novice",
+    ]);
+  });
+
+  it("laisse passer un nom autorisé qui commence au marqueur", () => {
+    registerOther();
+
+    // Le catalogue est celui de la S5 (le benchmark factice en hérite) : un nom
+    // autorisé reste autorisé, quel que soit le marqueur cherché.
+    expect(unknownScenarioMentions("Fais VT Pasu Novice.", NOVICE, OTHER)).toEqual([]);
+  });
+});
+
+describe("subcategoryNames", () => {
+  it("rend les 9 sous-catégories du benchmark, dans l'ordre du tableur", () => {
+    expect(subcategoryNames(DEFAULT_BENCHMARK_ID)).toEqual([
+      "Dynamic",
+      "Static",
+      "Linear",
+      "Precise",
+      "Reactive",
+      "Control",
+      "Speed",
+      "Evasive",
+      "Stability",
+    ]);
+  });
+
+  it("dit la même chose sur tous les paliers : c'est ce qui rend l'overall comparable", () => {
+    for (const tier of TIER_IDS) {
+      expect(subcategoryNames(DEFAULT_BENCHMARK_ID, tier)).toEqual(
+        subcategoryNames(DEFAULT_BENCHMARK_ID),
+      );
+    }
   });
 });

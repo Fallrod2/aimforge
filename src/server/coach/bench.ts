@@ -11,9 +11,9 @@
  */
 
 import {
+  type BenchmarkId,
   computeSubcategoriesFor,
   getTierFor,
-  type SeasonId,
   scenarioNamesFor,
   type TierId,
 } from "../../lib/energy/index.js";
@@ -23,11 +23,12 @@ import type { CoachBenchSummary, CoachTierBench, CoachWeakness } from "./prompt.
 export interface BenchRunForCoach {
   readonly tier: TierId;
   /**
-   * Saison Voltaic de la passe (SPEC §5 quinquies). Les 9 sous-catégories sont
-   * dérivées ici, à la lecture : sans elle, le coach commenterait une passe S5
-   * avec les seuils de la saison courante — et dirait des choses fausses.
+   * Le benchmark de la passe (SPEC §5 quinquies). Les 9 sous-catégories sont
+   * dérivées ici, à la lecture : sans lui, le coach commenterait une passe
+   * Voltaic S5 avec les seuils du benchmark courant — et dirait des choses
+   * fausses.
    */
-  readonly season: SeasonId;
+  readonly benchmarkId: BenchmarkId;
   /** Horodatage ISO 8601. */
   readonly date: string;
   readonly overall: number;
@@ -60,11 +61,11 @@ export function summarizeBench(
   count = 3,
 ): CoachBenchSummary {
   const scoreMap = Object.fromEntries(scores.map((row) => [row.scenario, row.score]));
-  const subcategories = computeSubcategoriesFor(run.season, run.tier, scoreMap);
+  const subcategories = computeSubcategoriesFor(run.benchmarkId, run.tier, scoreMap);
 
   return {
     tier: run.tier,
-    tierLabel: getTierFor(run.season, run.tier).label,
+    tierLabel: getTierFor(run.benchmarkId, run.tier).label,
     date: run.date,
     overall: run.overall,
     rank: run.rank,
@@ -74,7 +75,7 @@ export function summarizeBench(
 }
 
 /**
- * Le même résumé, plus la saison de la passe et sa **complétude**.
+ * Le même résumé, plus le benchmark de la passe et sa **complétude**.
  *
  * C'est la forme que le coach lit quand il regarde les paliers ensemble : sans
  * « 4 scénarios sur 18 », une passe en cours et un palier effondré s'écrivent de
@@ -89,14 +90,14 @@ export function summarizeTierBench(
   scores: readonly ScenarioScoreForCoach[],
   count = 3,
 ): CoachTierBench {
-  const catalog = scenarioNamesFor(run.season, run.tier);
+  const catalog = scenarioNamesFor(run.benchmarkId, run.tier);
   const filled = new Set(
     scores.flatMap((row) => (catalog.has(row.scenario) ? [row.scenario] : [])),
   );
 
   return {
     ...summarizeBench(run, scores, count),
-    season: run.season,
+    benchmarkId: run.benchmarkId,
     filled: filled.size,
     total: catalog.size,
   };

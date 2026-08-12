@@ -7,16 +7,46 @@
  * l'invitation à monter : neuf sous-catégories à `maxEnergy` ne désignent plus
  * de faiblesse, elles disent que le palier n'a plus rien à mesurer
  * (`weakest.ts`).
+ *
+ * Tant que le bench est incomplet, l'overall vaut 0 — c'est la règle métier, et
+ * elle ne bouge pas. Ce qui bouge, c'est ce que l'écran en fait : au lieu d'un
+ * « — · SANS RANG » identique pour celui qui n'a rien joué et pour celui qui a
+ * bouclé huit sous-catégories sur neuf, le panneau affiche l'**énergie
+ * partielle** (`partialEnergy`, SPEC V4-A §4.1a) — toujours étiquetée partielle,
+ * toujours accompagnée du compte de sous-catégories, et jamais assortie d'un
+ * rang. L'étiquette « Partiel » prend d'ailleurs la place exacte du badge de
+ * rang : là où l'écran annonce d'ordinaire un rang, il annonce ici qu'il n'y en
+ * a pas — et le chiffre à côté ne peut pas se lire comme un overall classé.
  */
 
-import { type ComputedBenchRun, getTier, type TierId } from "../../lib/energy";
+import {
+  type BenchmarkId,
+  type ComputedBenchRun,
+  getTierFor,
+  partialEnergy,
+  type TierId,
+} from "../../lib/energy";
 import { EnergyRail } from "../components/EnergyRail";
 import { RankBadge } from "../components/RankBadge";
-import { nextRank, rankColorFor } from "../energy-view";
+import { nextRankFor, rankColorForBenchmark } from "../energy-view";
 import { formatEnergy } from "../format";
-import { weakestView } from "./weakest";
+import { weakestViewFor } from "./weakest";
 
 interface SummaryPanelProps {
+  /**
+   * Le benchmark dont ce panneau parle. **Obligatoire, et jamais déduit** : les
+   * seuils de rang, les couleurs, `maxEnergy` et la liste des paliers lui
+   * appartiennent (SPEC §5 quinquies).
+   *
+   * Il l'était de fait tant que le panneau ne vivait que sous
+   * `ActiveBenchmarkProvider`, qui aligne le pointeur de la lib. Depuis V4-B, la
+   * landing et la démonstration publique le rendent **hors du provider** — et
+   * rien ne remet ce pointeur à sa valeur par défaut à la déconnexion. Un
+   * visiteur dont la session précédente avait adopté un autre benchmark verrait
+   * donc des chiffres résolus dans ce benchmark-là, ou une exception si le
+   * palier n'y existe pas. D'où la prop : le panneau ne devine plus.
+   */
+  readonly benchmarkId: BenchmarkId;
   readonly tier: TierId;
   readonly computed: ComputedBenchRun;
   readonly scenarioCount: number;
@@ -24,36 +54,66 @@ interface SummaryPanelProps {
   readonly onTierChange: (tier: TierId) => void;
 }
 
-export function SummaryPanel({ tier, computed, scenarioCount, onTierChange }: SummaryPanelProps) {
+export function SummaryPanel({
+  benchmarkId,
+  tier,
+  computed,
+  scenarioCount,
+  onTierChange,
+}: SummaryPanelProps) {
   const { overall, rank, complete, subcategories, scores } = computed;
-  const color = rankColorFor(tier, overall);
-  const upcoming = nextRank(tier, overall);
+  const color = rankColorForBenchmark(benchmarkId, tier, overall);
+  const upcoming = nextRankFor(benchmarkId, tier, overall);
   const missing = subcategories.filter((sub) => sub.energy === 0);
-  const weakest = weakestView(tier, subcategories);
+  const weakest = weakestViewFor(benchmarkId, tier, subcategories);
+  // `null` tant qu'aucune sous-catégorie n'est complète ; ignorée dès que
+  // l'overall existe, puisqu'elle lui est alors égale.
+  const partial =
+    subcategories.length === 0 ? null : partialEnergy(subcategories.map((sub) => sub.energy));
+  const showPartial = overall === 0 && partial !== null;
 
   return (
     <section className="rounded-xl border border-steel-700 bg-steel-900 p-5">
       <p className="text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
-        Énergie overall
+        {showPartial ? "Énergie partielle" : "Énergie overall"}
       </p>
 
       <div className="mt-2 flex items-end justify-between gap-3">
         <p
-          className="font-mono text-5xl leading-none font-semibold tracking-tight tabular-nums"
+          className={`font-mono text-5xl leading-none font-semibold tracking-tight tabular-nums ${
+            showPartial ? "text-steel-300" : ""
+          }`}
           style={color ? { color, textShadow: `0 0 24px ${color}40` } : undefined}
         >
-          {overall > 0 ? formatEnergy(overall) : "—"}
+          {overall > 0 ? formatEnergy(overall) : showPartial ? formatEnergy(partial.energy) : "—"}
         </p>
-        <RankBadge rank={rank} color={color} />
+        {showPartial ? <PartialTag /> : <RankBadge rank={rank} color={color} />}
       </div>
 
       <div className="mt-4">
-        <EnergyRail tier={tier} energy={overall} emphasis />
+        {/* La jauge d'énergie allume les graduations des rangs franchis : la
+            nourrir d'une énergie partielle reviendrait à annoncer un rang à
+            partir d'un bench incomplet. Elle cède donc la place à un décompte de
+            sous-catégories, qui dit ce qu'il reste à jouer et rien d'autre. */}
+        {showPartial ? (
+          <SubcategoryProgress counted={partial.counted} total={partial.total} />
+        ) : (
+          <EnergyRail tier={tier} energy={overall} benchmarkId={benchmarkId} emphasis />
+        )}
       </div>
 
       <p className="mt-3 text-xs text-steel-400">
         {missing.length > 0 ? (
           <>
+            {showPartial ? (
+              <>
+                Énergie partielle sur {partial.counted}/{partial.total} sous-catégories :{" "}
+                <span className="font-mono tabular-nums text-steel-200">
+                  {formatEnergy(partial.energy)}
+                </span>
+                . Elle n'est pas enregistrée et ne donne aucun rang.{" "}
+              </>
+            ) : null}
             Bench incomplet : {missing.length} sous-catégorie{missing.length > 1 ? "s" : ""} sans
             score. L'overall reste à 0 tant qu'il en manque une.
           </>
@@ -97,7 +157,12 @@ export function SummaryPanel({ tier, computed, scenarioCount, onTierChange }: Su
             {weakest.kind === "capped" ? "Palier au plafond" : "Maillons faibles"}
           </p>
           {weakest.kind === "capped" ? (
-            <TierCapped tier={tier} next={weakest.next} onTierChange={onTierChange} />
+            <TierCapped
+              benchmarkId={benchmarkId}
+              tier={tier}
+              next={weakest.next}
+              onTierChange={onTierChange}
+            />
           ) : (
             <ul className="mt-3 space-y-2">
               {weakest.subcategories.map((sub) => (
@@ -116,7 +181,47 @@ export function SummaryPanel({ tier, computed, scenarioCount, onTierChange }: Su
   );
 }
 
+/**
+ * L'étiquette « partiel ». Elle prend la place du badge de rang, elle ne
+ * s'ajoute pas à lui : c'est ce qui rend impossible de lire le chiffre comme un
+ * overall classé.
+ */
+function PartialTag() {
+  return (
+    <span className="inline-flex items-center rounded-full border border-steel-700 bg-steel-800/60 px-2.5 py-1 text-xs font-medium tracking-wide text-steel-300 uppercase">
+      Partiel
+    </span>
+  );
+}
+
+/** Combien de sous-catégories sont jouées, sur le total du palier. */
+function SubcategoryProgress({
+  counted,
+  total,
+}: {
+  readonly counted: number;
+  readonly total: number;
+}) {
+  return (
+    <div>
+      {/* Mêmes jetons que `EnergyRail` : deux jauges côte à côte qui ne se
+          liraient pas pareil seraient deux échelles différentes. */}
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-rail-track">
+        <div
+          className="h-full rounded-full bg-rail-fill transition-[width] duration-300 ease-out"
+          style={{ width: `${(counted / total) * 100}%` }}
+        />
+      </div>
+      <p className="mt-1.5 font-mono text-[11px] tabular-nums text-steel-500">
+        {counted}/{total} sous-catégories
+      </p>
+    </div>
+  );
+}
+
 interface TierCappedProps {
+  /** Le benchmark dont les libellés de paliers sont lus. */
+  readonly benchmarkId: BenchmarkId;
   readonly tier: TierId;
   /** Le palier au-dessus, `null` quand il n'y en a plus (Advanced). */
   readonly next: TierId | null;
@@ -130,26 +235,27 @@ interface TierCappedProps {
  * sélecteur : c'est le seul geste qui reste à faire ici. Au sommet d'Advanced
  * il n'y a rien à proposer — on le dit sobrement, sans inventer une suite.
  */
-function TierCapped({ tier, next, onTierChange }: TierCappedProps) {
+function TierCapped({ benchmarkId, tier, next, onTierChange }: TierCappedProps) {
   if (next === null) {
     return (
       <p className="mt-3 text-xs leading-relaxed text-steel-300">
-        Les 9 sous-catégories sont au plafond du palier {getTier(tier).label}. C'est le dernier du
-        benchmark Voltaic : il n'y a rien au-dessus.
+        Les 9 sous-catégories sont au plafond du palier {getTierFor(benchmarkId, tier).label}. C'est
+        le dernier du benchmark Voltaic : il n'y a rien au-dessus.
       </p>
     );
   }
   return (
     <>
       <p className="mt-3 text-xs leading-relaxed text-steel-300">
-        Tout est au plafond du palier {getTier(tier).label} — passe au palier supérieur.
+        Tout est au plafond du palier {getTierFor(benchmarkId, tier).label} — passe au palier
+        supérieur.
       </p>
       <button
         type="button"
         onClick={() => onTierChange(next)}
         className="mt-3 w-full rounded-lg border border-ember-600/60 bg-ember-600/10 px-3 py-2 text-xs font-semibold text-ember-400 transition-colors hover:bg-ember-600/20"
       >
-        Passer en {getTier(next).label} →
+        Passer en {getTierFor(benchmarkId, next).label} →
       </button>
     </>
   );

@@ -97,7 +97,7 @@ describe("carte Valorant du dashboard", () => {
     const state: LinkedAccountsState = { status: "ready", accounts: [] };
     const text = textOf(renderToStaticMarkup(<ValorantPanel state={state} />));
 
-    expect(text).toContain("Suis ton rang sans rien saisir");
+    expect(text).toContain("Ton rang peut se suivre tout seul");
     expect(text).toContain("Lier un compte");
   });
 
@@ -125,6 +125,18 @@ describe("carte Valorant du dashboard", () => {
     expect(textOf(renderToStaticMarkup(<ValorantPanel state={state} />))).not.toContain(
       "Débriefer",
     );
+  });
+
+  /**
+   * Le rang et le bouton « Rafraîchir » ne sont plus doublés par un onglet :
+   * ce panneau est le seul endroit d'où l'on va chercher les parties.
+   */
+  it("porte le rafraîchissement, et n'envoie plus vers un onglet Valorant", () => {
+    const state: LinkedAccountsState = { status: "ready", accounts: [account()] };
+    const markup = renderToStaticMarkup(<ValorantPanel state={state} />);
+
+    expect(textOf(markup)).toContain("Rafraîchir");
+    expect(markup).not.toContain("#/valorant");
   });
 });
 
@@ -214,12 +226,14 @@ describe("liste des parties", () => {
     expect(textOf(markup).indexOf("Lotus")).toBeLessThan(textOf(markup).indexOf("Bind"));
   });
 
+  /** Depuis V6 la page d'une partie vit sous l'accueil : l'onglet a disparu. */
   it("fait de chaque ligne une adresse vers la page de la partie", () => {
     const markup = renderToStaticMarkup(
       <MatchList trend={[trendPoint({ matchId: "abc-123" })]} debriefed={empty} />,
     );
 
-    expect(markup).toContain('href="#/valorant?match=abc-123"');
+    expect(markup).toContain('href="#/accueil?match=abc-123"');
+    expect(markup).not.toContain("#/valorant");
   });
 
   it("porte le badge des parties déjà débriefées, et seulement celles-là", () => {
@@ -451,17 +465,23 @@ describe("mini-analyse", () => {
     expect(text).not.toContain("Analyser ce match");
   });
 
-  it("annonce le quota restant seulement quand le serveur vient de compter", () => {
+  /**
+   * La note de quota est celle de tout le monde (`QuotaNote`) : elle dit
+   * « 3/20 aujourd'hui — se réinitialise à HH:MM » une fois la limite lue au
+   * serveur, et pas « Il te reste 3 messages » comme cet écran le disait pour
+   * lui seul (Vague 3.4).
+   *
+   * En rendu statique, aucun effet ne s'exécute : la limite n'est pas connue,
+   * donc la note s'en tient à la formulation par défaut — sans inventer de
+   * dénominateur, quel que soit le restant annoncé. C'est exactement la règle
+   * que `QuotaNote.test.ts` fixe, vérifiée ici sur l'écran réel.
+   */
+  it("affiche la note de quota commune, avant comme après l'analyse", () => {
+    expect(textOf(analysisMarkup())).toContain("messages par jour");
     expect(textOf(analysisMarkup({ analysis: "Court.", remaining: 7 }))).toContain(
-      "Il te reste 7 messages de coach aujourd'hui.",
+      "messages par jour",
     );
-    expect(textOf(analysisMarkup({ analysis: "Court.", remaining: 1 }))).toContain(
-      "Il te reste 1 message de coach aujourd'hui.",
-    );
-    expect(textOf(analysisMarkup({ analysis: "Court.", remaining: 0 }))).toContain(
-      "Plus de message de coach aujourd'hui",
-    );
-    expect(textOf(analysisMarkup({ analysis: "Court.", remaining: null }))).not.toContain(
+    expect(textOf(analysisMarkup({ analysis: "Court.", remaining: 7 }))).not.toContain(
       "Il te reste",
     );
   });

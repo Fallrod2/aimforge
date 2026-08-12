@@ -33,9 +33,24 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { computeBenchRun, getTier, listScenarios, TIER_IDS, type TierId } from "../../lib/energy";
+import {
+  type BenchmarkDefinition,
+  type BenchmarkId,
+  computeBenchRun,
+  firstTierFor,
+  getTier,
+  getTierFor,
+  listScenarios,
+  partialEnergy,
+  type TierId,
+  tierIdsFor,
+} from "../../lib/energy";
+import { useActiveBenchmark } from "../app/active-benchmark";
+import { BenchmarkNote } from "../components/BenchmarkNote";
+import { ConfirmButton, UndoToast } from "../components/Destructive";
 import { RankBadge } from "../components/RankBadge";
 import { Segmented } from "../components/Segmented";
+import { useConfirm, usePendingUndo } from "../components/useConfirm";
 import {
   type BenchRunSummary,
   importKovaaksScores,
@@ -48,7 +63,17 @@ import { formatEnergy, scenarioLabel } from "../format";
 import { LinkInvite } from "../linked/LinkInvite";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
 import { awaitsAutoPull, rememberAutoPull, sessionAutoPulls, shouldAutoPull } from "./auto-import";
-import { type BenchDraft, clearTier, draftScores, emptyDraft, setScoreInput } from "./draft";
+import {
+  type BenchDraft,
+  clearTier,
+  draftScores,
+  emptyDraft,
+  setScoreInput,
+  type TierDraft,
+  tierDraft,
+} from "./draft";
+import { GoalPanel } from "./GoalPanel";
+import { goalProgress, readGoal, writeGoal } from "./goal";
 import {
   applyImportedScores,
   clearImportState,
@@ -63,6 +88,7 @@ import {
   NO_IMPORTS,
   withImportState,
 } from "./import";
+import { browserStore } from "./local-store";
 import {
   isManualOpen,
   type ManualTiers,
@@ -71,8 +97,11 @@ import {
   opensManualGrid,
   toggleManual,
 } from "./manual";
+import { OnboardingBanner } from "./OnboardingBanner";
+import { dismissOnboarding, isOnboardingDismissed, showsOnboarding } from "./onboarding";
 import { ScenarioRow } from "./ScenarioRow";
 import { SummaryPanel } from "./SummaryPanel";
+import { usePersonalBests } from "./usePersonalBests";
 import { useStartTier } from "./useStartTier";
 
 interface TrackerViewProps {
@@ -80,9 +109,43 @@ interface TrackerViewProps {
   readonly onSaved: (run: BenchRunSummary) => void;
 }
 
-const tierOptions = TIER_IDS.map((id) => ({ value: id, label: getTier(id).label }));
+/**
+ * Le brouillon mis de côté par « Effacer la saisie », le temps de l'annuler.
+ *
+ * Il emporte son **palier** : cinq secondes suffisent à en changer, et remettre
+ * dix-huit scores Novice dans la grille Intermediate serait pire que de les
+ * avoir perdus.
+ */
+interface ClearedDraft {
+  readonly tier: TierId;
+  readonly scores: TierDraft;
+  readonly state: ImportState;
+}
+
+/** La clé du seul bouton destructif de l'écran (cf. `components/confirm.ts`). */
+const CLEAR_DRAFT = "tracker:effacer-la-saisie";
+
+/**
+ * Les paliers proposés : ceux du benchmark **actif**, dans son ordre.
+ *
+ * Calculés dans le rendu et non une fois pour toutes au chargement du module :
+ * un autre benchmark peut avoir d'autres paliers (DECISIONS.md D5), et une
+ * constante de module les figerait à ceux du benchmark par défaut.
+ */
+function tierOptionsFor(benchmarkId: BenchmarkId) {
+  return tierIdsFor(benchmarkId).map((id) => ({
+    value: id,
+    label: getTierFor(benchmarkId, id).label,
+  }));
+}
 
 export function TrackerView({ onSaved }: TrackerViewProps) {
+  // Le tracker saisit **dans le benchmark actif** : ses paliers, ses scénarios,
+  // ses seuils, et c'est lui qu'estampille la sauvegarde. Les accès non
+  // qualifiés de la lib (`computeBenchRun`, `listScenarios`, `getTier`) le
+  // suivent d'eux-mêmes — le provider aligne le benchmark courant du module.
+  const { benchmarkId, benchmark } = useActiveBenchmark();
+  const tierOptions = useMemo(() => tierOptionsFor(benchmarkId), [benchmarkId]);
   /**
    * Le palier choisi à la main, `null` tant que l'utilisateur n'a rien choisi :
    * on affiche alors celui de son dernier bench. Un `useState` initialisé puis
@@ -91,12 +154,36 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
    */
   const [chosenTier, setChosenTier] = useState<TierId | null>(null);
   const start = useStartTier();
-  const tier = chosenTier ?? (start.status === "ready" ? start.tier : "novice");
+  /**
+   * Le palier saisi, **ramené dans le benchmark actif**.
+   *
+   * Le palier de départ vient du dernier bench enregistré, et un palier n'existe
+   * que dans son benchmark (DECISIONS.md D5) : sans ce garde-fou, un joueur dont
+   * la dernière passe appartient à un autre barème ouvrirait le tracker sur un
+   * palier que `getTier` ne connaît pas — c'est-à-dire sur une exception.
+   */
+  const tier = useMemo(() => {
+    const wanted = chosenTier ?? (start.status === "ready" ? start.tier : null);
+    const tiers = tierIdsFor(benchmarkId);
+
+    return wanted !== null && tiers.includes(wanted) ? wanted : firstTierFor(benchmarkId);
+  }, [chosenTier, start, benchmarkId]);
 
   const [draft, setDraft] = useState<BenchDraft>(emptyDraft);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<BenchRunSummary | null>(null);
+  /**
+   * Le stockage des préférences d'écran (objectif de rang, bandeau refermé).
+   *
+   * Résolu **une fois par montage** : `browserStore()` sonde `localStorage` à
+   * chaque appel, et le refaire à chaque rendu ferait une écriture-lecture par
+   * caractère tapé.
+   */
+  const [prefs] = useState(browserStore);
+  const [dismissed, setDismissed] = useState(() => isOnboardingDismissed(prefs));
+  /** Les records personnels du palier, chargés une fois — pas à chaque frappe. */
+  const personalBests = usePersonalBests(benchmarkId, tier);
 
   const linked = useLinkedAccounts();
   const accountsKnown = linked.state.status !== "loading";
@@ -115,10 +202,20 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
    */
   const [manual, setManual] = useState<ManualTiers>(NO_MANUAL);
   const manualOpen = isManualOpen(manual, tier);
+  /** La confirmation en deux appuis d'« Effacer la saisie » (V5-A §5.4). */
+  const confirm = useConfirm();
+  /**
+   * Le brouillon effacé, gardé cinq secondes.
+   *
+   * Rien à faire au terme du délai : l'effacement a déjà eu lieu à l'écran, et
+   * aucun appel n'attend. Le délai ne sert qu'à garder de quoi revenir en
+   * arrière — passé lui, on lâche simplement la copie.
+   */
+  const cleared = usePendingUndo<ClearedDraft>(() => {});
 
   const importState = importStateFor(imports, tier);
   const importedTier = isImportedTier(imports, tier);
-  const tierEmpty = Object.keys(draft[tier]).length === 0;
+  const tierEmpty = Object.keys(tierDraft(draft, tier)).length === 0;
   /**
    * Le squelette tient la place de la grille tant qu'on attend des chiffres :
    * comptes liés encore inconnus, ou import en route sur un palier encore vide
@@ -145,9 +242,56 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   const showGrid = !showSkeleton && (kovaaks === null || manualOpen);
 
   const { scores, invalid } = useMemo(() => draftScores(draft, tier), [draft, tier]);
-  const computed = useMemo(() => computeBenchRun(tier, scores), [tier, scores]);
-  const scenarios = useMemo(() => listScenarios(tier), [tier]);
+  /**
+   * `benchmarkId` est dans les dépendances alors qu'aucune de ces deux lignes ne
+   * le nomme : c'est justement le piège. `computeBenchRun` et `listScenarios`
+   * lisent le benchmark **courant** de la lib — un pointeur de module que
+   * `syncCurrentBenchmark` déplace, et dont React ne sait rien. Sans cette
+   * dépendance, changer de benchmark au Profil laisserait le tracker afficher
+   * les scénarios et les énergies de l'ancien barème jusqu'au prochain
+   * changement de palier ou de saisie.
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `computeBenchRun` lit le benchmark courant de la lib, que React ne voit pas.
+  const computed = useMemo(() => computeBenchRun(tier, scores), [tier, scores, benchmarkId]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: idem — `listScenarios` dépend du benchmark courant sans le nommer.
+  const scenarios = useMemo(() => listScenarios(tier), [tier, benchmarkId]);
+  // Lu à chaque rendu, donc déjà aligné sur le benchmark affiché.
   const tierData = getTier(tier);
+  /**
+   * L'énergie partielle de la saisie en cours (§4.1a).
+   *
+   * Elle n'a d'usage que tant que l'overall vaut 0 : au-delà, les deux sont
+   * égales par construction (même moyenne harmonique, mêmes neuf termes).
+   */
+  const partial = useMemo(
+    () =>
+      computed.subcategories.length === 0
+        ? null
+        : partialEnergy(computed.subcategories.map((sub) => sub.energy)),
+    [computed],
+  );
+  const showPartial = computed.overall === 0 && partial !== null;
+
+  /** L'objectif de rang du palier, relu à chaque changement de palier (§4.5). */
+  const [goal, setGoal] = useState<string | null>(null);
+
+  useEffect(() => {
+    setGoal(readGoal(prefs, benchmarkId, tier));
+  }, [prefs, benchmarkId, tier]);
+
+  const changeGoal = useCallback(
+    (rank: string | null) => {
+      writeGoal(prefs, benchmarkId, tier, rank);
+      setGoal(rank);
+    },
+    [prefs, benchmarkId, tier],
+  );
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `goalProgress` lit les seuils du benchmark courant, que React ne voit pas.
+  const goalState = useMemo(
+    () => (goal === null ? null : goalProgress(tier, goal, scores)),
+    [tier, goal, scores, benchmarkId],
+  );
 
   const update = useCallback(
     (scenario: string, raw: string) => {
@@ -158,6 +302,14 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   );
 
   const canSave = computed.scores.length > 0 && invalid.length === 0 && !saving;
+  /**
+   * Il y a quelque chose à effacer.
+   *
+   * Calculé une fois : les deux affordances d'effacement — celle du panneau
+   * latéral et celle du téléphone — répondent à la même question, et deux
+   * expressions séparées finiraient par ne plus dire la même chose.
+   */
+  const hasDraft = Object.keys(tierDraft(draft, tier)).length > 0;
 
   async function save() {
     setSaving(true);
@@ -166,7 +318,15 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
       // Une passe pré-remplie reste pré-remplie même si l'utilisateur en a
       // corrigé un champ : ce qui compte pour l'historique, c'est que ces
       // chiffres n'ont pas été relevés à la main.
-      const run = await saveBenchRun({ tier, scores, source: importedTier ? "kovaaks" : "manual" });
+      const run = await saveBenchRun({
+        tier,
+        scores,
+        source: importedTier ? "kovaaks" : "manual",
+        // Dit explicitement, alors que le défaut donnerait la même valeur : la
+        // passe est estampillée du benchmark que l'écran affiche, pas d'un
+        // pointeur de module qu'il faudrait aller vérifier ailleurs.
+        benchmarkId,
+      });
 
       setSaved(run);
       onSaved(run);
@@ -233,46 +393,126 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
   function reset() {
     setSaved(null);
     setError(null);
+    // Le brouillon est **gardé cinq secondes** avant d'être vraiment perdu
+    // (V5-A §5.4) : dix-huit scores tapés à la main ne se rejouent pas, et
+    // l'effacement local est le seul de ces gestes qui soit réversible sans
+    // rien demander au serveur.
+    cleared.schedule({
+      tier,
+      scores: tierDraft(draft, tier),
+      state: importStateFor(imports, tier),
+    });
     setDraft((current) => clearTier(current, tier));
     // Effacer la saisie efface aussi sa provenance : ce qui sera tapé ensuite
     // ne vient plus de l'import. Les autres paliers gardent la leur.
     setImports((current) => clearImportState(current, tier));
   }
 
+  /**
+   * L'appui sur « Effacer la saisie », d'où qu'il vienne.
+   *
+   * Un seul rappel pour les deux boutons — celui du panneau latéral et celui du
+   * téléphone — donc une seule confirmation en cours, une seule fenêtre de
+   * quatre secondes, un seul toast. Deux machines parallèles auraient permis
+   * d'armer les deux à la fois si l'écran changeait de largeur entre les appuis.
+   */
+  function pressClear(): void {
+    if (confirm.press(CLEAR_DRAFT)) reset();
+  }
+
+  /** Remet le brouillon effacé, tel qu'il était, palier compris. */
+  function restore(): void {
+    const snapshot = cleared.pending;
+
+    if (snapshot === null) return;
+    setDraft((current) => ({ ...current, [snapshot.tier]: snapshot.scores }));
+    setImports((current) => withImportState(current, snapshot.tier, snapshot.state));
+    cleared.undo();
+  }
+
+  /**
+   * Le compte vierge lit le bandeau **avant** le reste (V5-A §5.5e).
+   *
+   * Sur téléphone, la colonne latérale passe la première dans le flux : c'est
+   * ce qu'on veut d'ordinaire — palier, énergie, objectif —, mais pas à
+   * quelqu'un qui n'a encore rien saisi. Il y voyait un panneau d'énergie vide
+   * et un objectif de rang sans repère avant qu'on lui ait dit d'où viennent
+   * les scores. L'ordre s'inverse donc dans ce seul cas, et seulement sous `lg`,
+   * où les deux colonnes sont côte à côte de toute façon.
+   */
+  const onboarding = showsOnboarding({
+    hasRuns: start.status === "ready" ? start.hasRuns : null,
+    hasDraft: !tierEmpty,
+    dismissed,
+  });
+
   return (
     <div className="grid gap-6 pb-24 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:pb-0">
-      <aside className="flex flex-col gap-4 lg:order-2 lg:sticky lg:top-24">
+      <aside
+        className={`flex flex-col gap-4 lg:order-2 lg:sticky lg:top-24 ${onboarding ? "order-2" : ""}`}
+      >
         <div>
           <p className="mb-2 text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
             Palier
           </p>
           <Segmented label="Palier" options={tierOptions} value={tier} onChange={setChosenTier} />
+          {/* Le barème dans lequel on saisit, juste sous le palier : les deux
+              décident ensemble des seuils, et le second se change au Profil. */}
+          <div className="mt-2">
+            <BenchmarkNote benchmark={benchmark} />
+          </div>
         </div>
 
         <SummaryPanel
+          // Le benchmark **actif** du provider, nommé plutôt que supposé : le
+          // panneau ne lit plus le pointeur de la lib (cf. sa prop).
+          benchmarkId={benchmarkId}
           tier={tier}
           computed={computed}
           scenarioCount={scenarios.length}
           onTierChange={setChosenTier}
         />
 
+        <GoalPanel
+          tier={tier}
+          tierLabel={tierData.label}
+          goal={goal}
+          progress={goalState}
+          onGoalChange={changeGoal}
+        />
+
         <div className="hidden flex-col gap-3 lg:flex">
           <SaveActions
             canSave={canSave}
             saving={saving}
-            hasDraft={Object.keys(draft[tier]).length > 0}
+            hasDraft={hasDraft}
             onSave={save}
-            onReset={reset}
+            resetArmed={confirm.armed(CLEAR_DRAFT)}
+            onReset={pressClear}
           />
           <Feedback error={error} invalid={invalid} saved={saved} />
         </div>
       </aside>
 
-      <div className="flex flex-col gap-8 lg:order-1">
+      <div className={`flex flex-col gap-8 lg:order-1 ${onboarding ? "order-1" : ""}`}>
+        {/* Les trois étapes, une seule fois, à un compte qui n'a ni passe ni
+            saisie en cours. Elles passent **avant** l'import : c'est la seule
+            chose à lire quand on ne sait pas encore d'où viennent les scores. */}
+        {onboarding ? (
+          <OnboardingBanner
+            benchmark={benchmark}
+            onDismiss={() => {
+              dismissOnboarding(prefs);
+              setDismissed(true);
+            }}
+          />
+        ) : null}
+
         <ImportPanel
           account={kovaaks}
           loading={!accountsKnown}
           state={importState}
+          benchmark={benchmark}
           scenarioCount={scenarios.length}
           tierLabel={tierData.label}
           imported={importedTier}
@@ -282,6 +522,39 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           }}
           onToggleManual={() => setManual((current) => toggleManual(current, tier))}
         />
+
+        {/*
+          « Effacer la saisie » sur téléphone (V5-A, vérification visuelle).
+
+          Le geste n'existait que sur grand écran : `SaveActions` vit dans un
+          bloc `hidden lg:flex`, et la barre du pouce ne porte que
+          « Sauvegarder ». Quelqu'un qui s'était trompé de palier n'avait aucun
+          moyen de repartir de zéro — sinon en vidant dix-huit champs à la main.
+
+          Il est **au-dessus de la grille** et non dans la barre collante : à
+          390 px, celle-ci tient déjà l'overall, l'étiquette « Partiel », le
+          compte de scénarios, le badge de rang et « Sauvegarder ». Un sixième
+          élément l'aurait comprimée, et un bouton destructif collé au bouton de
+          sauvegarde est exactement le voisinage qu'on évite. Ici il est là où
+          l'on tape, il ne paraît que s'il y a quelque chose à effacer, et il
+          part avec la saisie qu'il efface.
+
+          Même machine que le panneau latéral (`pressClear`), donc même
+          confirmation en deux appuis, même fenêtre de quatre secondes et même
+          toast « Annuler ».
+        */}
+        {hasDraft ? (
+          <div className="flex justify-end lg:hidden">
+            <ConfirmButton
+              label="Effacer la saisie"
+              question="Effacer ?"
+              armed={confirm.armed(CLEAR_DRAFT)}
+              disabled={saving}
+              onPress={pressClear}
+              sizeClasses="inline-flex min-h-11 items-center px-4"
+            />
+          </div>
+        ) : null}
 
         {showSkeleton ? <TierSkeleton tier={tier} /> : null}
 
@@ -296,7 +569,23 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
                   <span className="h-px flex-1 bg-steel-800" />
                 </div>
 
-                <div className="flex flex-col gap-3">
+                {/* Sur grand écran, les sous-catégories se rangent en colonnes
+                    (§4.1b) : la saisie mobile fait environ 3 400 px de haut, et
+                    l'empilement d'une colonne unique obligeait à faire défiler
+                    tout l'écran pour relire une ligne saisie trois minutes plus
+                    tôt. Le téléphone, lui, ne change pas.
+
+                    **Deux** colonnes et pas trois : la coque plafonne à
+                    `max-w-5xl` et le panneau latéral prend 20 rem, ce qui laisse
+                    environ 630 px à la grille. Une troisième colonne y ferait
+                    des cartes de 200 px — plus étroites que le champ de saisie
+                    qu'elles contiennent. Le nombre de colonnes suit la place
+                    réelle, pas la largeur de la fenêtre.
+
+                    Chaque carte est d'ailleurs un **conteneur** : c'est sa
+                    largeur, et non celle de la fenêtre, qui décide de la mise en
+                    page de ses lignes (cf. `ScenarioRow`). */}
+                <div className="flex flex-col gap-3 lg:grid lg:grid-cols-2">
                   {category.subcategories.map((subcategory) => {
                     const energy =
                       computed.subcategories.find((sub) => sub.name === subcategory.name)?.energy ??
@@ -305,7 +594,7 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
                     return (
                       <div
                         key={subcategory.name}
-                        className="rounded-xl border border-steel-800 bg-steel-900/60 px-4 py-3"
+                        className="@container rounded-xl border border-steel-800 bg-steel-900/60 px-4 py-3"
                       >
                         <div className="flex items-baseline justify-between gap-3 border-b border-steel-800 pb-2">
                           <h3 className="text-sm font-medium text-steel-100">{subcategory.name}</h3>
@@ -320,11 +609,12 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
                               tier={tier}
                               tierLabel={tierData.label}
                               scenario={scenario.name}
-                              value={draft[tier][scenario.name] ?? ""}
+                              value={tierDraft(draft, tier)[scenario.name] ?? ""}
                               energy={
                                 computed.scores.find((row) => row.scenario === scenario.name)
                                   ?.energy ?? 0
                               }
+                              personalBest={personalBests.get(scenario.name)}
                               onChange={(raw) => update(scenario.name, raw)}
                             />
                           ))}
@@ -340,15 +630,47 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
       {/* Sur téléphone, les 18 champs défilent : l'overall et l'action restent
           accessibles en bas d'écran plutôt qu'en haut de page.
           `bottom-16` = la hauteur de la barre de navigation du pouce
-          (`BOTTOM_BAR_HEIGHT` dans `AppLayout`) : les deux s'empilent. */}
-      <div className="fixed inset-x-0 bottom-16 z-10 border-t border-steel-800 bg-steel-950/95 px-4 py-3 backdrop-blur lg:hidden">
+          (`BOTTOM_BAR_HEIGHT` dans `AppLayout`) : les deux s'empilent.
+
+          La barre portait « X/18 · SANS RANG » et un tiret à la place du
+          chiffre : sur un bench en cours — c'est-à-dire pendant tout le temps
+          où l'on tape — elle n'affichait donc aucune énergie. Elle montre
+          désormais l'overall dès qu'il existe, et l'énergie **partielle**
+          étiquetée avant cela (§4.7), recalculée à chaque frappe comme le reste
+          de l'écran. */}
+      <div className="fixed inset-x-0 bottom-16 z-10 border-t border-steel-800 bg-surface/95 px-4 py-3 shadow-[var(--shadow-overlay)] backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <div className="min-w-0 flex-1">
-            <p className="font-mono text-xl leading-none font-semibold tabular-nums">
-              {computed.overall > 0 ? formatEnergy(computed.overall) : "—"}
+            <p className="flex items-baseline gap-1.5">
+              <span
+                className={`font-mono text-xl leading-none font-semibold tabular-nums ${
+                  showPartial ? "text-steel-300" : ""
+                }`}
+              >
+                {computed.overall > 0
+                  ? formatEnergy(computed.overall)
+                  : showPartial
+                    ? formatEnergy(partial.energy)
+                    : "—"}
+              </span>
+              {/* L'étiquette est collée au chiffre, pas reléguée en légende :
+                  c'est elle qui empêche de lire une énergie partielle comme un
+                  overall. Le badge de rang reste à sa place et continue
+                  d'annoncer « Sans rang » — aucun rang ne sort d'un partiel. */}
+              {showPartial ? (
+                <span className="text-[10px] font-medium tracking-wide text-steel-500 uppercase">
+                  Partiel
+                </span>
+              ) : null}
             </p>
-            <p className="mt-1 truncate text-[11px] text-steel-500">
+            {/* « sous-cat. » et non « sous-catégories » : sur 390 px, la ligne
+                entière tenait dans la largeur restante puis se coupait en
+                « 1/9 sous… » — une troncature qui enlève précisément le mot qui
+                dit de quoi on parle (V5-A §5.5d). L'abréviation, elle, se lit
+                en entier. */}
+            <p className="mt-1 truncate text-[11px] text-steel-400">
               {computed.scores.length}/{scenarios.length} scénarios
+              {showPartial ? ` · ${partial.counted}/${partial.total} sous-cat.` : ""}
             </p>
           </div>
           <RankBadge
@@ -363,16 +685,29 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
           <Feedback error={error} invalid={invalid} saved={saved} />
         </div>
       </div>
+
+      {cleared.pending === null ? null : (
+        // `bottom-40` (160 px) : le tracker empile **deux** barres collantes
+        // sur téléphone — celle du pouce (`bottom-0`, 64 px) et la sienne
+        // (`bottom-16`, ~64 px, jusqu'à ~84 px quand un message d'erreur s'y
+        // ajoute). Au défaut de 80 px, le toast se serait posé derrière la
+        // seconde, donc hors de portée du doigt qui vient annuler.
+        <UndoToast message="Saisie effacée." offset="bottom-40 lg:bottom-6" onUndo={restore}>
+          Le brouillon reste récupérable quelques secondes.
+        </UndoToast>
+      )}
     </div>
   );
 }
 
-interface ImportPanelProps {
+export interface ImportPanelProps {
   /** Le compte KovaaK's lié, ou `null` s'il n'y en a pas. */
   readonly account: LinkedAccount | null;
   /** Les comptes liés ne sont pas encore connus : ne rien affirmer. */
   readonly loading: boolean;
   readonly state: ImportState;
+  /** Le benchmark actif : c'est le sien que l'import va chercher. */
+  readonly benchmark: BenchmarkDefinition;
   readonly scenarioCount: number;
   readonly tierLabel: string;
   /** La saisie courante du palier vient d'un import. */
@@ -395,11 +730,16 @@ interface ImportPanelProps {
  * rend compte (« Récupération… », le bilan, ce qui manque) et garde un
  * « Rafraîchir » discret pour rejouer le palier — un bouton d'action primaire
  * n'a plus de sens pour quelque chose que l'écran fait de lui-même.
+ *
+ * Exporté pour le rendu statique des tests : ce qu'il promet quand rien n'est
+ * lié, et ce qu'il laisse comme issue quand l'import échoue, sont les deux
+ * phrases que la vue entière ne permet pas de vérifier sans session.
  */
-function ImportPanel({
+export function ImportPanel({
   account,
   loading,
   state,
+  benchmark,
   scenarioCount,
   tierLabel,
   imported,
@@ -412,9 +752,10 @@ function ImportPanel({
   if (account === null) {
     return (
       <LinkInvite title="Tes scores peuvent se remplir tout seuls">
-        Lie ton pseudo KovaaK's une fois : le tracker ira chercher tes scores du benchmark Voltaic
-        et remplira les {scenarioCount} champs pour toi. D'ici là, la saisie à la main ci-dessous
-        fait le travail.
+        Lie ton pseudo KovaaK's une fois : le tracker ira chercher tes scores du benchmark{" "}
+        {benchmark.name} et remplira les champs qu'il trouve — les {scenarioCount} si tu as joué
+        tout le palier. D'ici là, et chaque fois que la source ne répond pas, la saisie à la main
+        ci-dessous fait le travail.
       </LinkInvite>
     );
   }
@@ -430,7 +771,7 @@ function ImportPanel({
           type="button"
           disabled={busy}
           onClick={onRefresh}
-          className="shrink-0 rounded-md border border-steel-700 px-2.5 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:border-steel-800 disabled:text-steel-600"
+          className="shrink-0 rounded-md border border-steel-700 px-2.5 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:border-steel-800 disabled:text-steel-500"
         >
           {busy ? "Récupération…" : "Rafraîchir"}
         </button>
@@ -546,7 +887,7 @@ function TierSkeleton({ tier }: { readonly tier: TierId }) {
               >
                 <div className="flex items-baseline justify-between gap-3 border-b border-steel-800 pb-2">
                   <h3 className="text-sm font-medium text-steel-400">{subcategory.name}</h3>
-                  <p className="font-mono text-xs tabular-nums text-steel-600">—</p>
+                  <p className="font-mono text-xs tabular-nums text-steel-500">—</p>
                 </div>
                 <div className="divide-y divide-steel-800/70">
                   {subcategory.scenarios.map((scenario) => (
@@ -583,7 +924,7 @@ function SaveButton({ canSave, saving, onSave, compact = false }: SaveButtonProp
       type="button"
       disabled={!canSave}
       onClick={onSave}
-      className={`rounded-lg bg-ember-500 font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500 ${
+      className={`rounded-lg bg-brand-fill font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500 ${
         compact ? "shrink-0 px-4 py-2.5 text-sm" : "w-full px-4 py-3 text-sm"
       }`}
     >
@@ -594,21 +935,26 @@ function SaveButton({ canSave, saving, onSave, compact = false }: SaveButtonProp
 
 interface SaveActionsProps extends SaveButtonProps {
   readonly hasDraft: boolean;
+  /** « Effacer la saisie » attend sa confirmation. */
+  readonly resetArmed: boolean;
   readonly onReset: () => void;
 }
 
-function SaveActions({ canSave, saving, hasDraft, onSave, onReset }: SaveActionsProps) {
+function SaveActions({ canSave, saving, hasDraft, onSave, resetArmed, onReset }: SaveActionsProps) {
   return (
     <div className="flex flex-col gap-2">
       <SaveButton canSave={canSave} saving={saving} onSave={onSave} />
-      <button
-        type="button"
+      <ConfirmButton
+        label="Effacer la saisie"
+        question="Effacer ?"
+        armed={resetArmed}
         disabled={!hasDraft || saving}
-        onClick={onReset}
-        className="rounded-lg border border-steel-700 px-4 py-2.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
-      >
-        Effacer la saisie
-      </button>
+        onPress={onReset}
+        // Même hauteur que « Sauvegarder » juste au-dessus (`py-3` ≈ 44 px) :
+        // deux boutons empilés de hauteurs différentes se lisent comme une
+        // erreur de gabarit, et 44 px est de toute façon le plancher tactile.
+        sizeClasses="inline-flex min-h-11 w-full items-center justify-center px-4"
+      />
     </div>
   );
 }

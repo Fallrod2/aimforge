@@ -62,7 +62,7 @@ import {
 // Le schéma généré depuis la base : il décrit les tables, donc il vaut pour
 // les deux côtés. Import de type uniquement — rien n'en sort à l'exécution.
 import type { Database } from "../src/client/supabase/database-types.js";
-import type { TierId } from "../src/lib/energy/index.js";
+import type { BenchmarkId } from "../src/lib/energy/index.js";
 import {
   AiSettingsUnavailableError,
   type AskDeps,
@@ -73,13 +73,13 @@ import {
   type ProviderConfig,
   resolveModelFor,
 } from "../src/server/ai/index.js";
+import { identityOf, type PromptIdentity } from "../src/server/coach/prompt.js";
 import {
   createQuotaRefund,
   evaluateQuota,
   type QuotaRefund,
   refundQuota,
 } from "../src/server/coach/quota.js";
-import { attemptTimeout, startBudget } from "../src/server/kovaaks/budget.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import {
   type RoutineBenchTiers,
@@ -89,45 +89,45 @@ import { gateRoutine, type RoutineGate } from "../src/server/routine/gating.js";
 import { type AskModel, generateRoutine } from "../src/server/routine/generate.js";
 import { summarizeIngameForRoutine } from "../src/server/routine/ingame.js";
 import {
-  ROUTINE_SYSTEM_PROMPT,
   type RoutineContext,
   type RoutineDebriefAxes,
+  routineSystemPrompt,
 } from "../src/server/routine/prompt.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
+import { aiQuotaReachedMessage } from "../src/shared/ai-quota-contract.js";
+import {
+  AI_MODEL_BUDGET_MS,
+  AI_MODEL_CALL_CAP_MS,
+  AI_MODEL_CALL_FLOOR_MS,
+} from "../src/shared/ai-timing.js";
 import { coachAxeSchema } from "../src/shared/coach-contract.js";
 import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
-import { loadLatestBenchRuns } from "./_lib/coach-context.js";
+import {
+  defaultTierFor,
+  loadLatestBenchRuns,
+  loadProfile,
+  preferencesOf,
+} from "./_lib/coach-context.js";
+import { BudgetExhaustedError, type ModelBudget, startModelBudget } from "./_lib/model-budget.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
 /**
  * Une routine est plus longue à écrire qu'un debrief (blocs, items, durées) et
  * peut demander deux appels. 60 s couvre le pire cas réel — deux tentatives
- * bornées par le budget ci-dessous — sans laisser une requête pendre.
+ * bornées par le budget de `./_lib/model-budget.js` — sans laisser une requête
+ * pendre.
+ *
+ * La valeur reste **littérale** : la plateforme la lit par analyse statique.
+ * `src/shared/ai-timing.ts` en tient le miroir, et son test refuse la dérive.
  */
 export const maxDuration = 60;
 
 /** Assez pour une séance structurée ; le contrat borne déjà les longueurs. */
 const MAX_TOKENS = 3000;
-
-/**
- * Budget de temps des appels au modèle, ouvert juste avant le premier.
- *
- * `TOTAL` garde une marge sous `maxDuration` pour l'écriture en base et la
- * construction de la réponse. `CAP` empêche un premier appel lent d'avaler
- * tout le budget et de laisser la relance sans rien. `FLOOR` évite de lancer
- * une relance qui n'a aucune chance d'aboutir : mieux vaut un 502 rédigé
- * qu'une coupure de plateforme.
- */
-const BUDGET_TOTAL_MS = 48_000;
-const BUDGET_CALL_CAP_MS = 38_000;
-const BUDGET_CALL_FLOOR_MS = 8_000;
-
-/** Palier retenu quand le joueur n'a aucune passe : le premier du benchmark. */
-const DEFAULT_TIER: TierId = "novice";
 
 /** Nombre de debriefs relus pour en tirer les axes (AIMFORGE_KICKOFF §3). */
 const DEBRIEF_COUNT = 3;
@@ -171,11 +171,6 @@ function fail(error: string, status: number): Response {
  */
 function failWithQuota(error: string, status: number, remaining: number | null): Response {
   return remaining === null ? fail(error, status) : json({ error, remaining }, status);
-}
-
-/** Renoncement volontaire faute de temps : distingué d'une panne du modèle. */
-class BudgetExhaustedError extends Error {
-  override readonly name = "BudgetExhaustedError";
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,15 +228,27 @@ async function loadContext(
   userId: string,
   dureeMinutes: number,
   focus: string | null,
-): Promise<{ readonly context: RoutineContext; readonly gate: RoutineGate }> {
+): Promise<{
+  readonly context: RoutineContext;
+  readonly gate: RoutineGate;
+  readonly identity: PromptIdentity;
+  readonly activeBenchmark: BenchmarkId;
+}> {
+  // Le profil se lit **avant** le bench : il porte le benchmark actif
+  // (DECISIONS.md D6), donc le barème dont la séance parle et celui dans lequel
+  // les passes se lisent. La routine ne montrait jusqu'ici aucun profil ; elle
+  // le lit désormais pour ces deux préférences, et pour rien d'autre.
+  const profile = await loadProfile(client, userId);
+  const identity = identityOf(profile);
+  const { activeBenchmark } = preferencesOf(profile);
   const [bench, debriefs, matches] = await Promise.all([
-    loadBenchTiers(client, userId),
+    loadBenchTiers(client, userId, activeBenchmark),
     loadDebriefs(client, userId),
     loadMatches(client),
   ]);
   // Le catalogue suit la passe la plus récente : c'est le palier que la séance
   // vise, même quand les paliers d'avant sont terminés et restent affichés.
-  const catalog = scenarioCatalog(bench.latestTier ?? DEFAULT_TIER);
+  const catalog = scenarioCatalog(bench.latestTier ?? defaultTierFor(activeBenchmark));
   const gate = gateRoutine(matches);
   // Sous le seuil, le modèle ne voit **aucune** statistique de partie : c'est
   // ce qui rend le mode « bench seul » vrai plutôt que déclaratif.
@@ -250,6 +257,8 @@ async function loadContext(
   return {
     context: { dureeMinutes, focus, bench, debriefs, ingame, scenarios: catalog.groups },
     gate,
+    identity,
+    activeBenchmark,
   };
 }
 
@@ -310,11 +319,15 @@ async function loadMatches(client: UserClient): Promise<readonly MatchSummary[]>
  * ajoute l'écart au rang suivant, qui est ce qui transforme une énergie en
  * objectif de séance.
  *
- * Une passe qui n'est rapportée par personne (lecture en échec, saison inconnue)
+ * Une passe qui n'est rapportée par personne (lecture en échec, benchmark inconnu)
  * fait perdre un palier, pas la routine : le bench reste du contexte.
  */
-async function loadBenchTiers(client: UserClient, userId: string): Promise<RoutineBenchTiers> {
-  const { runs, latestTier } = await loadLatestBenchRuns(client, userId);
+async function loadBenchTiers(
+  client: UserClient,
+  userId: string,
+  activeBenchmark: BenchmarkId,
+): Promise<RoutineBenchTiers> {
+  const { runs, latestTier } = await loadLatestBenchRuns(client, userId, activeBenchmark);
 
   return {
     tiers: runs.map((entry) => summarizeTierBenchForRoutine(entry.run, entry.scores)),
@@ -368,23 +381,22 @@ async function loadDebriefs(
  */
 function askWith(
   config: ProviderConfig,
-  budget: ReturnType<typeof startBudget>,
+  identity: PromptIdentity,
+  budget: ModelBudget,
   deps: AskDeps,
 ): AskModel {
-  const ask = createAsk(config, { system: ROUTINE_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
+  const ask = createAsk(
+    config,
+    { system: routineSystemPrompt(identity), maxTokens: MAX_TOKENS },
+    deps,
+  );
 
-  return (messages) => {
-    const timeout = attemptTimeout(budget.remaining(), BUDGET_CALL_CAP_MS, BUDGET_CALL_FLOOR_MS);
-
-    if (timeout === null) {
-      throw new BudgetExhaustedError("plus assez de temps pour une tentative");
-    }
+  return (messages) =>
     // Seul le texte est retenu : une routine hors contrat passe déjà par la
     // relance corrective de `generateRoutine` — un JSON coupé ne parse pas. Le
     // drapeau de troncature ne compte que là où la sortie est écrite en base
     // pour toujours (`api/_lib/match-analysis.ts`).
-    return ask(messages, timeout).then((answer) => answer.text);
-  };
+    ask(messages, budget.nextTimeout()).then((answer) => answer.text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -504,7 +516,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!quota.allowed) {
       return json(
         {
-          error: `Quota atteint : ${limit} routines par jour. Le compteur repart demain (heure UTC).`,
+          error: aiQuotaReachedMessage("routine", limit),
           remaining: quota.remaining,
         },
         429,
@@ -519,9 +531,16 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // 6. Contexte (bench, debriefs, parties récentes → mode) puis génération.
-  const { context, gate } = await loadContext(userClient, user.id, body.dureeMinutes, body.focus);
-  const allowed = scenarioCatalog(context.bench.latestTier ?? DEFAULT_TIER).names;
-  const budget = startBudget(BUDGET_TOTAL_MS);
+  const { context, gate, identity, activeBenchmark } = await loadContext(
+    userClient,
+    user.id,
+    body.dureeMinutes,
+    body.focus,
+  );
+  const allowed = scenarioCatalog(
+    context.bench.latestTier ?? defaultTierFor(activeBenchmark),
+  ).names;
+  const budget = startModelBudget(AI_MODEL_BUDGET_MS, AI_MODEL_CALL_CAP_MS, AI_MODEL_CALL_FLOOR_MS);
 
   let generated: Awaited<ReturnType<typeof generateRoutine>>;
 
@@ -530,7 +549,7 @@ export async function POST(request: Request): Promise<Response> {
       // La réécriture des jetons ne concerne que la liaison ChatGPT ; les
       // adaptateurs à clé l'ignorent. La passer sans condition évite d'avoir à
       // se rappeler quel fournisseur en a besoin.
-      askWith(config, budget, { persist: persistChatGptTokensWith(service, user.id) }),
+      askWith(config, identity, budget, { persist: persistChatGptTokensWith(service, user.id) }),
       context,
       allowed,
     );

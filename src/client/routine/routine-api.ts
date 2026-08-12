@@ -20,6 +20,7 @@ import {
   routineErrorSchema,
   routineResponseSchema,
 } from "../../shared/routine-contract";
+import { aiRequestSignal, opaqueMessage, transportMessage } from "../coach/ai-http";
 import { NO_SESSION_MESSAGE } from "../data/errors";
 import { supabase } from "../supabase/client";
 
@@ -62,7 +63,7 @@ function errorMessage(status: number, body: string): { message: string; remainin
     // Corps non-JSON : c'est le cas du 404 servi par Vite en développement,
     // ou d'une page d'erreur de plateforme. On le traite juste en dessous.
   }
-  return { message: status === 404 ? NOT_DEPLOYED : UNEXPECTED, remaining: null };
+  return { message: opaqueMessage(status, NOT_DEPLOYED, UNEXPECTED), remaining: null };
 }
 
 /** Demande une routine. Lève un `RoutineApiError` déjà rédigé en cas d'échec. */
@@ -84,9 +85,13 @@ export async function requestRoutine(
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({ duree_minutes: dureeMinutes, focus }),
+      // Le délai est plus long que le `maxDuration` de la fonction : il ne
+      // coupe pas la génération, il met fin à une attente que plus rien ne
+      // terminerait (`../coach/ai-http`).
+      signal: aiRequestSignal(),
     });
   } catch (cause) {
-    throw new RoutineApiError(OFFLINE, 0, null, cause);
+    throw new RoutineApiError(transportMessage(cause, OFFLINE), 0, null, cause);
   }
 
   const body = await response.text();

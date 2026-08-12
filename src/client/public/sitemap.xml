@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Seules les adresses publiques figurent ici : l'accueil, la démonstration et
+  les trois pages légales. L'accueil connecté, les perfs, le coach et le profil
+  demandent une session — les référencer n'apporterait qu'un écran de connexion.
+
+  Les adresses sont écrites en **forme propre** (`/demo`), sans fragment : un
+  `#` n'a pas sa place dans un sitemap, il n'est pas envoyé au serveur et ne
+  désigne donc pas une ressource. Ces chemins existent grâce aux redirections
+  déclarées dans `vercel.json`, qui renvoient vers la route à fragment
+  correspondante.
+
+  `changefreq` et `priority` sont volontairement absents : les moteurs les
+  ignorent depuis longtemps. `lastmod` est daté du jour de la mise en ligne de
+  ces adresses et doit être remis à jour quand le contenu change réellement,
+  pas à chaque déploiement.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://aimforge.alexabriel.com/</loc>
+    <lastmod>2026-08-12</lastmod>
+  </url>
+  <url>
+    <loc>https://aimforge.alexabriel.com/demo</loc>
+    <lastmod>2026-08-12</lastmod>
+  </url>
+  <url>
+    <loc>https://aimforge.alexabriel.com/confidentialite</loc>
+    <lastmod>2026-08-12</lastmod>
+  </url>
+  <url>
+    <loc>https://aimforge.alexabriel.com/cgu</loc>
+    <lastmod>2026-08-12</lastmod>
+  </url>
+  <url>
+    <loc>https://aimforge.alexabriel.com/mentions-legales</loc>
+    <lastmod>2026-08-12</lastmod>
+  </url>
+</urlset>

@@ -6,7 +6,8 @@
  * le client valide ce qu'il reçoit, avec les mêmes schémas. Deux copies
  * dériveraient, et la dérive ne se verrait qu'en production.
  *
- * Module pur : Zod et rien d'autre. Ni React, ni Supabase, ni `fetch`.
+ * Module pur : Zod et le moteur d'énergie (lui-même sans dépendance). Ni React,
+ * ni Supabase, ni `fetch`.
  *
  * Il vit dans `src/client/data/` parce que son consommateur principal est la
  * couche données du client ; les fonctions le lisent par chemin relatif, comme
@@ -14,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { DEFAULT_BENCHMARK_ID, type TierId, toTierId } from "../../lib/energy";
 
 /** Les fournisseurs qu'un compte peut lier (miroir du `check` de la table). */
 export const PROVIDERS = ["riot", "kovaaks"] as const;
@@ -194,7 +196,29 @@ export type RefreshResponse = z.infer<typeof refreshResponseSchema>;
 /* POST /api/kovaaks/import                                            */
 /* ------------------------------------------------------------------ */
 
-export const TIER_VALUES = ["novice", "intermediate", "advanced"] as const;
+/**
+ * Le palier demandé à l'import, validé **contre le registre**.
+ *
+ * Il redisait les trois paliers Voltaic en dur, à côté du jeu de données qui les
+ * définit : deux vérités pour une, dont l'une aurait fini par mentir. La
+ * validation passe donc par `toTierId`, qui interroge le benchmark — Zod reste
+ * la frontière, le registre reste la référence (DECISIONS.md D5).
+ *
+ * Le benchmark de référence est celui **par défaut**, et non le benchmark actif
+ * de l'utilisateur (qui existe depuis W1-B, DECISIONS.md D6) : le contrat de
+ * cet endpoint ne porte pas de `benchmarkId`, donc le palier reçu ne peut être
+ * validé que contre un benchmark connu des deux côtés. C'est sans conséquence
+ * aujourd'hui — le seul benchmark importable depuis KovaaK's est le benchmark
+ * par défaut — et c'est à étendre (champ `benchmarkId` dans la requête, de part
+ * et d'autre) le jour où un second benchmark s'importe.
+ */
+export const tierSchema: z.ZodType<TierId> = z.string().superRefine((value, ctx) => {
+  try {
+    toTierId(DEFAULT_BENCHMARK_ID, value);
+  } catch {
+    ctx.addIssue({ code: "custom", message: `Palier inconnu du benchmark : « ${value} ».` });
+  }
+});
 
 /**
  * Pourquoi un des 18 scénarios n'a pas de score exploitable.
@@ -219,7 +243,7 @@ export type MissingScenario = z.infer<typeof missingScenarioSchema>;
 
 export const kovaaksImportRequestSchema = z.object({
   username: z.string().trim().min(1).max(60),
-  tier: z.enum(TIER_VALUES),
+  tier: tierSchema,
 });
 
 export type KovaaksImportRequest = z.infer<typeof kovaaksImportRequestSchema>;
@@ -231,7 +255,7 @@ export type KovaaksImportRequest = z.infer<typeof kovaaksImportRequestSchema>;
 export const kovaaksImportResponseSchema = z.object({
   username: z.string().min(1),
   steamId: z.string().min(1),
-  tier: z.enum(TIER_VALUES),
+  tier: tierSchema,
   /** Nom de scénario Voltaic → score, dans l'unité du tableur. */
   scores: z.record(z.string(), z.number().nonnegative()),
   missing: z.array(missingScenarioSchema),

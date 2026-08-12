@@ -81,7 +81,12 @@ import {
 } from "../src/server/ai/index.js";
 import { type AskModel, generateDebrief } from "../src/server/coach/generate.js";
 import { matchStatsFrom } from "../src/server/coach/match-stats.js";
-import { COACH_SYSTEM_PROMPT, type CoachContext } from "../src/server/coach/prompt.js";
+import {
+  type CoachContext,
+  coachSystemPrompt,
+  identityOf,
+  type PromptIdentity,
+} from "../src/server/coach/prompt.js";
 import {
   createQuotaRefund,
   evaluateQuota,
@@ -90,6 +95,12 @@ import {
 } from "../src/server/coach/quota.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
+import { aiQuotaReachedMessage } from "../src/shared/ai-quota-contract.js";
+import {
+  AI_MODEL_BUDGET_MS,
+  AI_MODEL_CALL_CAP_MS,
+  AI_MODEL_CALL_FLOOR_MS,
+} from "../src/shared/ai-timing.js";
 import {
   coachRequestSchema,
   MAX_STATS_LENGTH,
@@ -98,8 +109,14 @@ import {
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
 import { loadAiSettingsWith, persistChatGptTokensWith } from "./_lib/ai-settings.js";
 import { refundAiUsageWith } from "./_lib/ai-usage.js";
-import { DEFAULT_TIER, loadBenchTiers, loadProfile } from "./_lib/coach-context.js";
+import {
+  defaultTierFor,
+  loadBenchTiers,
+  loadProfile,
+  preferencesOf,
+} from "./_lib/coach-context.js";
 import { postDebriefCard } from "./_lib/coach-thread-write.js";
+import { BudgetExhaustedError, type ModelBudget, startModelBudget } from "./_lib/model-budget.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -107,14 +124,14 @@ import { serviceClient } from "./_lib/service.js";
  * Un debrief demande une génération complète, pas un aller-retour de chat :
  * 60 s couvre le cas lent (relance corrective comprise) sans laisser une
  * requête bloquée pendre indéfiniment.
+ *
+ * La valeur reste **littérale** : la plateforme la lit par analyse statique.
+ * `src/shared/ai-timing.ts` en tient le miroir, et son test refuse la dérive.
  */
 export const maxDuration = 60;
 
 /** Assez pour un debrief structuré ; le contrat borne déjà les longueurs. */
 const MAX_TOKENS = 2000;
-
-/** Marge sous `maxDuration` : mieux vaut un 502 propre qu'un timeout de plateforme. */
-const MODEL_TIMEOUT_MS = 45_000;
 
 const usageCountSchema = z.number().int().min(0);
 
@@ -347,16 +364,21 @@ async function loadContext(
   client: UserClient,
   userId: string,
   stats: string,
-): Promise<CoachContext> {
-  const [profile, bench] = await Promise.all([
-    loadProfile(client, userId),
-    loadBenchTiers(client, userId),
-  ]);
+): Promise<{ readonly context: CoachContext; readonly identity: PromptIdentity }> {
+  // Le profil se lit **avant** le bench, et non en parallèle : c'est lui qui
+  // porte le benchmark actif (DECISIONS.md D6), et le bench se lit dans ce
+  // benchmark-là. Un aller-retour de plus sur un chemin qui attend ensuite
+  // vingt secondes de modèle est un prix qu'on paie sans hésiter pour ne pas
+  // résumer des passes d'un barème que le joueur ne travaille plus.
+  const profile = await loadProfile(client, userId);
+  const identity = identityOf(profile);
+  const { activeBenchmark } = preferencesOf(profile);
+  const bench = await loadBenchTiers(client, userId, activeBenchmark);
   // Le palier retenu est celui de la passe la plus récente : c'est celui sur
   // lequel le joueur s'entraîne, donc le seul catalogue qui lui soit utile.
-  const catalog = scenarioCatalog(bench.latestTier ?? DEFAULT_TIER);
+  const catalog = scenarioCatalog(bench.latestTier ?? defaultTierFor(activeBenchmark));
 
-  return { stats, profile, bench, scenarios: catalog.groups };
+  return { context: { stats, profile, bench, scenarios: catalog.groups }, identity };
 }
 
 /* ------------------------------------------------------------------ */
@@ -364,22 +386,39 @@ async function loadContext(
 /* ------------------------------------------------------------------ */
 
 /**
- * Le port du modèle, câblé sur l'adaptateur du fournisseur résolu (SPEC §5 ter).
+ * Le port du modèle, câblé sur l'adaptateur du fournisseur résolu (SPEC §5 ter)
+ * et sur le budget de temps.
  *
  * Le port n'a pas changé — c'est ce qui rend ce branchement minuscule. Ce qui
  * a changé est en amont : `createAsk` rend l'adaptateur du fournisseur de
  * l'utilisateur (ou celui de la plateforme), et toute la logique de génération
  * (relance corrective comprise) reste dans `generateDebrief`, qui ne sait
  * toujours pas qui répond au bout du fil.
+ *
+ * Le délai vient du **budget** et non d'une constante par appel (V4-C §4.9) :
+ * `generateDebrief` peut appeler deux fois, et deux fois 45 s dépassaient le
+ * `maxDuration`. La fonction était alors tuée avant d'avoir pu rembourser le
+ * quota — le raisonnement complet est dans `./_lib/model-budget.js`.
  */
-function askWith(config: ProviderConfig, deps: AskDeps): AskModel {
-  const ask = createAsk(config, { system: COACH_SYSTEM_PROMPT, maxTokens: MAX_TOKENS }, deps);
+function askWith(
+  config: ProviderConfig,
+  identity: PromptIdentity,
+  budget: ModelBudget,
+  deps: AskDeps,
+): AskModel {
+  const ask = createAsk(
+    config,
+    { system: coachSystemPrompt(identity), maxTokens: MAX_TOKENS },
+    deps,
+  );
 
-  // Seul le texte est retenu : un debrief n'est pas mis en cache, et une sortie
-  // coupée retombe déjà dans la relance corrective de `generateDebrief` — un
-  // JSON tronqué ne parse pas. C'est la mini-analyse d'un match, qu'on écrit en
-  // base pour toujours, qui a besoin du drapeau (`api/_lib/match-analysis.ts`).
-  return (messages) => ask(messages, MODEL_TIMEOUT_MS).then((answer) => answer.text);
+  return (messages) =>
+    // Seul le texte est retenu : un debrief n'est pas mis en cache, et une
+    // sortie coupée retombe déjà dans la relance corrective de
+    // `generateDebrief` — un JSON tronqué ne parse pas. C'est la mini-analyse
+    // d'un match, écrite en base pour toujours, qui a besoin du drapeau
+    // (`api/_lib/match-analysis.ts`).
+    ask(messages, budget.nextTimeout()).then((answer) => answer.text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -516,7 +555,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!quota.allowed) {
       return json(
         {
-          error: `Quota atteint : ${limit} debriefs par jour. Le compteur repart demain (heure UTC).`,
+          error: aiQuotaReachedMessage("coach", limit),
           remaining: quota.remaining,
         },
         429,
@@ -531,7 +570,11 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // 6. Contexte puis génération.
-  const context = await loadContext(userClient, user.id, stats);
+  const { context, identity } = await loadContext(userClient, user.id, stats);
+  // Le budget s'ouvre **ici**, juste avant le premier appel : le contexte est
+  // déjà lu, et ce qui reste sous le `maxDuration` doit couvrir la génération,
+  // sa relance, l'écriture en base et, si besoin, le remboursement.
+  const budget = startModelBudget(AI_MODEL_BUDGET_MS, AI_MODEL_CALL_CAP_MS, AI_MODEL_CALL_FLOOR_MS);
 
   let generated: Awaited<ReturnType<typeof generateDebrief>>;
 
@@ -540,7 +583,7 @@ export async function POST(request: Request): Promise<Response> {
       // La réécriture des jetons ne concerne que la liaison ChatGPT ; les
       // adaptateurs à clé l'ignorent. La passer sans condition évite d'avoir à
       // se rappeler quel fournisseur en a besoin.
-      askWith(config, { persist: persistChatGptTokensWith(service, user.id) }),
+      askWith(config, identity, budget, { persist: persistChatGptTokensWith(service, user.id) }),
       context,
     );
   } catch (cause) {
@@ -550,7 +593,15 @@ export async function POST(request: Request): Promise<Response> {
     // Aucun debrief produit : l'incrément n'a plus de contrepartie, on le rend.
     // Le remboursement ne lève pas et ne change pas le code de retour — c'est
     // l'erreur d'origine qui explique l'échec, pas l'état du compteur.
+    // Le renoncement au budget en fait partie : le temps manquant est le nôtre.
     remaining = await refundQuota(refund, remaining);
+    if (cause instanceof BudgetExhaustedError) {
+      return failWithQuota(
+        "Le debrief a pris trop de temps. Réessaie : c'est en général plus rapide.",
+        504,
+        remaining,
+      );
+    }
     if (cause instanceof ModelError) {
       // La rédaction dit **à qui appartient le problème** : une clé personnelle
       // refusée n'est pas une panne d'AimForge, et l'utilisateur est le seul à

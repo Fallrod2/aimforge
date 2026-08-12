@@ -15,7 +15,16 @@ export type ThemeToken =
   | "steel-200"
   | "ember-600"
   | "ember-500"
-  | "quench-500";
+  | "quench-500"
+  /* Jetons sémantiques (V5-A §5.2) — les seuls que le code neuf devrait nommer. */
+  | "surface"
+  | "surface-raised"
+  | "surface-overlay"
+  | "brand"
+  | "brand-fill"
+  | "border"
+  | "rail-track"
+  | "rail-fill";
 
 const FALLBACKS: Record<ThemeToken, string> = {
   "steel-950": "#0b0d10",
@@ -27,6 +36,14 @@ const FALLBACKS: Record<ThemeToken, string> = {
   "ember-600": "#c9550f",
   "ember-500": "#f2711c",
   "quench-500": "#4595c9",
+  surface: "#0b0d10",
+  "surface-raised": "#0f1216",
+  "surface-overlay": "#1b2027",
+  brand: "#f2711c",
+  "brand-fill": "#b4520a",
+  border: "#2a313b",
+  "rail-track": "#58636f",
+  "rail-fill": "#c8cfd9",
 };
 
 /** La valeur du jeton `--color-<token>`, ou son repli. */

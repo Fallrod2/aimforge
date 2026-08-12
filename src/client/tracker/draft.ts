@@ -6,11 +6,16 @@
  * ne perd rien.
  */
 
-import { type ScoreMap, TIER_IDS, type TierId } from "../../lib/energy";
+import { currentBenchmark, type ScoreMap, type TierId, tierIdsFor } from "../../lib/energy";
 
 /** Ce que l'utilisateur a tapé, indexé par nom de scénario. */
 export type TierDraft = Readonly<Record<string, string>>;
 
+/**
+ * La saisie, palier par palier. Les clés sont les paliers du benchmark courant
+ * — plus une union fermée depuis que `TierId` est ouvert (DECISIONS.md D5), d'où
+ * `tierDraft` pour lire une case sans supposer qu'elle existe.
+ */
 export type BenchDraft = Readonly<Record<TierId, TierDraft>>;
 
 /** Résultat de la lecture d'un champ de score. */
@@ -27,7 +32,12 @@ export interface DraftScores {
 }
 
 export function emptyDraft(): BenchDraft {
-  return Object.fromEntries(TIER_IDS.map((tier) => [tier, {}])) as BenchDraft;
+  return Object.fromEntries(tierIdsFor(currentBenchmark()).map((tier) => [tier, {}]));
+}
+
+/** La saisie d'un palier ; vide si ce palier n'a jamais été touché. */
+export function tierDraft(draft: BenchDraft, tier: TierId): TierDraft {
+  return draft[tier] ?? {};
 }
 
 /**
@@ -52,7 +62,7 @@ export function setScoreInput(
   scenario: string,
   raw: string,
 ): BenchDraft {
-  const next: Record<string, string> = { ...draft[tier] };
+  const next: Record<string, string> = { ...tierDraft(draft, tier) };
 
   if (raw === "") {
     delete next[scenario];
@@ -75,7 +85,7 @@ export function draftScores(draft: BenchDraft, tier: TierId): DraftScores {
   const scores: Record<string, number> = {};
   const invalid: string[] = [];
 
-  for (const [scenario, raw] of Object.entries(draft[tier])) {
+  for (const [scenario, raw] of Object.entries(tierDraft(draft, tier))) {
     const parsed = parseScoreInput(raw);
 
     if (parsed.state === "ok") {

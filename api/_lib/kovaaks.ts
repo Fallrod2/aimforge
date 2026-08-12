@@ -20,7 +20,7 @@
  * appelé en HTTP.
  */
 
-import type { SeasonId, TierId } from "../../src/lib/energy/index.js";
+import type { BenchmarkId, TierId } from "../../src/lib/energy/index.js";
 import {
   type KovaaksBenchmarkProgress,
   kovaaksBenchmarkId,
@@ -231,22 +231,22 @@ export async function findPlayer(
 /* ------------------------------------------------------------------ */
 
 /**
- * La progression du joueur sur le benchmark Voltaic du palier demandé, dans la
- * saison demandée, validée avant de sortir d'ici. Ce qui remonte est déjà de la
- * forme attendue, ou n'est jamais remonté.
+ * La progression du joueur sur le benchmark KovaaK's du palier demandé, pour le
+ * benchmark demandé, validée avant de sortir d'ici. Ce qui remonte est déjà de
+ * la forme attendue, ou n'est jamais remonté.
  *
- * L'identifiant du benchmark vient de la définition de saison : c'est la seule
- * chose à changer le jour où le Benchmark Tracker publie la S6.
+ * L'identifiant interrogé vient de la définition du benchmark : c'est la seule
+ * chose à changer le jour où le Benchmark Tracker republie.
  */
 export async function fetchBenchmarkProgress(
   steamId: string,
-  season: SeasonId,
+  benchmarkId: BenchmarkId,
   tier: TierId,
   budget: TimeBudget,
 ): Promise<KovaaksBenchmarkProgress> {
-  const benchmarkId = kovaaksBenchmarkId(season, tier);
+  const trackerId = kovaaksBenchmarkId(benchmarkId, tier);
   const body = await getJson(
-    `/benchmarks/player-progress-rank-benchmark?benchmarkId=${benchmarkId}&steamId=${encodeURIComponent(steamId)}&page=0&max=100`,
+    `/benchmarks/player-progress-rank-benchmark?benchmarkId=${trackerId}&steamId=${encodeURIComponent(steamId)}&page=0&max=100`,
     budget,
   );
   const parsed = kovaaksBenchmarkProgressSchema.safeParse(body);

@@ -12,6 +12,7 @@
  * pas. `hasKey` est tout ce qui revient.
  */
 
+import type { AiQuotaResponse } from "../../shared/ai-quota-contract";
 import {
   type AiLinkPollResponse,
   type AiLinkStart,
@@ -22,6 +23,7 @@ import {
   aiLinkStartResponseSchema,
   aiSettingsErrorSchema,
   aiSettingsResponseSchema,
+  aiSettingsViewSchema,
   aiTestResponseSchema,
 } from "../../shared/ai-settings-contract";
 import { supabase } from "../supabase/client";
@@ -106,6 +108,53 @@ function readSettings(payload: unknown, status = 200): AiSettings | null {
 /** La configuration enregistrée, ou `null` s'il n'y en a pas. Jamais la clé. */
 export async function getAiSettings(): Promise<AiSettings | null> {
   return readSettings(await call("GET"));
+}
+
+/**
+ * L'état des quotas du jour, que le même `GET` rapporte : compteur utilisé,
+ * limite réellement appliquée, heure de réinitialisation (Vague 3.4).
+ *
+ * **Ne lève jamais**, contrairement au reste du module, et c'est la seule
+ * différence qui compte : un quota est une ligne d'information à côté d'un
+ * bouton. Quand elle manque — session absente, fonction non servie, réponse
+ * hors contrat — l'écran retombe sur la formulation par défaut et le bouton
+ * marche toujours. Faire échouer un écran de coaching parce qu'un compteur n'a
+ * pas pu être lu serait échanger un désagrément contre une panne. Le cas se
+ * produira à coup sûr en développement local : `bun dev` ne sert aucune
+ * fonction `/api/**`.
+ *
+ * Les appels **simultanés** partagent une requête, et c'est une nécessité de
+ * l'écran plutôt qu'une optimisation : l'espace Coach monte la routine et le
+ * fil dans le même rendu, chacun avec sa ligne de quota, et l'historique en
+ * ajoute une troisième quand on le déplie. Trois GET identiques dans le même
+ * tick n'apprendraient rien de plus. Aucun cache au-delà : la requête en vol
+ * est oubliée dès qu'elle retombe, donc un rechargement lit toujours l'état
+ * réel — un compteur mis en cache serait un compteur faux.
+ */
+let inFlightQuota: Promise<AiQuotaResponse | null> | null = null;
+
+export function getAiQuota(): Promise<AiQuotaResponse | null> {
+  if (inFlightQuota !== null) return inFlightQuota;
+
+  const request = (async (): Promise<AiQuotaResponse | null> => {
+    let payload: unknown;
+
+    try {
+      payload = await call("GET");
+    } catch {
+      return null;
+    }
+
+    const parsed = aiSettingsViewSchema.safeParse(payload);
+
+    return parsed.success ? parsed.data.quota : null;
+  })();
+
+  inFlightQuota = request;
+  void request.finally(() => {
+    if (inFlightQuota === request) inFlightQuota = null;
+  });
+  return request;
 }
 
 /** Enregistre (ou remplace) la configuration, et rend ce qui est réellement stocké. */

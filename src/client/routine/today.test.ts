@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type DatedRoutine, isSameLocalDay, routineOfToday } from "./today";
+import { type DatedRoutine, isSameLocalDay, latestOfLocalDay, routineOfToday } from "./today";
 
 /** Une date locale, construite champ par champ pour ne pas dépendre du fuseau. */
 function local(year: number, month: number, day: number, hour = 12, minute = 0): Date {
@@ -22,6 +22,39 @@ describe("isSameLocalDay", () => {
   it("ne confond pas le même quantième de deux mois ou de deux années", () => {
     expect(isSameLocalDay(local(2026, 7, 9), local(2026, 8, 9))).toBe(false);
     expect(isSameLocalDay(local(2025, 8, 9), local(2026, 8, 9))).toBe(false);
+  });
+});
+
+describe("latestOfLocalDay", () => {
+  const now = local(2026, 8, 9, 18);
+
+  it("rend null sur une liste vide", () => {
+    expect(latestOfLocalDay([], now)).toBeNull();
+  });
+
+  /** La différence avec `routineOfToday`, et toute la raison de cette fonction. */
+  it("garde la routine du jour même une fois faite", () => {
+    expect(latestOfLocalDay([routine(1, local(2026, 8, 9, 9), true)], now)?.id).toBe(1);
+  });
+
+  it("rend la plus récente du jour, faite ou non", () => {
+    const routines = [
+      routine(1, local(2026, 8, 9, 8)),
+      routine(2, local(2026, 8, 9, 16), true),
+      routine(3, local(2026, 8, 8, 20)),
+    ];
+
+    expect(latestOfLocalDay(routines, now)?.id).toBe(2);
+  });
+
+  it("ignore une routine d'hier", () => {
+    expect(latestOfLocalDay([routine(1, local(2026, 8, 8, 23))], now)).toBeNull();
+  });
+
+  it("ignore une date illisible plutôt que de planter", () => {
+    const broken = { id: 1, date: "pas une date", done: false };
+
+    expect(latestOfLocalDay([broken, routine(2, local(2026, 8, 9, 9))], now)?.id).toBe(2);
   });
 });
 

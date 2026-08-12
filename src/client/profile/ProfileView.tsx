@@ -1,78 +1,97 @@
 /**
- * Page Profil : le contexte joueur que le coach et la routine réutiliseront
- * (P3/P4). Six champs libres, lus et écrits dans `public.profiles`.
+ * Page Profil : le contexte joueur que le coach et la routine réutilisent, et
+ * les deux préférences qui décident du vocabulaire et des seuils.
  *
  * Un formulaire, pas une fiche : rien n'est enregistré tant que le bouton n'a
  * pas été pressé. Les champs sont libres (aucune liste de rangs figée) parce
- * que le classement Valorant change de nom entre les saisons — une liste
- * périmerait plus vite que la saisie de l'utilisateur.
+ * que le classement change de nom entre les saisons — et, depuis la couche jeu
+ * (DECISIONS.md D7), parce qu'ils doivent accueillir cinq échelles différentes.
  *
  * Un champ vidé s'efface en base (`null`) : l'enregistrement remplace, il ne
  * fusionne pas. C'est la seule règle qui rende l'écran prévisible — ce qui est
  * affiché est ce qui sera stocké.
+ *
+ * Deux choses ne suivent pas cette règle, et c'est délibéré :
+ *
+ * - **le jeu** fait partie du formulaire (il change les libellés des autres
+ *   champs, donc il se relit avec eux) mais ne change **aucune** colonne :
+ *   `rang_valorant`, `main_agent` et `notes_maps` gardent leurs noms, seuls les
+ *   mots affichés viennent de `game-vocab.ts` ;
+ * - **le benchmark actif** s'écrit à part, au clic, via le provider
+ *   (`useActiveBenchmark`) : c'est une préférence que tout l'écran suit en
+ *   direct, pas une valeur qu'on enregistre en bloc avec un pseudo.
  */
 
-import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from "react";
+import { type ChangeEvent, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type GameId, gameVocab, listGameVocabs, toGameId } from "../../shared/game-vocab";
 import { useAuth } from "../auth/AuthProvider";
 import { Notice } from "../components/Notice";
-import { getProfile, type Profile, updateProfile } from "../data";
+import { getProfile, type Profile, type ProfileInput, updateProfile } from "../data";
 import { LinkedAccountsPanel } from "../linked/LinkedAccountsPanel";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
 import { AiSettingsPanel } from "../settings/AiSettingsPanel";
+import { BenchmarkSection } from "./BenchmarkSection";
 
 /** Le formulaire manipule des chaînes ; `null` et `""` n'y sont pas distincts. */
-type ProfileForm = Readonly<Record<Field, string>>;
+type TextField = "pseudo" | "rangValorant" | "peak" | "mainAgent" | "objectif" | "notesMaps";
 
-type Field = "pseudo" | "rangValorant" | "peak" | "mainAgent" | "objectif" | "notesMaps";
+interface ProfileForm extends Readonly<Record<TextField, string>> {
+  readonly game: GameId;
+}
 
 interface FieldSpec {
-  readonly name: Field;
+  readonly name: TextField;
   readonly label: string;
   readonly hint: string;
   readonly placeholder: string;
   readonly multiline?: boolean;
 }
 
-const FIELDS: readonly FieldSpec[] = [
-  {
-    name: "pseudo",
-    label: "Pseudo",
-    hint: "Le nom sous lequel tu joues.",
-    placeholder: "Riot ID, sans le tag",
-  },
-  {
-    name: "rangValorant",
-    label: "Rang actuel",
-    hint: "Ton classement compétitif du moment.",
-    placeholder: "Ascendant 2",
-  },
-  {
-    name: "peak",
-    label: "Peak",
-    hint: "Le plus haut rang atteint, toutes saisons confondues.",
-    placeholder: "Immortel 1",
-  },
-  {
-    name: "mainAgent",
-    label: "Agent principal",
-    hint: "Celui que tu joues le plus — il oriente les debriefs.",
-    placeholder: "Jett",
-  },
-  {
-    name: "objectif",
-    label: "Objectif de saison",
-    hint: "Ce que tu veux atteindre : le coach s'y réfère.",
-    placeholder: "Atteindre Immortel avant la fin de l'acte",
-    multiline: true,
-  },
-  {
-    name: "notesMaps",
-    label: "Notes de maps",
-    hint: "Maps ou situations qui te posent problème.",
-    placeholder: "Icebox en attaque, prises de duel longue distance…",
-    multiline: true,
-  },
+const TEXT_FIELDS: readonly TextField[] = [
+  "pseudo",
+  "rangValorant",
+  "peak",
+  "mainAgent",
+  "objectif",
+  "notesMaps",
 ];
+
+/**
+ * Les six champs libres, **dits dans les mots du jeu choisi**.
+ *
+ * Ce ne sont donc plus une constante de module : « Agent principal » n'a aucun
+ * sens pour un joueur d'Apex, et l'exemple « Ascendant 2 » lui apprendrait une
+ * graduation qui n'existe pas chez lui.
+ */
+export function fieldsFor(game: GameId): readonly FieldSpec[] {
+  const vocab = gameVocab(game);
+
+  return [
+    {
+      name: "pseudo",
+      label: "Pseudo",
+      hint: "Le nom sous lequel tu joues.",
+      placeholder: "Ton identifiant en jeu",
+    },
+    { name: "rangValorant", ...vocab.rank },
+    { name: "peak", ...vocab.peak },
+    { name: "mainAgent", ...vocab.main },
+    {
+      name: "objectif",
+      label: "Objectif de saison",
+      hint: "Ce que tu veux atteindre : le coach s'y réfère.",
+      placeholder: "Monter d'un rang avant la fin de l'acte",
+      multiline: true,
+    },
+    {
+      name: "notesMaps",
+      label: "Notes de maps",
+      hint: "Maps ou situations qui te posent problème.",
+      placeholder: "Prises de duel longue distance, entrées en site…",
+      multiline: true,
+    },
+  ];
+}
 
 const EMPTY_FORM: ProfileForm = {
   pseudo: "",
@@ -81,6 +100,7 @@ const EMPTY_FORM: ProfileForm = {
   mainAgent: "",
   objectif: "",
   notesMaps: "",
+  game: "valorant",
 };
 
 function toForm(profile: Profile): ProfileForm {
@@ -91,6 +111,7 @@ function toForm(profile: Profile): ProfileForm {
     mainAgent: profile.mainAgent ?? "",
     objectif: profile.objectif ?? "",
     notesMaps: profile.notesMaps ?? "",
+    game: profile.game,
   };
 }
 
@@ -101,7 +122,7 @@ function blankToNull(value: string): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-function toProfile(form: ProfileForm): Profile {
+function toProfileInput(form: ProfileForm): ProfileInput {
   return {
     pseudo: blankToNull(form.pseudo),
     rangValorant: blankToNull(form.rangValorant),
@@ -109,6 +130,7 @@ function toProfile(form: ProfileForm): Profile {
     mainAgent: blankToNull(form.mainAgent),
     objectif: blankToNull(form.objectif),
     notesMaps: blankToNull(form.notesMaps),
+    game: form.game,
   };
 }
 
@@ -134,6 +156,8 @@ export function ProfileView() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  const fields = useMemo(() => fieldsFor(form.game), [form.game]);
+
   const reload = useCallback(async () => {
     setLoad({ status: "loading" });
     setSaveError(null);
@@ -156,9 +180,10 @@ export function ProfileView() {
     void reload();
   }, [reload]);
 
-  const dirty = FIELDS.some((field) => form[field.name] !== stored[field.name]);
+  const dirty =
+    form.game !== stored.game || TEXT_FIELDS.some((name) => form[name] !== stored[name]);
 
-  function change(name: Field) {
+  function change(name: TextField) {
     return (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setSaved(false);
       setForm((current) => ({ ...current, [name]: event.target.value }));
@@ -174,7 +199,7 @@ export function ProfileView() {
       // On repart de la ligne relue par la base, pas du formulaire : ce qui
       // s'affiche après l'enregistrement est ce qui est réellement stocké
       // (une valeur nettoyée par `blankToNull` se voit tout de suite).
-      const next = toForm(await updateProfile(toProfile(form)));
+      const next = toForm(await updateProfile(toProfileInput(form)));
 
       setForm(next);
       setStored(next);
@@ -203,6 +228,7 @@ export function ProfileView() {
             {load.message}
           </Notice>
         )}
+        <BenchmarkSection />
         <LinkedAccountsPanel state={linked.state} reload={linked.reload} />
         <AiSettingsPanel />
       </div>
@@ -221,7 +247,15 @@ export function ProfileView() {
 
         <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-5">
           <div className="grid gap-5 sm:grid-cols-2">
-            {FIELDS.map((field) => (
+            <GameField
+              value={form.game}
+              disabled={saving}
+              onChange={(game) => {
+                setSaved(false);
+                setForm((current) => ({ ...current, game }));
+              }}
+            />
+            {fields.map((field) => (
               <Field
                 key={field.name}
                 spec={field}
@@ -236,7 +270,7 @@ export function ProfileView() {
             <button
               type="submit"
               disabled={saving || !dirty}
-              className="rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
+              className="rounded-lg bg-brand-fill px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
             >
               {saving ? "Enregistrement…" : "Enregistrer"}
             </button>
@@ -248,7 +282,7 @@ export function ProfileView() {
                 setSaved(false);
                 setSaveError(null);
               }}
-              className="rounded-lg border border-steel-700 px-4 py-2.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
+              className="rounded-lg border border-steel-700 px-4 py-2.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-500"
             >
               Annuler les modifications
             </button>
@@ -264,8 +298,56 @@ export function ProfileView() {
         </form>
       </section>
 
+      <BenchmarkSection />
       <LinkedAccountsPanel state={linked.state} reload={linked.reload} />
       <AiSettingsPanel />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Champs                                                              */
+/* ------------------------------------------------------------------ */
+
+interface GameFieldProps {
+  readonly value: GameId;
+  readonly disabled: boolean;
+  readonly onChange: (game: GameId) => void;
+}
+
+/**
+ * Le jeu principal.
+ *
+ * Il ne pilote que du vocabulaire (DECISIONS.md D7) : les libellés et les
+ * exemples des champs voisins, et la phrase d'identité des prompts du coach.
+ * Aucune colonne, aucun écran, aucun calcul n'en dépend — d'où sa place dans le
+ * formulaire ordinaire plutôt que dans une section à part.
+ */
+function GameField({ value, disabled, onChange }: GameFieldProps) {
+  const vocabs = listGameVocabs();
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor="profile-game" className="text-xs font-medium text-steel-200">
+        Jeu principal
+      </label>
+      <select
+        id="profile-game"
+        value={value}
+        disabled={disabled}
+        aria-describedby="profile-game-hint"
+        onChange={(event) => onChange(toGameId(event.target.value))}
+        className={CONTROL_CLASSES}
+      >
+        {vocabs.map((vocab) => (
+          <option key={vocab.id} value={vocab.id}>
+            {vocab.label}
+          </option>
+        ))}
+      </select>
+      <p id="profile-game-hint" className="text-[11px] text-steel-500">
+        Il choisit les mots : les libellés ci-dessous et la façon dont le coach te parle.
+      </p>
     </div>
   );
 }
@@ -278,7 +360,7 @@ interface FieldProps {
 }
 
 const CONTROL_CLASSES =
-  "w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60";
+  "w-full rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 text-sm text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500 disabled:opacity-60";
 
 function Field({ spec, value, disabled, onChange }: FieldProps) {
   const id = `profile-${spec.name}`;

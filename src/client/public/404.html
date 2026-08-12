@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page introuvable — AimForge</title>
+
+    <!--
+      Page d'erreur servie par la plateforme, pas par l'application.
+
+      Elle est donc **autonome** : aucun script, aucune feuille de style
+      externe, aucune police réseau. Quand elle s'affiche, c'est justement que
+      la ressource demandée n'existe pas — elle ne peut dépendre de rien qui
+      viendrait du même déploiement au-delà d'elle-même.
+
+      Les couleurs sont recopiées en dur depuis les jetons de `index.css`
+      (`--color-surface`, `--color-brand`, `--color-border`…) : le fichier ne
+      passe pas par Tailwind. Toute évolution de la palette doit être répercutée
+      ici à la main — c'est le prix de l'autonomie, et il est faible pour une
+      page qui n'a que quatre couleurs.
+    -->
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#0b0d10" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <style>
+      :root {
+        color-scheme: dark;
+        --surface: #0b0d10;
+        --text: #e6e8ec;
+        --muted: #7c8898;
+        --brand: #f2711c;
+        --brand-fill: #b4520a;
+        --brand-fill-hover: #bd5009;
+        --border: #2a313b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 1.5rem;
+        background-color: var(--surface);
+        color: var(--text);
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      main {
+        max-width: 30rem;
+        text-align: center;
+      }
+
+      .mark {
+        width: 3.5rem;
+        height: 3.5rem;
+        margin: 0 auto 2rem;
+        display: block;
+      }
+
+      /* Le code d'erreur est une donnée chiffrée : mono, comme partout ailleurs. */
+      .code {
+        margin: 0 0 0.75rem;
+        font-family: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+          monospace;
+        font-size: 0.8125rem;
+        letter-spacing: 0.14em;
+        color: var(--muted);
+      }
+
+      h1 {
+        margin: 0 0 0.875rem;
+        font-size: 1.5rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        line-height: 1.25;
+      }
+
+      p {
+        margin: 0 0 2rem;
+        font-size: 0.9375rem;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      /*
+       * Le bouton se porte en **blanc pur** sur `--brand-fill`, jamais en
+       * `--text` : c'est la règle qui accompagne ce jeton dans `index.css`
+       * (4,12:1 avec le gris clair, sous le seuil AA ; 5,06:1 avec le blanc).
+       */
+      .home {
+        display: inline-block;
+        padding: 0.625rem 1.25rem;
+        border-radius: 0.375rem;
+        background-color: var(--brand-fill);
+        color: #fff;
+        font-size: 0.9375rem;
+        font-weight: 500;
+        text-decoration: none;
+        transition: background-color 120ms ease;
+      }
+
+      .home:hover {
+        background-color: var(--brand-fill-hover);
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--brand);
+        outline-offset: 2px;
+      }
+
+      .rule {
+        margin: 2.5rem auto 0;
+        width: 3rem;
+        border: 0;
+        border-top: 1px solid var(--border);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .home {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <!--
+        Logomark repris de `favicon.svg` : un « A » anguleux dont la barre est
+        un réticule. Recopié ici plutôt que référencé, pour que la page tienne
+        même si le reste du déploiement est introuvable.
+      -->
+      <svg
+        class="mark"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 64 64"
+        role="img"
+        aria-label="AimForge"
+      >
+        <title>AimForge</title>
+        <g
+          fill="none"
+          stroke="#F2711C"
+          stroke-width="6"
+          stroke-linecap="square"
+          stroke-linejoin="miter"
+        >
+          <path d="M13 53 L32 11 L51 53" />
+          <path d="M18 37 L25.5 37" />
+          <path d="M38.5 37 L46 37" />
+        </g>
+        <circle cx="32" cy="37" r="2.4" fill="#F2711C" />
+      </svg>
+
+      <p class="code">ERREUR 404</p>
+      <h1>Page introuvable</h1>
+      <p>
+        Cette adresse ne correspond à rien sur AimForge. Elle a peut-être changé,
+        ou la ligne a été mal recopiée.
+      </p>
+      <a class="home" href="/">Retour à l’accueil</a>
+      <hr class="rule" />
+    </main>
+  </body>
+</html>

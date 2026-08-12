@@ -44,7 +44,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getTierFor, type SeasonId } from "../../lib/energy";
+import { type BenchmarkId, getBenchmark, getTierFor } from "../../lib/energy";
 import { formatChartDate, formatEnergy } from "../format";
 import { themeColor } from "../theme";
 import type { Bridge } from "./bridge";
@@ -242,7 +242,7 @@ function LegendItem({ color, label, ring }: LegendItemProps) {
 
 interface BridgeChartProps {
   readonly bridge: Bridge;
-  readonly season: SeasonId;
+  readonly benchmarkId: BenchmarkId;
   /** Domaines verticaux des deux cadres, calculés chez l'appelant. */
   readonly benchDomain: readonly [number, number];
   readonly ingameDomain: readonly [number, number];
@@ -260,19 +260,22 @@ interface BridgeChartProps {
  */
 export function BridgeChart({
   bridge,
-  season,
+  benchmarkId,
   benchDomain,
   ingameDomain,
   timeZone,
 }: BridgeChartProps) {
-  const tier = getTierFor(season, bridge.tier);
+  const tier = getTierFor(benchmarkId, bridge.tier);
+  // Le nom du barème vient du registre : le pont trace les passes du benchmark
+  // actif, et « Voltaic » écrit en dur mentirait sous un autre (DECISIONS.md D6).
+  const benchmarkName = getBenchmark(benchmarkId).name;
   const ticks = timeTicks(bridge.from, bridge.to);
   const formatTime = (value: number) => formatChartDate(new Date(value).toISOString(), timeZone);
 
   return (
     <figure className="m-0 flex flex-col gap-1">
       <BridgePane
-        title={`Overall Voltaic · ${tier.label}`}
+        title={`Overall ${benchmarkName} · ${tier.label}`}
         color={themeColor("ember-600")}
         points={bridge.bench}
         domain={benchDomain}
@@ -297,9 +300,9 @@ export function BridgeChart({
       />
 
       <figcaption className="mt-2 text-[11px] leading-relaxed text-steel-500">
-        Deux cadres, un seul axe du temps — et jamais deux échelles superposées : une énergie
-        Voltaic et un pourcentage de tirs à la tête ne se comparent pas, seule leur position dans le
-        temps est commune. Chaque axe vertical est cadré sur sa propre plage observée.
+        Deux cadres, un seul axe du temps — et jamais deux échelles superposées : une énergie{" "}
+        {benchmarkName} et un pourcentage de tirs à la tête ne se comparent pas, seule leur position
+        dans le temps est commune. Chaque axe vertical est cadré sur sa propre plage observée.
       </figcaption>
     </figure>
   );

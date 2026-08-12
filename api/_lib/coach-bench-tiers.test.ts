@@ -12,16 +12,25 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CURRENT_SEASON, listScenarios } from "../../src/lib/energy/index.js";
+import { registerBenchmark } from "../../src/lib/energy/benchmarks.js";
+import { benchmarkLike } from "../../src/lib/energy/fixtures.js";
+import {
+  type BenchmarkId,
+  DEFAULT_BENCHMARK_ID,
+  listScenarios,
+} from "../../src/lib/energy/index.js";
 import { buildAnalysisUserMessage } from "../../src/server/coach/analysis-prompt.js";
 import { buildChatMessages } from "../../src/server/coach/chat-prompt.js";
 import { buildCoachUserMessage } from "../../src/server/coach/prompt.js";
 import { buildThreadMessages } from "../../src/server/coach/thread-prompt.js";
 import { scenarioCatalog } from "../../src/server/shared/scenarios.js";
 import type { MatchDetail } from "../../src/shared/valorant-contract.js";
-import { type CoachUserClient, DEFAULT_TIER, loadBenchTiers } from "./coach-context.js";
+import { type CoachUserClient, defaultTierFor, loadBenchTiers } from "./coach-context.js";
 
 const USER = "utilisateur-1";
+
+/** Un second barème : le seul moyen de prouver qu'un filtre par benchmark filtre. */
+const FAKE_BENCHMARK = "fake-s6" as BenchmarkId;
 
 /** Une passe telle que `bench_runs` la rend. */
 interface RunRow {
@@ -31,7 +40,8 @@ interface RunRow {
   readonly overall: number;
   readonly rank: string | null;
   readonly complete: boolean;
-  readonly season: string;
+  /** La colonne du benchmark est `benchmark_id` (migration 0017). */
+  readonly benchmark_id: string;
 }
 
 const NOVICE: RunRow = {
@@ -41,7 +51,7 @@ const NOVICE: RunRow = {
   overall: 812.4,
   rank: "Gold",
   complete: true,
-  season: CURRENT_SEASON,
+  benchmark_id: DEFAULT_BENCHMARK_ID,
 };
 
 const INTERMEDIATE: RunRow = {
@@ -51,7 +61,7 @@ const INTERMEDIATE: RunRow = {
   overall: 612.3,
   rank: "Diamond",
   complete: false,
-  season: CURRENT_SEASON,
+  benchmark_id: DEFAULT_BENCHMARK_ID,
 };
 
 /** La passe la plus récente, et la seule qui remontait avant ce chargeur. */
@@ -62,7 +72,7 @@ const ADVANCED: RunRow = {
   overall: 0,
   rank: null,
   complete: false,
-  season: CURRENT_SEASON,
+  benchmark_id: DEFAULT_BENCHMARK_ID,
 };
 
 /** Les 18 scénarios d'un palier, ou les `count` premiers. */
@@ -109,7 +119,14 @@ function fakeClient(fixture: Fixture): CoachUserClient {
             return Promise.resolve({ data: null, error: { message: "lecture refusée" } });
           }
           const rows = fixture.runs
-            .filter((row) => row.tier === tier && filters.get("user_id") === USER)
+            .filter(
+              (row) =>
+                row.tier === tier &&
+                filters.get("user_id") === USER &&
+                // Le chargeur filtre par benchmark : le faux client aussi, sinon
+                // le test ne pourrait pas prouver que le filtre existe.
+                filters.get("benchmark_id") === row.benchmark_id,
+            )
             // Le chargeur demande la plus récente : la fixture l'ordonne comme
             // la base le ferait.
             .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
@@ -162,14 +179,14 @@ const REAL_CASE: Fixture = {
 
 describe("loadBenchTiers", () => {
   it("rend la dernière passe de chaque palier, du plus bas au plus haut", async () => {
-    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER);
+    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER, DEFAULT_BENCHMARK_ID);
 
     expect(bench.tiers.map((tier) => tier.tier)).toEqual(["novice", "intermediate", "advanced"]);
     expect(bench.latestTier).toBe("advanced");
   });
 
   it("compte la complétude de chaque passe, et garde le rang des paliers terminés", async () => {
-    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER);
+    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER, DEFAULT_BENCHMARK_ID);
     const [novice, intermediate, advanced] = bench.tiers;
 
     expect(novice?.filled).toBe(18);
@@ -181,13 +198,13 @@ describe("loadBenchTiers", () => {
     expect(advanced?.overall).toBe(0);
   });
 
-  it("garde la saison de chaque passe", async () => {
-    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER);
+  it("garde le benchmark de chaque passe", async () => {
+    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER, DEFAULT_BENCHMARK_ID);
 
-    expect(bench.tiers.map((tier) => tier.season)).toEqual([
-      CURRENT_SEASON,
-      CURRENT_SEASON,
-      CURRENT_SEASON,
+    expect(bench.tiers.map((tier) => tier.benchmarkId)).toEqual([
+      DEFAULT_BENCHMARK_ID,
+      DEFAULT_BENCHMARK_ID,
+      DEFAULT_BENCHMARK_ID,
     ]);
   });
 
@@ -195,6 +212,7 @@ describe("loadBenchTiers", () => {
     const bench = await loadBenchTiers(
       fakeClient({ runs: [INTERMEDIATE], scores: { 2: scoresOf("intermediate") } }),
       USER,
+      DEFAULT_BENCHMARK_ID,
     );
 
     expect(bench.tiers).toHaveLength(1);
@@ -202,26 +220,60 @@ describe("loadBenchTiers", () => {
   });
 
   it("rend une liste vide quand le joueur n'a aucune passe", async () => {
-    const bench = await loadBenchTiers(fakeClient({ runs: [], scores: {} }), USER);
+    const bench = await loadBenchTiers(
+      fakeClient({ runs: [], scores: {} }),
+      USER,
+      DEFAULT_BENCHMARK_ID,
+    );
 
     expect(bench.tiers).toEqual([]);
     expect(bench.latestTier).toBeNull();
   });
 
-  it("écarte une passe dont la saison est inconnue du registre", async () => {
+  it("ne lit que les passes du benchmark actif", async () => {
+    // Sans ce filtre, une passe d'un autre barème peut être la plus récente d'un
+    // palier : le coach commenterait alors des énergies qui ne se comparent pas
+    // à celles du barème que le joueur travaille (DECISIONS.md D6).
     const bench = await loadBenchTiers(
       fakeClient({
-        runs: [{ ...NOVICE, season: "voltaic-s9" }, INTERMEDIATE],
-        scores: { 2: scoresOf("intermediate") },
+        runs: [{ ...NOVICE, benchmark_id: FAKE_BENCHMARK }, INTERMEDIATE],
+        scores: { 1: scoresOf("novice"), 2: scoresOf("intermediate") },
       }),
       USER,
+      DEFAULT_BENCHMARK_ID,
     );
 
     expect(bench.tiers.map((tier) => tier.tier)).toEqual(["intermediate"]);
   });
 
+  it("suit le benchmark demandé, pas le benchmark par défaut", async () => {
+    // La réciproque du test précédent : sur le barème de l'autre passe, c'est
+    // elle qu'on lit et l'autre qui disparaît.
+    const remove = registerBenchmark(benchmarkLike(DEFAULT_BENCHMARK_ID, FAKE_BENCHMARK));
+
+    try {
+      const bench = await loadBenchTiers(
+        fakeClient({
+          runs: [{ ...NOVICE, benchmark_id: FAKE_BENCHMARK }, INTERMEDIATE],
+          scores: { 1: scoresOf("novice"), 2: scoresOf("intermediate") },
+        }),
+        USER,
+        FAKE_BENCHMARK,
+      );
+
+      expect(bench.tiers.map((tier) => tier.tier)).toEqual(["novice"]);
+      expect(bench.tiers[0]?.benchmarkId).toBe(FAKE_BENCHMARK);
+    } finally {
+      remove();
+    }
+  });
+
   it("dégrade sans annuler : une lecture en échec ne fait pas disparaître les autres paliers", async () => {
-    const bench = await loadBenchTiers(fakeClient({ ...REAL_CASE, failing: ["advanced"] }), USER);
+    const bench = await loadBenchTiers(
+      fakeClient({ ...REAL_CASE, failing: ["advanced"] }),
+      USER,
+      DEFAULT_BENCHMARK_ID,
+    );
 
     expect(bench.tiers.map((tier) => tier.tier)).toEqual(["novice", "intermediate"]);
     expect(bench.latestTier).toBe("intermediate");
@@ -230,12 +282,12 @@ describe("loadBenchTiers", () => {
 
 describe("le prompt servi au coach", () => {
   it("porte les trois paliers, leur complétude et le rang du palier terminé", async () => {
-    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER);
+    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER, DEFAULT_BENCHMARK_ID);
     const message = buildCoachUserMessage({
       stats: "Ascent · Jett · 18/14/5",
       profile: null,
       bench,
-      scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
+      scenarios: scenarioCatalog(bench.latestTier ?? defaultTierFor(DEFAULT_BENCHMARK_ID)).groups,
     });
 
     expect(message).toContain("Palier Novice");
@@ -251,12 +303,12 @@ describe("le prompt servi au coach", () => {
   });
 
   it("porte les trois paliers dans le fil, où la question a été posée", async () => {
-    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER);
+    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER, DEFAULT_BENCHMARK_ID);
     const content =
       buildThreadMessages({
         profile: null,
         bench,
-        scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
+        scenarios: scenarioCatalog(bench.latestTier ?? defaultTierFor(DEFAULT_BENCHMARK_ID)).groups,
         matches: [],
         debriefs: [],
         history: [],
@@ -271,7 +323,7 @@ describe("le prompt servi au coach", () => {
   });
 
   it("porte les trois paliers dans le chat par debrief", async () => {
-    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER);
+    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER, DEFAULT_BENCHMARK_ID);
     const content =
       buildChatMessages({
         debrief: {
@@ -283,7 +335,7 @@ describe("le prompt servi au coach", () => {
         },
         profile: null,
         bench,
-        scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
+        scenarios: scenarioCatalog(bench.latestTier ?? defaultTierFor(DEFAULT_BENCHMARK_ID)).groups,
         history: [],
         question: "où en est mon bench ?",
       })[0]?.content ?? "";
@@ -299,13 +351,13 @@ describe("le prompt servi au coach", () => {
   });
 
   it("porte les trois paliers dans la mini-analyse par match", async () => {
-    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER);
+    const bench = await loadBenchTiers(fakeClient(REAL_CASE), USER, DEFAULT_BENCHMARK_ID);
     const message = buildAnalysisUserMessage({
       detail: MATCH_DETAIL,
       summary: null,
       profile: null,
       bench,
-      scenarios: scenarioCatalog(bench.latestTier ?? DEFAULT_TIER).groups,
+      scenarios: scenarioCatalog(bench.latestTier ?? defaultTierFor(DEFAULT_BENCHMARK_ID)).groups,
     });
 
     expect(message).toContain("Palier Novice");

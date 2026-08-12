@@ -35,12 +35,9 @@
  */
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import {
-  COACH_DAILY_QUOTA,
-  MAX_STATS_LENGTH,
-  type StoredDebrief,
-} from "../../shared/coach-contract";
+import { MAX_STATS_LENGTH, type StoredDebrief } from "../../shared/coach-contract";
 import { Notice } from "../components/Notice";
+import { QuotaNote } from "../components/QuotaNote";
 import { deleteDebrief, listDebriefs } from "../data";
 import { CoachError, requestDebrief } from "./coach-api";
 import { DebriefCard } from "./DebriefCard";
@@ -81,25 +78,17 @@ interface CoachViewProps {
   readonly initialStats?: string;
 }
 
-/**
- * Ce que l'écran sait du quota du jour.
- *
- * Trois états et non un `number | null`, parce que `null` voudrait dire deux
- * choses opposées : « pas encore demandé » et « il n'y a plus rien à compter »
- * (SPEC §5 ter — l'utilisateur a configuré son propre fournisseur). Les
- * confondre afficherait « 5 debriefs par jour » à quelqu'un qui n'a plus de
- * limite.
- */
-type Quota =
-  | { readonly status: "unknown" }
-  | { readonly status: "lifted" }
-  | { readonly status: "counted"; readonly remaining: number };
-
 export function CoachView({ initialStats }: CoachViewProps = {}) {
   const [stats, setStats] = useState(initialStats ?? "");
   const [generating, setGenerating] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
-  const [quota, setQuota] = useState<Quota>({ status: "unknown" });
+  /**
+   * Ce que la dernière réponse de `/api/coach` a dit du restant : `undefined`
+   * tant qu'il n'y en a pas eu, `null` quand elle n'a rien compté (SPEC §5 ter).
+   * La limite et l'heure de réinitialisation, elles, appartiennent à
+   * `QuotaNote`, qui les tient du serveur — l'écran n'a pas à les connaître.
+   */
+  const [remaining, setRemaining] = useState<number | null | undefined>(undefined);
   const [history, setHistory] = useState<History>({ status: "loading" });
   const [freshId, setFreshId] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -158,14 +147,14 @@ export function CoachView({ initialStats }: CoachViewProps = {}) {
       );
       setFreshId(debrief.id);
       setExpandedId(debrief.id);
-      setQuota(left === null ? { status: "lifted" } : { status: "counted", remaining: left });
+      setRemaining(left);
       setStats("");
     } catch (cause) {
       const next = failureOf(cause);
 
       setFailure(next);
       if (cause instanceof CoachError && cause.remaining !== null) {
-        setQuota({ status: "counted", remaining: cause.remaining });
+        setRemaining(cause.remaining);
       }
     } finally {
       setGenerating(false);
@@ -219,14 +208,14 @@ export function CoachView({ initialStats }: CoachViewProps = {}) {
           placeholder={PLACEHOLDER}
           aria-describedby="coach-stats-count"
           onChange={(event) => setStats(event.target.value)}
-          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 font-mono text-xs leading-relaxed text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60"
+          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2.5 font-mono text-xs leading-relaxed text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500 disabled:opacity-60"
         />
 
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
             disabled={!canSubmit}
-            className="rounded-lg bg-ember-500 px-4 py-2.5 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
+            className="rounded-lg bg-brand-fill px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
           >
             {generating ? "Génération…" : "Générer le debrief"}
           </button>
@@ -239,13 +228,7 @@ export function CoachView({ initialStats }: CoachViewProps = {}) {
             {tooLong ? " · trop long, coupe le texte" : ""}
           </p>
 
-          <p className="ml-auto text-xs text-steel-500">
-            {quota.status === "unknown"
-              ? `${COACH_DAILY_QUOTA} debriefs par jour`
-              : quota.status === "lifted"
-                ? "Quota levé · ta configuration IA"
-                : `${quota.remaining} debrief${quota.remaining > 1 ? "s" : ""} restant${quota.remaining > 1 ? "s" : ""} aujourd'hui`}
-          </p>
+          <QuotaNote kind="coach" remaining={remaining} className="ml-auto text-xs" />
         </div>
 
         {generating ? (

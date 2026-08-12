@@ -17,6 +17,7 @@ import {
 } from "../../shared/coach-thread-contract";
 import { NO_SESSION_MESSAGE } from "../data/errors";
 import { supabase } from "../supabase/client";
+import { aiRequestSignal, opaqueMessage, transportMessage } from "./ai-http";
 
 /** Échec d'un message au coach, porteur d'un message destiné à l'écran. */
 export class ThreadError extends Error {
@@ -57,7 +58,7 @@ function errorMessage(status: number, body: string): { message: string; remainin
     // Corps non-JSON : le 404 servi par Vite en développement, ou une page
     // d'erreur de plateforme.
   }
-  return { message: status === 404 ? NOT_DEPLOYED : UNEXPECTED, remaining: null };
+  return { message: opaqueMessage(status, NOT_DEPLOYED, UNEXPECTED), remaining: null };
 }
 
 /**
@@ -84,9 +85,11 @@ export async function requestThreadReply(message: string): Promise<ThreadRespons
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({ message }),
+      // Plus long que le `maxDuration` de la fonction : voir `./ai-http`.
+      signal: aiRequestSignal(),
     });
   } catch (cause) {
-    throw new ThreadError(OFFLINE, 0, null, cause);
+    throw new ThreadError(transportMessage(cause, OFFLINE), 0, null, cause);
   }
 
   const body = await response.text();

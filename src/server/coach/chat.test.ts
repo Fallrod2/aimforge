@@ -105,3 +105,12 @@ describe("generateChatAnswer", () => {
     expect((await generateChatAnswer(ask, CONTEXT)).ok).toBe(false);
   });
 });
+
+/** Le garde-fou de français (`../shared/french-guard.ts`), branché sur la réponse livrée. */
+describe("parseChatAnswer — garde-fou de français", () => {
+  it("repose la majuscule après un point, sans réécrire la phrase", () => {
+    const parsed = parseChatAnswer("Travaille tes retakes. puis souffle une minute.", ALLOWED);
+
+    expect(parsed.ok && parsed.answer).toBe("Travaille tes retakes. Puis souffle une minute.");
+  });
+});

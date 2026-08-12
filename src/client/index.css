@@ -39,6 +39,87 @@
   --color-ember-400: #ff8c3a;
 
   /*
+   * ─────────────────────────────────────────────────────────────────────────
+   * Jetons sémantiques (V5-A §5.2)
+   *
+   * Les deux échelles ci-dessus (`steel-*`, `ember-*`) sont la **gamme** : des
+   * teintes, sans emploi. Les jetons ci-dessous sont les **emplois** : de quoi
+   * répondre à « quelle couleur pour une carte ? » sans avoir à retenir qu'une
+   * carte se peint `steel-900/60`.
+   *
+   * Pourquoi ça n'était pas évident : quatre teintes de surface coexistaient à
+   * l'écran (11,13,16 · 13,15,19 · 15,18,22 · 27,32,39) parce que les cartes sont
+   * **translucides**. `bg-steel-900/60` sur le fond ne peint pas `steel-900`,
+   * il peint 15,18,22 — et c'est de cette couleur-là, jamais du jeton, qu'un
+   * texte doit se détacher. Les jetons de surface portent donc la couleur
+   * **réellement peinte**, ce qui les rend mesurables (cf. `contrast.test.ts`).
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+
+  /* Le fond de l'application. */
+  --color-surface: #0b0d10;
+  /* Les cartes : la composition exacte de `steel-900/60` sur le fond. */
+  --color-surface-raised: #0f1216;
+  /* Ce qui flotte au-dessus : champs, barre collante, toasts. */
+  --color-surface-overlay: #1b2027;
+
+  /* La braise d'identité : accent, focus, courbe overall, segment actif. */
+  --color-brand: #f2711c;
+  /*
+   * La braise de **remplissage**, celle qui porte du texte.
+   *
+   * Elle est plus sombre que `--color-brand`, et ce n'est pas un choix
+   * esthétique : un bouton plein ne peut porter un libellé lisible que si le
+   * fond descend assez bas. Les mesures qui l'ont fixée —
+   *   #c9550f + #e6e8ec = 3,57:1   (ce qui était en production, sous AA)
+   *   #c9550f + blanc   = 4,38:1   (toujours sous AA)
+   *   #b4520a + #e6e8ec = 4,12:1   (le piège : un fond plus sombre ne suffit pas)
+   *   #b4520a + blanc   = 5,06:1   ✓
+   * — disent la règle qui va avec le jeton : **`brand-fill` se porte en blanc
+   * pur**, jamais en `steel-100`.
+   */
+  --color-brand-fill: #b4520a;
+  /* Le survol du précédent, qui doit tenir AA lui aussi : blanc à 4,87:1. */
+  --color-brand-fill-hover: #bd5009;
+
+  /*
+   * Élévation — trois crans, du plat au flottant.
+   *
+   * L'application est très plate par choix ; l'échelle n'existe pas pour la
+   * bomber, mais pour que « au-dessus » se dise partout de la même façon :
+   *
+   *   1. `border`         — le trait qui sépare, sans rien soulever ;
+   *   2. `border-strong`  — le même, accentué : survol, contour d'un élément
+   *                         qui répond au doigt ;
+   *   3. `shadow-overlay` — la seule ombre, réservée à ce qui décolle vraiment
+   *                         et recouvre le contenu : barre du pouce, barre de
+   *                         sauvegarde du tracker, toast d'annulation.
+   *
+   * Il n'y a délibérément pas de quatrième cran pour les cartes : une ombre sous
+   * chaque carte, sur un fond aussi sombre, ne se voit pas — elle ne ferait que
+   * salir les bords. Les cartes s'élèvent par leur surface (`surface-raised`) et
+   * leur trait, pas par une ombre.
+   */
+  --color-border: #2a313b;
+  --color-border-strong: #3b4552;
+  --shadow-overlay: 0 -8px 24px -12px rgb(0 0 0 / 0.8);
+
+  /*
+   * Jauges — la piste vide est une information, pas une décoration : sans elle,
+   * on ne sait pas jusqu'où va l'échelle. WCAG 1.4.11 lui demande donc 3:1
+   * contre son fond, quand `steel-800` n'en donnait que 1,15:1 sur une carte.
+   *
+   *   piste #58636f        : 3,07:1 sur carte, 3,18:1 sur le fond   ✓
+   *   remplissage #c8cfd9  : 3,90:1 sur la piste                     ✓
+   *   graduation à venir   : la couleur du fond, 3,18:1 sur la piste ✓
+   *
+   * Le remplissage a dû s'éclaircir avec la piste : à `steel-500`, il ne s'en
+   * détachait plus que de 1,50:1 — une jauge dont on ne voit plus le niveau.
+   */
+  --color-rail-track: #58636f;
+  --color-rail-fill: #c8cfd9;
+
+  /*
    * Bleu de revenu (acier trempé) — réservé à la seconde série du graphe.
    * Le couple braise/revenu utilisé pour les courbes est
    * (--color-ember-600, --color-quench-500) : c'est le seul couple testé qui
@@ -56,19 +137,35 @@
 }
 
 body {
-  background-color: var(--color-steel-950);
+  background-color: var(--color-surface);
   color: var(--color-steel-100);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background-color: color-mix(in srgb, var(--color-ember-500) 35%, transparent);
+  background-color: color-mix(in srgb, var(--color-brand) 35%, transparent);
 }
 
+/*
+ * Focus clavier (V5-A §5.3).
+ *
+ * La règle existait déjà ; ce qui manquait, c'est qu'elle **gagne**. Huit
+ * champs de saisie portaient `focus:outline-none` — un utilitaire qui s'applique
+ * sur `:focus`, donc aussi sur `:focus-visible` —, et effaçaient l'anneau au
+ * moment précis où il sert. Ces utilitaires ont été retirés ; le `!important`
+ * ci-dessous est ce qui empêche le suivant d'être ajouté sans qu'on s'en
+ * aperçoive, quelle que soit la spécificité de la classe qui le poserait.
+ *
+ * L'anneau est en `--color-brand` (6,63:1 sur le fond, 5,58:1 sur un champ), à
+ * 2 px et décalé de 2 px : il se voit sur les six familles de contrôles —
+ * boutons, liens, champs, `Segmented`, `select`, résumés dépliants.
+ */
 :focus-visible {
-  outline: 2px solid var(--color-ember-500);
-  outline-offset: 2px;
+  /* biome-ignore lint/complexity/noImportantStyles: l'anneau de focus ne se laisse pas effacer par un utilitaire */
+  outline: 2px solid var(--color-brand) !important;
+  /* biome-ignore lint/complexity/noImportantStyles: idem — le décalage fait partie de l'anneau */
+  outline-offset: 2px !important;
 }
 
 /*

@@ -22,7 +22,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getTierFor, type SeasonId, type TierId } from "../../lib/energy";
+import { type BenchmarkId, getTierFor, type TierId } from "../../lib/energy";
 import { formatEnergy } from "../format";
 import { themeColor } from "../theme";
 import type { SeriesPoint } from "./series";
@@ -30,19 +30,20 @@ import type { SeriesPoint } from "./series";
 interface ProgressChartProps {
   readonly tier: TierId;
   /**
-   * Saison des passes tracées. L'axe et les repères en dépendent autant que du
-   * palier : `maxEnergy` et les seuils de rang changent d'une saison à l'autre,
+   * Benchmark des passes tracées. L'axe et les repères en dépendent autant que
+   * du palier : `maxEnergy` et les seuils de rang changent d'un benchmark à
+   * l'autre,
    * et l'appelant garantit que tous les `points` en viennent (SPEC §5 quinquies).
    */
-  readonly season: SeasonId;
+  readonly benchmarkId: BenchmarkId;
   readonly points: readonly SeriesPoint[];
   readonly subcategory: string | null;
 }
 
 const OVERALL_LABEL = "Overall";
 
-export function ProgressChart({ tier, season, points, subcategory }: ProgressChartProps) {
-  const { label: tierLabel, maxEnergy, overallRanks } = getTierFor(season, tier);
+export function ProgressChart({ tier, benchmarkId, points, subcategory }: ProgressChartProps) {
+  const { label: tierLabel, maxEnergy, overallRanks } = getTierFor(benchmarkId, tier);
   const axis = themeColor("steel-700");
   const muted = themeColor("steel-400");
   const surface = themeColor("steel-950");

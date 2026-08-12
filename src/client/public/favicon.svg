@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AimForge">
+  <title>AimForge</title>
+  <!--
+    Logomark : un « A » anguleux dont la barre est un réticule.
+
+    Quatre traits et un point, rien de plus — les deux jambes du A, les deux
+    demi-barres de la mire, et le point au centre. Deux détails font toute la
+    lecture, et ils ont été choisis en regardant le rendu à 16, 32 et 110 px :
+
+    - les demi-barres **débordent** légèrement des jambes (18 → 25,5 et
+      38,5 → 46, quand les jambes passent à 19,8 et 44,2 à cette hauteur) :
+      sans ce débord, la barre se confond avec un A ordinaire ;
+    - le **vide** autour du point (3 unités de chaque côté) est l'écart d'un
+      viseur. Trop serré, le point se soude à la barre dès 32 px.
+
+    À 16 px l'ensemble se simplifie de lui-même en un A plein : c'est le
+    comportement attendu d'une favicon, pas un défaut.
+
+    Écrit à la main en coordonnées d'une grille de 64, pour rester relisible et
+    retouchable — à commencer par la seule couleur qu'il porte, la braise
+    #F2711C, accent unique du thème (`src/client/index.css`).
+
+    Fond transparent : la marque doit tenir sur l'onglet clair d'un navigateur
+    comme sur le fond acier de l'application. La tuile opaque est l'affaire de
+    l'apple-touch-icon.
+  -->
+  <g fill="none" stroke="#F2711C" stroke-width="6" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M13 53 L32 11 L51 53" />
+    <path d="M18 37 L25.5 37" />
+    <path d="M38.5 37 L46 37" />
+  </g>
+  <circle cx="32" cy="37" r="2.4" fill="#F2711C" />
+</svg>

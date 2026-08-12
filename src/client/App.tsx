@@ -1,64 +1,89 @@
 /**
  * Racine de l'application : routage par hash, garde d'authentification, choix
- * de la vue.
+ * de la section.
  *
  * La garde est ici et nulle part ailleurs — une vue n'a jamais à vérifier
  * elle-même qu'il y a une session. Sans session, tout ce qui n'est pas la page
  * de connexion affiche la landing **sans changer le hash** : l'adresse
  * demandée survit à la connexion, et l'utilisateur atterrit là où il allait.
  *
- * Trois vues sont chargées à la demande, pour deux raisons différentes :
+ * ## Trois sections (V6)
  *
- * - **l'historique** et **Valorant**, parce que leurs courbes tirent Recharts,
- *   et Recharts tire d3 et un store Redux — environ un tiers du bundle pour des
- *   écrans que personne ne voit au premier chargement (l'application ouvre sur
- *   le tableau de bord). Valorant pousse le découpage d'un cran : ses figures
- *   sont elles-mêmes différées à l'intérieur de la vue, pour que ses chiffres
- *   s'affichent sans attendre ses graphes ;
+ * `Accueil` (tableau de bord, et la page d'une partie derrière
+ * `?match=<id>`), `Perfs` (saisie et historique) et `Coach` (routine du jour et
+ * fil). Les anciennes adresses sont toujours lues par `parseRoute` et
+ * **réécrites** ici, une fois, avec `history.replaceState` : un favori
+ * `#/historique?run=12` ouvre la bonne passe et l'adresse redevient canonique
+ * sans empiler d'entrée dans l'historique du navigateur.
+ *
+ * ## Ce qui est chargé à la demande, et pourquoi
+ *
+ * - **l'historique des perfs** (dans `PerfsView`) et **la page d'une partie**,
+ *   parce qu'ils entraînent Recharts — et Recharts tire d3 et un store Redux,
+ *   environ un tiers du bundle pour des écrans que personne ne voit au premier
+ *   chargement. Le bloc Valorant de l'accueil pousse le découpage d'un cran :
+ *   ses figures ne sont téléchargées qu'à l'ouverture de son repli ;
  * - **l'administration**, parce que presque personne ne l'ouvrira jamais : elle
  *   n'existe que pour les administrateurs (SPEC §5 quater), et il n'y a aucune
- *   raison de la faire télécharger à tous les autres.
+ *   raison de la faire télécharger à tous les autres ;
+ * - **la démonstration publique** (`demo/DemoView`), parce qu'elle n'est ouverte
+ *   que par les visiteurs qui cliquent « Voir la démo » : la faire peser sur la
+ *   landing, que tout le monde voit, coûterait à tous ce que quelques-uns
+ *   demandent. Elle est **publique** et sans session comme avec — elle ne lit
+ *   rien, elle calcule ses chiffres dans le navigateur ;
+ * - **les trois documents légaux** (`legal/pages`), pour la même raison : du
+ *   texte long, ouvert une fois, qui n'a rien à faire dans le premier
+ *   chargement. Ils sont en revanche **publics** — la garde d'authentification
+ *   les laisse passer, sans session comme avec.
  *
- * Les cinq autres vues restent en import statique : elles ne pèsent que leur
- * propre code, et les découper coûterait un aller-retour réseau à chaque onglet
- * pour rien.
+ * Le reste est en import statique : ces vues ne pèsent que leur propre code, et
+ * les découper coûterait un aller-retour réseau à chaque onglet pour rien.
  */
 
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AppLayout } from "./app/AppLayout";
+import { ActiveBenchmarkProvider } from "./app/active-benchmark";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { AuthView } from "./auth/AuthView";
 import { RecoveryView } from "./auth/RecoveryView";
-import { CoachThreadView } from "./coach/CoachThreadView";
+import { CoachSpace } from "./coach/CoachSpace";
 import { DashboardView } from "./dashboard/DashboardView";
 import { LandingView } from "./landing/LandingView";
+import { LegalShell } from "./legal/LegalShell";
+import { LEGAL_PAGES } from "./legal/pages";
+import { PerfsView } from "./perfs/PerfsView";
 import { ProfileView } from "./profile/ProfileView";
 import {
+  canonicalHash,
   DEFAULT_ROUTE,
+  isLegalView,
   parseRoute,
   type Route,
   type RouteTarget,
   requiresSession,
   routeHash,
 } from "./route";
-import { RoutineView } from "./routine/RoutineView";
-import { TrackerView } from "./tracker/TrackerView";
 
 /**
- * `HistoryView` est un export nommé, `lazy` attend un export par défaut : on
- * fait la conversion ici plutôt que d'ajouter un `export default` au module,
- * qui n'aurait de sens que pour ce chargeur.
+ * `MatchView` est un export nommé, `lazy` attend un export par défaut : on fait
+ * la conversion ici plutôt que d'ajouter un `export default` au module, qui
+ * n'aurait de sens que pour ce chargeur.
  */
-const HistoryView = lazy(async () => ({
-  default: (await import("./history/HistoryView")).HistoryView,
-}));
-
-const ValorantView = lazy(async () => ({
-  default: (await import("./valorant/ValorantView")).ValorantView,
+const MatchView = lazy(async () => ({
+  default: (await import("./valorant/MatchView")).MatchView,
 }));
 
 const AdminView = lazy(async () => ({
   default: (await import("./admin/AdminView")).AdminView,
+}));
+
+/**
+ * La démonstration publique (`#/demo`), différée pour la raison habituelle :
+ * c'est un écran que la plupart des visiteurs n'ouvriront pas, et le charger
+ * d'office alourdirait la landing — la page qu'ils voient tous.
+ */
+const DemoView = lazy(async () => ({
+  default: (await import("./demo/DemoView")).DemoView,
 }));
 
 function currentRoute(): Route {
@@ -78,8 +103,23 @@ function Routed() {
   const [route, setRoute] = useState<Route>(currentRoute);
 
   useEffect(() => {
-    const sync = () => setRoute(currentRoute());
+    // La redirection des adresses d'avant V6, et le ménage des paramètres qui
+    // ne veulent rien dire. `replaceState` ne déclenche pas `hashchange` et
+    // n'empile rien dans l'historique du navigateur : seule l'adresse change,
+    // la route lue est la même avant et après (`canonicalHash` converge, cf.
+    // son test). D'où l'ordre — réécrire, puis lire.
+    const rewrite = () => {
+      const canonical = canonicalHash(window.location.hash);
 
+      if (canonical !== null) window.history.replaceState(null, "", canonical);
+    };
+    const sync = () => {
+      rewrite();
+      setRoute(currentRoute());
+    };
+
+    // L'adresse d'arrivée : elle n'a déclenché aucun `hashchange`.
+    rewrite();
     window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
   }, []);
@@ -97,10 +137,13 @@ function Routed() {
   const guarded = requiresSession(route.view);
 
   useEffect(() => {
-    // Connecté sur une vue publique (la page de connexion) : elle n'a plus
-    // rien à demander, on renvoie sur l'accueil de l'application.
-    if (authenticated && !guarded) navigate(DEFAULT_ROUTE);
-  }, [authenticated, guarded, navigate]);
+    // Connecté sur la page de connexion : elle n'a plus rien à demander, on
+    // renvoie sur l'accueil de l'application. La condition porte sur `auth` et
+    // non sur « vue publique » : les pages légales sont publiques elles aussi,
+    // et un utilisateur connecté qui ouvre les CGU doit les lire, pas se faire
+    // rediriger vers l'accueil.
+    if (authenticated && route.view === "auth") navigate(DEFAULT_ROUTE);
+  }, [authenticated, route.view, navigate]);
 
   // La session stockée n'est pas encore relue : afficher quoi que ce soit
   // ferait clignoter la landing sous un utilisateur déjà connecté.
@@ -110,17 +153,52 @@ function Routed() {
   // qu'à choisir le nouveau mot de passe, jamais à parcourir l'application.
   if (recovering) return <RecoveryView />;
 
-  if (!authenticated) return guarded ? <LandingView /> : <AuthView />;
+  // La démonstration est la **même page pour tout le monde** : elle ne lit
+  // aucune donnée d'utilisateur, donc elle n'a pas à savoir s'il y a une
+  // session. Elle porte sa propre coque (marque, bandeau, pied de page) et
+  // passe donc avant `AppLayout`, qui ferait doublon.
+  if (route.view === "demo") {
+    return (
+      <Suspense fallback={<ViewLoading />}>
+        <DemoView />
+      </Suspense>
+    );
+  }
+
+  if (!authenticated) {
+    // Les documents légaux sont publics (cf. `requiresSession`) : sans session
+    // ils s'affichent dans leur propre coque, puisqu'il n'y a pas d'`AppLayout`
+    // pour les porter. Une fois connecté, ils passent par `View`, comme les
+    // autres vues.
+    if (isLegalView(route.view)) {
+      const LegalPage = LEGAL_PAGES[route.view];
+
+      return (
+        <LegalShell>
+          <Suspense fallback={<ViewLoading />}>
+            <LegalPage />
+          </Suspense>
+        </LegalShell>
+      );
+    }
+    return guarded ? <LandingView /> : <AuthView />;
+  }
 
   return (
-    <AppLayout route={route}>
-      {/* Le repli ne s'affiche que le temps de télécharger l'historique, une
-          fois par session : un cadre muet, pas un écran de chargement, pour ne
-          pas faire clignoter la mise en page sous l'utilisateur. */}
-      <Suspense fallback={<ViewLoading />}>
-        <View route={route} navigate={navigate} />
-      </Suspense>
-    </AppLayout>
+    // Le benchmark actif est une préférence du profil (DECISIONS.md D6) : il se
+    // charge à l'ouverture de session, donc ici — au-dessus de toutes les vues
+    // qui le suivent (perfs, accueil, profil) et sous la garde
+    // d'authentification, puisqu'il n'existe pas sans profil.
+    <ActiveBenchmarkProvider>
+      <AppLayout route={route}>
+        {/* Le repli ne s'affiche que le temps de télécharger un morceau différé,
+            une fois par session : un cadre muet, pas un écran de chargement,
+            pour ne pas faire clignoter la mise en page sous l'utilisateur. */}
+        <Suspense fallback={<ViewLoading />}>
+          <View route={route} navigate={navigate} />
+        </Suspense>
+      </AppLayout>
+    </ActiveBenchmarkProvider>
   );
 }
 
@@ -130,26 +208,29 @@ interface ViewProps {
 }
 
 function View({ route, navigate }: ViewProps) {
-  const focusRun = (runId: number | null) => navigate({ view: "history", runId });
+  // Avant le `switch` : les trois documents légaux ne sont pas des sections de
+  // l'application mais des pages qu'elle héberge, et leur composant vient d'un
+  // registre différé plutôt que d'une branche écrite ici (cf. `legal/pages`).
+  if (isLegalView(route.view)) {
+    const LegalPage = LEGAL_PAGES[route.view];
+
+    return <LegalPage />;
+  }
 
   switch (route.view) {
-    case "tracker":
-      return <TrackerView onSaved={(run) => focusRun(run.id)} />;
-    case "history":
-      return <HistoryView focusRunId={route.runId} onFocusRun={focusRun} />;
-    case "valorant":
+    case "perfs":
       return (
-        <ValorantView
-          matchId={route.matchId}
-          onOpenMatch={(matchId) => navigate({ view: "valorant", matchId })}
+        <PerfsView
+          tab={route.tab}
+          focusRunId={route.runId}
+          onTabChange={(tab) => navigate({ view: "perfs", tab })}
+          onFocusRun={(runId) => navigate({ view: "perfs", tab: "historique", runId })}
         />
       );
     case "coach":
-      // L'onglet Coach est le fil (SPEC §5 sexies) ; l'historique des debriefs
-      // vit à l'intérieur, en repli.
-      return <CoachThreadView />;
-    case "routine":
-      return <RoutineView />;
+      // La routine du jour et le fil (SPEC §5 sexies, V6) ; l'historique des
+      // debriefs et celui des routines vivent à l'intérieur, en repli.
+      return <CoachSpace />;
     case "profile":
       return <ProfileView />;
     case "admin":
@@ -158,7 +239,14 @@ function View({ route, navigate }: ViewProps) {
       // refuserait ici annoncerait ce qu'il refuse.
       return <AdminView />;
     default:
-      return <DashboardView />;
+      // L'accueil porte deux écrans : le tableau de bord, et la page d'une
+      // partie quand l'adresse en désigne une. Le retour repasse par le
+      // routeur — l'adresse reste la seule vérité.
+      return route.matchId === null ? (
+        <DashboardView />
+      ) : (
+        <MatchView matchId={route.matchId} onBack={() => navigate({ view: "home" })} />
+      );
   }
 }
 

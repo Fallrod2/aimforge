@@ -11,7 +11,14 @@
  * doit le dire au lieu de le laisser deviner.
  */
 
-import { type ComputedSubcategory, getTier, TIER_IDS, type TierId } from "../../lib/energy";
+import {
+  type BenchmarkId,
+  type ComputedSubcategory,
+  currentBenchmark,
+  getTierFor,
+  type TierId,
+  tierIdsFor,
+} from "../../lib/energy";
 
 /** Combien de sous-catégories on nomme : assez pour orienter, pas pour noyer. */
 export const WEAKEST_COUNT = 3;
@@ -24,9 +31,19 @@ export type WeakestView =
   /** Les 9 sous-catégories sont au plafond ; `next` est le palier d'après. */
   | { readonly kind: "capped"; readonly next: TierId | null };
 
-/** Le palier suivant dans la progression Voltaic, `null` après Advanced. */
-export function nextTierAfter(tier: TierId): TierId | null {
-  return TIER_IDS[TIER_IDS.indexOf(tier) + 1] ?? null;
+/**
+ * Le palier suivant dans la progression du benchmark, `null` après le dernier.
+ *
+ * L'ordre vient du benchmark : « après Advanced il n'y a rien » est un fait de
+ * Voltaic, pas du domaine (DECISIONS.md D5).
+ */
+export function nextTierAfter(
+  tier: TierId,
+  benchmarkId: BenchmarkId = currentBenchmark(),
+): TierId | null {
+  const tiers = tierIdsFor(benchmarkId);
+
+  return tiers[tiers.indexOf(tier) + 1] ?? null;
 }
 
 /**
@@ -39,8 +56,12 @@ export function nextTierAfter(tier: TierId): TierId | null {
  * se rejoignent dès que le bench est complet, puisque les trois plus faibles
  * sont alors le minimum des neuf.
  */
-export function atTierCap(tier: TierId, subcategories: readonly ComputedSubcategory[]): boolean {
-  const { maxEnergy } = getTier(tier);
+export function atTierCapFor(
+  benchmarkId: BenchmarkId,
+  tier: TierId,
+  subcategories: readonly ComputedSubcategory[],
+): boolean {
+  const { maxEnergy } = getTierFor(benchmarkId, tier);
 
   return (
     subcategories.length > 0 &&
@@ -48,13 +69,26 @@ export function atTierCap(tier: TierId, subcategories: readonly ComputedSubcateg
   );
 }
 
-/** Ce qu'il faut afficher : la liste, l'invitation à monter, ou rien. */
-export function weakestView(
+export function atTierCap(tier: TierId, subcategories: readonly ComputedSubcategory[]): boolean {
+  return atTierCapFor(currentBenchmark(), tier, subcategories);
+}
+
+/**
+ * Ce qu'il faut afficher, **aux données de `benchmarkId`** : la liste,
+ * l'invitation à monter, ou rien.
+ *
+ * Le plafond (`maxEnergy`) et l'existence d'un palier au-dessus sont deux faits
+ * du benchmark, pas du domaine (DECISIONS.md D5) : les résoudre sur le
+ * benchmark ambiant ferait dire « tout est au plafond » à une passe qui ne l'est
+ * pas — ou lever, si le palier n'existe pas dans le benchmark ambiant.
+ */
+export function weakestViewFor(
+  benchmarkId: BenchmarkId,
   tier: TierId,
   subcategories: readonly ComputedSubcategory[],
 ): WeakestView {
-  if (atTierCap(tier, subcategories)) {
-    return { kind: "capped", next: nextTierAfter(tier) };
+  if (atTierCapFor(benchmarkId, tier, subcategories)) {
+    return { kind: "capped", next: nextTierAfter(tier, benchmarkId) };
   }
 
   const scored = subcategories.filter((subcategory) => subcategory.energy > 0);
@@ -64,4 +98,12 @@ export function weakestView(
     kind: "list",
     subcategories: [...scored].sort((a, b) => a.energy - b.energy).slice(0, WEAKEST_COUNT),
   };
+}
+
+/** Ce qu'il faut afficher : la liste, l'invitation à monter, ou rien. */
+export function weakestView(
+  tier: TierId,
+  subcategories: readonly ComputedSubcategory[],
+): WeakestView {
+  return weakestViewFor(currentBenchmark(), tier, subcategories);
 }

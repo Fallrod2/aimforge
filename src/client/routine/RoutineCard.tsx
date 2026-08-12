@@ -40,6 +40,7 @@ import {
   type RoutineSource,
   type StoredRoutine,
 } from "../../shared/routine-contract";
+import { ConfirmButton } from "../components/Destructive";
 import { formatRunDate } from "../format";
 import { formatDuration } from "./duration";
 
@@ -52,11 +53,10 @@ interface RoutineCardProps {
   /** `null` pendant que la bascule « faite » est en vol. */
   readonly toggling: boolean;
   readonly onToggleDone: () => void;
-  readonly confirming: boolean;
-  readonly deleting: boolean;
-  readonly onAskDelete: () => void;
-  readonly onCancelDelete: () => void;
-  readonly onConfirmDelete: () => void;
+  /** Le bouton attend sa confirmation (`../components/confirm.ts`). */
+  readonly deleteArmed: boolean;
+  /** Les deux appuis passent par le même rappel : la machine les distingue. */
+  readonly onPressDelete: () => void;
 }
 
 /** Identifiant stable d'un item dans une routine : bloc + position. */
@@ -71,11 +71,8 @@ export function RoutineCard({
   onToggle,
   toggling,
   onToggleDone,
-  confirming,
-  deleting,
-  onAskDelete,
-  onCancelDelete,
-  onConfirmDelete,
+  deleteArmed,
+  onPressDelete,
 }: RoutineCardProps) {
   const panelId = `routine-${routine.id}-detail`;
   /** Cases cochées, en mémoire de vue uniquement (voir l'en-tête du module). */
@@ -204,7 +201,7 @@ export function RoutineCard({
             <p className="text-sm leading-relaxed text-steel-300">{routine.conseil}</p>
           </Section>
 
-          <Sources sources={routine.sources ?? []} />
+          <RoutineSources sources={routine.sources ?? []} />
 
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
             <button
@@ -214,7 +211,7 @@ export function RoutineCard({
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
                 routine.done
                   ? "border border-steel-700 text-steel-300 hover:text-steel-100"
-                  : "bg-ember-500 text-steel-950 hover:bg-ember-400"
+                  : "bg-brand-fill text-white hover:bg-brand-fill-hover"
               }`}
             >
               {toggling
@@ -224,35 +221,16 @@ export function RoutineCard({
                   : "Marquer comme faite"}
             </button>
 
-            {confirming ? (
-              <>
-                <p className="mr-auto text-xs text-steel-400">Supprimer définitivement ?</p>
-                <button
-                  type="button"
-                  onClick={onCancelDelete}
-                  disabled={deleting}
-                  className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:text-steel-100 disabled:opacity-50"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="button"
-                  onClick={onConfirmDelete}
-                  disabled={deleting}
-                  className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
-                >
-                  {deleting ? "Suppression…" : "Confirmer"}
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={onAskDelete}
-                className="ml-auto rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-400 transition-colors hover:border-ember-600 hover:text-ember-400"
-              >
-                Supprimer
-              </button>
-            )}
+            {/* Un seul bouton, qui devient sa propre question (V5-A §5.4) : le
+                panneau de confirmation d'avant déplaçait « Marquer comme
+                faite » au moment où l'on visait « Annuler ». */}
+            <ConfirmButton
+              label="Supprimer"
+              question="Supprimer définitivement ?"
+              armed={deleteArmed}
+              onPress={onPressDelete}
+              className="ml-auto"
+            />
           </div>
         </div>
       ) : null}
@@ -287,8 +265,12 @@ function BenchOnlyBanner({ routine }: { readonly routine: StoredRoutine }) {
  * Rendus en puces plutôt que laissés dans le texte : la phrase reste lisible, et
  * la donnée reste vérifiable. Rien à afficher quand la liste est vide — une
  * routine sans source n'a rien à prouver, elle n'a rien avancé.
+ *
+ * Exporté depuis V4-B : la landing montre ce bloc sur une routine d'exemple,
+ * parce que c'est lui qui porte la promesse (« chaque chiffre est vérifié »).
+ * Le montrer avec un autre composant reviendrait à montrer autre chose.
  */
-function Sources({ sources }: { readonly sources: readonly RoutineSource[] }) {
+export function RoutineSources({ sources }: { readonly sources: readonly RoutineSource[] }) {
   if (sources.length === 0) return null;
 
   return (

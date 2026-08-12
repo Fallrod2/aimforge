@@ -15,6 +15,7 @@ export {
 export {
   AiSettingsError,
   deleteAiSettings,
+  getAiQuota,
   getAiSettings,
   pollChatGptLink,
   saveAiSettings,
@@ -25,6 +26,7 @@ export {
   deleteBenchRun,
   getBenchRunDetail,
   listBenchRuns,
+  listScenarioScores,
   saveBenchRun,
 } from "./bench-runs";
 export { listCoachMessages } from "./coach-messages";
@@ -55,13 +57,20 @@ export type {
   RefreshResponse,
 } from "./linked-accounts-contract";
 export { formatRiotId, parseRiotId, type RiotId } from "./linked-accounts-mapping";
-export { getProfile, updateProfile } from "./profile";
+export {
+  getActiveBenchmark,
+  getProfile,
+  setActiveBenchmark,
+  updateProfile,
+} from "./profile";
+export { bestByScenario, listPersonalBests, type PersonalBests } from "./records";
 export { deleteRoutine, listRoutines, setRoutineDone } from "./routines";
 export type {
   BenchRunDetail,
   BenchRunSummary,
   BenchSource,
   Profile,
+  ProfileInput,
   SaveBenchRunInput,
   ScenarioScore,
   SubcategoryEnergy,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { draftScores, emptyDraft, setScoreInput } from "./draft";
+import { draftScores, emptyDraft, setScoreInput, tierDraft } from "./draft";
 import {
   applyImportedScores,
   clearImportState,
@@ -51,29 +51,32 @@ describe("applyImportedScores", () => {
       "VT Popcorn Novice": 512,
     });
 
-    expect(draft.novice).toEqual({ "VT Pasu Novice": "683.5", "VT Popcorn Novice": "512" });
+    expect(tierDraft(draft, "novice")).toEqual({
+      "VT Pasu Novice": "683.5",
+      "VT Popcorn Novice": "512",
+    });
   });
 
   it("laisse les autres paliers intacts", () => {
     const before = setScoreInput(emptyDraft(), "advanced", "VT Pasu Advanced", "968.4");
     const after = applyImportedScores(before, "novice", { "VT Pasu Novice": 683.5 });
 
-    expect(after.advanced).toEqual({ "VT Pasu Advanced": "968.4" });
+    expect(tierDraft(after, "advanced")).toEqual({ "VT Pasu Advanced": "968.4" });
   });
 
   it("complète sans effacer une saisie que l'import ne couvre pas", () => {
     const before = setScoreInput(emptyDraft(), "novice", "VT Ground Novice", "2100");
     const after = applyImportedScores(before, "novice", { "VT Pasu Novice": 683.5 });
 
-    expect(after.novice["VT Ground Novice"]).toBe("2100");
-    expect(after.novice["VT Pasu Novice"]).toBe("683.5");
+    expect(tierDraft(after, "novice")["VT Ground Novice"]).toBe("2100");
+    expect(tierDraft(after, "novice")["VT Pasu Novice"]).toBe("683.5");
   });
 
   it("remplace une saisie que l'import couvre", () => {
     const before = setScoreInput(emptyDraft(), "novice", "VT Pasu Novice", "1");
     const after = applyImportedScores(before, "novice", { "VT Pasu Novice": 683.5 });
 
-    expect(after.novice["VT Pasu Novice"]).toBe("683.5");
+    expect(tierDraft(after, "novice")["VT Pasu Novice"]).toBe("683.5");
   });
 
   it("ne touche à rien quand l'import est vide", () => {

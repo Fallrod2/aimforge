@@ -215,7 +215,7 @@ export function PlatformAiPanel({ settings, onSaved }: PanelProps) {
               type="button"
               disabled={busy}
               onClick={() => void clear()}
-              className="inline-flex min-h-10 items-center rounded-lg border border-steel-700 px-3 py-2 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
+              className="inline-flex min-h-10 items-center rounded-lg border border-steel-700 px-3 py-2 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-500"
             >
               Effacer et revenir à l'environnement
             </button>

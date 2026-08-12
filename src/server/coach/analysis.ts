@@ -24,6 +24,7 @@
 
 import { MATCH_ANALYSIS_MAX } from "../../shared/valorant-contract.js";
 import type { ModelAnswer } from "../ai/port.js";
+import { frenchGuard } from "../shared/french-guard.js";
 import {
   scenarioNames,
   unknownScenarioReason,
@@ -63,9 +64,9 @@ export type AnalysisParse =
  * @param allowed Les noms exacts des scénarios du palier du joueur.
  */
 export function parseAnalysis(answer: ModelAnswer, allowed: readonly string[]): AnalysisParse {
-  const analysis = answer.text.trim();
+  const trimmed = answer.text.trim();
 
-  if (analysis === "") return { ok: false, reason: "l'analyse est vide" };
+  if (trimmed === "") return { ok: false, reason: "l'analyse est vide" };
 
   if (answer.truncated) {
     return {
@@ -74,6 +75,14 @@ export function parseAnalysis(answer: ModelAnswer, allowed: readonly string[]): 
         "l'analyse a été coupée avant sa fin (plafond de jetons atteint) — refais-la plus courte, deux à quatre phrases qui se terminent",
     };
   }
+
+  // Le garde-fou passe **avant** la borne de longueur : cette sortie-là est
+  // gravée en base (migration 0016), donc la longueur mesurée doit être celle du
+  // texte enregistré (`../shared/french-guard.ts`).
+  const guard = frenchGuard("coach-analysis", { protectedNames: allowed });
+  const analysis = guard.apply(trimmed, "analysis");
+
+  guard.flush();
 
   if (analysis.length > MATCH_ANALYSIS_MAX) {
     return {

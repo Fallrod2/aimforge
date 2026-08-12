@@ -26,7 +26,7 @@ export function LinkInvite({ title, children, action = "Lier un compte" }: LinkI
       <p className="mt-1 text-xs leading-relaxed text-steel-400">{children}</p>
       <a
         href={PROFILE_HASH}
-        className="mt-3 inline-flex rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500"
+        className="mt-3 inline-flex rounded-lg bg-brand-fill px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-fill-hover"
       >
         {action} →
       </a>

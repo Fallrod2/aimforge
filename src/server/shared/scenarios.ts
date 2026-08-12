@@ -19,11 +19,14 @@
  * Tracking » — trois noms qui n'existent nulle part. Un seul catalogue, une
  * seule police : deux copies auraient dérivé.
  *
- * La détection repose sur un fait du benchmark Voltaic S5, verrouillé par
- * `scenarios.test.ts` : les 54 scénarios (3 paliers × 18) commencent tous par
- * « VT ». Le marqueur `VT` est donc l'endroit exact où une citation commence —
+ * La détection repose sur un fait du benchmark, verrouillé par
+ * `scenarios.test.ts` : les 54 scénarios Voltaic S5 (3 paliers × 18) commencent
+ * tous par « VT ». Ce marqueur est l'endroit exact où une citation commence —
  * on n'a pas à deviner où elle finit, il suffit de vérifier qu'un nom autorisé
- * commence bien là.
+ * commence bien là. Il n'est plus écrit ici : il vient de la grammaire de
+ * nommage du benchmark (`naming.scenarioMarker`), donc un benchmark qui
+ * préfixerait autrement ses scénarios reste policé sans qu'on touche à ce
+ * module.
  *
  * **La limite de cette police, dite honnêtement** : elle ne voit que ce qui est
  * annoncé comme un scénario Voltaic. Une invention **sans préfixe VT** —
@@ -38,7 +41,15 @@
  * détectable — et `unknownScenarioMentions` a un test qui documente ce trou.
  */
 
-import { listSubcategories, type TierId } from "../../lib/energy/index.js";
+import {
+  type BenchmarkId,
+  currentBenchmark,
+  firstTierFor,
+  listSubcategories,
+  listSubcategoriesFor,
+  scenarioMarkerRegex,
+  type TierId,
+} from "../../lib/energy/index.js";
 
 /** Les scénarios d'une sous-catégorie, tels qu'on les montre au modèle. */
 export interface ScenarioGroup {
@@ -64,6 +75,26 @@ export function scenarioCatalog(tier: TierId): ScenarioCatalog {
 }
 
 /**
+ * Les noms des sous-catégories du benchmark, dans l'ordre du tableur.
+ *
+ * Les cinq prompts systèmes les listaient en dur (« Dynamic, Static, Precise…»)
+ * pour dire au modèle sur quoi se rabattre quand aucun scénario ne convient.
+ * C'est de la **donnée**, pas du texte : cinq copies d'une liste que le jeu de
+ * données porte déjà, et qui mentiraient le jour où un benchmark découpe
+ * autrement. On l'injecte depuis le registre.
+ *
+ * Les paliers d'un même benchmark partagent leurs sous-catégories (c'est ce qui
+ * fait qu'un overall se compare d'un palier à l'autre) : le premier palier suffit
+ * donc à les nommer toutes.
+ */
+export function subcategoryNames(
+  benchmarkId: BenchmarkId = currentBenchmark(),
+  tier: TierId = firstTierFor(benchmarkId),
+): readonly string[] {
+  return listSubcategoriesFor(benchmarkId, tier).map((subcategory) => subcategory.name);
+}
+
+/**
  * Les noms autorisés d'un catalogue déjà groupé.
  *
  * Ce qui est montré au modèle, ce sont les **groupes** : c'est eux que le
@@ -75,15 +106,6 @@ export function scenarioCatalog(tier: TierId): ScenarioCatalog {
 export function scenarioNames(groups: readonly ScenarioGroup[]): readonly string[] {
   return groups.flatMap((group) => group.scenarios);
 }
-
-/**
- * Le marqueur d'une citation de scénario.
- *
- * Insensible à la casse : « vt pasu novice » n'est pas un nom valide, et on
- * préfère le signaler au modèle plutôt que de le laisser passer inaperçu parce
- * que la casse ne correspondait pas.
- */
-const MARKER = /\bVT\b/giu;
 
 /** Longueur de l'extrait remonté au modèle pour qu'il sache quoi corriger. */
 const EXCERPT_LENGTH = 60;
@@ -110,13 +132,14 @@ function excerptAt(text: string, start: number): string {
 export function unknownScenarioMentions(
   text: string,
   allowed: readonly string[],
+  benchmarkId: BenchmarkId = currentBenchmark(),
 ): readonly string[] {
   const unknown: string[] = [];
   const seen = new Set<string>();
 
   // `matchAll` plutôt qu'un `exec` en boucle : le drapeau `g` porte un état
-  // (`lastIndex`) qu'une regex de module partagerait entre deux appels.
-  for (const match of text.matchAll(MARKER)) {
+  // (`lastIndex`) qu'une regex gardée en cache partagerait entre deux appels.
+  for (const match of text.matchAll(scenarioMarkerRegex(benchmarkId))) {
     const start = match.index;
 
     if (allowed.some((name) => text.startsWith(name, start))) continue;
@@ -142,12 +165,13 @@ export function unknownScenarioMentions(
 export function unknownScenariosInTexts(
   texts: readonly string[],
   allowed: readonly string[],
+  benchmarkId: BenchmarkId = currentBenchmark(),
 ): readonly string[] {
   const unknown: string[] = [];
   const seen = new Set<string>();
 
   for (const text of texts) {
-    for (const mention of unknownScenarioMentions(text, allowed)) {
+    for (const mention of unknownScenarioMentions(text, allowed, benchmarkId)) {
       if (seen.has(mention)) continue;
       seen.add(mention);
       unknown.push(mention);

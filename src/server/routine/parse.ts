@@ -27,6 +27,12 @@
  * « source » sous la routine. Une routine dont un texte ne survivrait pas au
  * retrait (parce qu'il ne contenait que des marqueurs) est refusée comme une
  * routine hors format — c'est le même défaut, vu après nettoyage.
+ *
+ * Le garde-fou de français (`../shared/french-guard.ts`) s'applique dans la
+ * foulée, sur le texte **déjà nettoyé** : c'est le retrait des marqueurs qui
+ * découvre les fautes de sujet (« Ton [HS% 23] est bas » → « Ton est bas »),
+ * donc c'est après lui qu'il faut regarder. Il repose la typographie et signale
+ * le reste ; il ne refuse jamais une routine.
  */
 
 import {
@@ -35,6 +41,7 @@ import {
   routineContentSchema,
 } from "../../shared/routine-contract.js";
 import { extractJsonObject, summarizeIssues } from "../coach/parse.js";
+import { frenchGuard } from "../shared/french-guard.js";
 import { unknownScenarioReason, unknownScenariosInTexts } from "../shared/scenarios.js";
 import { type CitableFact, stripCitations, verifyCitations } from "./citations.js";
 
@@ -95,6 +102,48 @@ export function stripRoutineCitations(routine: RoutineContent): RoutineContent {
 }
 
 /**
+ * La routine, passée au garde-fou de français (`../shared/french-guard.ts`).
+ *
+ * Elle y passe **après** le retrait des marqueurs, et c'est le point important :
+ * c'est le retrait qui découvre la faute. « Ton [HS% 23] est très bas » se lit
+ * bien tant que le marqueur est là ; une fois retiré, il reste « Ton est très
+ * bas », un déterminant collé à un verbe — la faute exacte relevée en
+ * production. La détecter avant le retrait ne servirait à rien, la corriger
+ * reviendrait à réécrire du sens : elle est donc signalée, sur le texte qui
+ * part vraiment à l'écran.
+ *
+ * Titres, noms de blocs et intitulés d'exercices sont déclarés comme des
+ * titres : « VT Pasu Novice — 3 runs » n'a pas à être une phrase.
+ */
+export function guardRoutineFrench(
+  routine: RoutineContent,
+  allowed: readonly string[],
+): RoutineContent {
+  const guard = frenchGuard("routine", { protectedNames: allowed });
+  const guarded: RoutineContent = {
+    ...routine,
+    titre: guard.apply(routine.titre, "titre", "titre"),
+    blocs: routine.blocs.map((bloc, index) => ({
+      ...bloc,
+      nom: guard.apply(bloc.nom, `blocs[${index}].nom`, "titre"),
+      items: bloc.items.map((item, item_index) => ({
+        texte: guard.apply(item.texte, `blocs[${index}].items[${item_index}].texte`, "titre"),
+        // `consigne` et non `phrase` : « Deux runs de cinq minutes. » est la
+        // forme juste d'une consigne d'exercice. Une campagne réelle a montré
+        // que l'exiger en phrase complète produisait presque uniquement des
+        // signalements faux (`../shared/french-guard.ts`).
+        detail: guard.apply(item.detail, `blocs[${index}].items[${item_index}].detail`, "consigne"),
+      })),
+    })),
+    objectif_game: guard.apply(routine.objectif_game, "objectif_game"),
+    conseil: guard.apply(routine.conseil, "conseil"),
+  };
+
+  guard.flush();
+  return guarded;
+}
+
+/**
  * Le texte brut du modèle → une routine conforme au contrat, au palier **et**
  * aux données, ou la raison du refus.
  *
@@ -142,7 +191,9 @@ export function parseRoutine(
 
   if (!citations.ok) return { ok: false, reason: citations.reason };
 
-  const stripped = routineContentSchema.safeParse(stripRoutineCitations(parsed.data));
+  const stripped = routineContentSchema.safeParse(
+    guardRoutineFrench(stripRoutineCitations(parsed.data), allowed),
+  );
 
   if (!stripped.success) {
     return {

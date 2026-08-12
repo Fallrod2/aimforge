@@ -8,12 +8,10 @@
  * pouvoir taper. Le dernier bench enregistré dit ce qu'il joue aujourd'hui —
  * c'est la seule donnée dont on dispose, et elle a le mérite d'être la sienne.
  *
- * Sans historique, Novice : c'est là que commence le benchmark Voltaic.
+ * Sans historique, le premier palier du benchmark : c'est là qu'il commence.
  */
 
-import type { TierId } from "../../lib/energy";
-
-const FIRST_TIER: TierId = "novice";
+import { currentBenchmark, firstTierFor, type TierId } from "../../lib/energy";
 
 /** Ce que le tracker regarde d'une passe pour choisir un palier. */
 export interface TieredRun {
@@ -21,7 +19,7 @@ export interface TieredRun {
 }
 
 /**
- * Le palier du bench le plus récent, Novice à défaut.
+ * Le palier du bench le plus récent, le premier du benchmark à défaut.
  *
  * `runs` est attendu **du plus récent au plus ancien** — l'ordre que rend
  * `listBenchRuns` (`date desc, id desc`). On ne retrie pas ici : la liste ne
@@ -29,5 +27,5 @@ export interface TieredRun {
  * pas serait inventer un ordre.
  */
 export function startTier(runs: readonly TieredRun[]): TierId {
-  return runs[0]?.tier ?? FIRST_TIER;
+  return runs[0]?.tier ?? firstTierFor(currentBenchmark());
 }

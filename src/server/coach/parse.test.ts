@@ -161,3 +161,28 @@ describe("parseDebrief — police des scénarios", () => {
     expect(parseDebrief(JSON.stringify(production), ALLOWED).ok).toBe(true);
   });
 });
+
+/**
+ * Le garde-fou de français (`../shared/french-guard.ts`) est branché ici, sur
+ * le debrief qui part vraiment à l'écran. Ce qui se vérifie n'est pas son
+ * détail — il a ses propres tests — mais le fait qu'il soit **branché**, et
+ * qu'il ne touche pas aux noms de scénarios.
+ */
+describe("parseDebrief — garde-fou de français", () => {
+  it("repose la majuscule après un point, sans réécrire la phrase", () => {
+    const raw = JSON.stringify({ ...DEBRIEF, resume: "Partie serrée. perdue sur les retakes." });
+    const parsed = parseDebrief(raw, ALLOWED);
+
+    expect(parsed.ok && parsed.debrief.resume).toBe("Partie serrée. Perdue sur les retakes.");
+  });
+
+  it("laisse un nom de scénario du palier intact", () => {
+    const raw = JSON.stringify({
+      ...DEBRIEF,
+      axes: [{ titre: "Tracking", detail: "Enchaîne VT Pasu Novice pendant six minutes." }],
+    });
+    const parsed = parseDebrief(raw, ALLOWED);
+
+    expect(parsed.ok && parsed.debrief.axes[0]?.detail).toContain("VT Pasu Novice");
+  });
+});

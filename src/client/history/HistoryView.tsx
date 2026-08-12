@@ -6,28 +6,40 @@
  * énergies de deux paliers ne sont pas comparables (500 en Novice n'est pas
  * 500 en Advanced), donc ni la liste ni la courbe ne les mélangent.
  *
- * **Et sur une seule saison** (SPEC §5 quinquies), pour la même raison portée
- * plus loin : deux saisons Voltaic n'ont pas les mêmes seuils, donc un 447 S5 et
- * un 447 S6 ne décrivent pas la même performance. Le cadrage est la saison
- * *courante* — c'est celle qu'on joue — et il n'y a volontairement **aucun
- * sélecteur de saison** : il n'en existe qu'une, une liste déroulante à un seul
- * choix serait un ornement. Les passes des autres saisons ne sont pas cachées
- * pour autant : elles sont comptées à côté du total, comme le sont déjà les
- * passes des autres paliers. Le jour où une seconde saison existe vraiment,
- * c'est ce compteur qui dira qu'il faut un sélecteur.
+ * **Et sur un seul benchmark** (SPEC §5 quinquies), pour la même raison portée
+ * plus loin : deux benchmarks n'ont pas les mêmes seuils, donc un 447 S5 et un
+ * 447 S6 ne décrivent pas la même performance. Le cadrage est le benchmark
+ * **actif** de l'utilisateur (`profiles.active_benchmark`, DECISIONS.md D6) —
+ * celui qu'il joue, celui que le tracker estampille. Il n'y a pas de sélecteur
+ * ici : il vit au Profil, une fois, plutôt qu'une fois par écran. Les passes des
+ * autres benchmarks ne sont pas cachées pour autant : elles sont comptées à côté
+ * du total, comme le sont déjà les passes des autres paliers.
+ *
+ * Les passes d'archive, elles, se relisent **avec le benchmark de la passe** et
+ * non avec l'actif (`mapping.ts`) : changer de benchmark actif ne réécrit aucun
+ * chiffre déjà enregistré.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CURRENT_SEASON,
+  type BenchmarkId,
+  firstTierFor,
   getTier,
+  getTierFor,
+  listScenariosFor,
   listSubcategories,
-  TIER_IDS,
   type TierId,
+  tierIdsFor,
 } from "../../lib/energy";
+import { useActiveBenchmark } from "../app/active-benchmark";
+import { BenchmarkNote } from "../components/BenchmarkNote";
+import { UndoToast } from "../components/Destructive";
 import { Notice } from "../components/Notice";
 import { Segmented } from "../components/Segmented";
-import { type BenchRunSummary, deleteBenchRun, listBenchRuns } from "../data";
+import { useConfirm, usePendingUndo } from "../components/useConfirm";
+import { type BenchRunSummary, deleteBenchRun, listBenchRuns, listScenarioScores } from "../data";
+import { previousRun } from "../run-delta";
+import { benchRunsCsv, type CsvRun, csvFileName } from "./csv";
 import { ProgressChart } from "./ProgressChart";
 import { RunCard } from "./RunCard";
 import { buildSeries } from "./series";
@@ -37,6 +49,21 @@ interface HistoryViewProps {
   /** Passe dépliée, portée par la route (un lien vers une passe reste valide). */
   readonly focusRunId: number | null;
   readonly onFocusRun: (runId: number | null) => void;
+  /**
+   * La vue est à l'écran.
+   *
+   * Elle reste **montée quand elle ne l'est pas** (`perfs/mounted.ts`) : elle
+   * porte la fenêtre d'annulation de cinq secondes d'une suppression, et la
+   * démonter la refermerait sur-le-champ. La contrepartie est ici — le
+   * démontage rechargeait la liste gratuitement, donc c'est le retour à l'écran
+   * qui s'en charge désormais. Sans quoi une passe enregistrée à la saisie, qui
+   * navigue justement jusqu'ici, manquerait à la liste au moment précis où l'on
+   * vient la voir.
+   *
+   * Par défaut `true` : montée, une vue est visible — c'est Perfs, et lui seul,
+   * qui en cache une.
+   */
+  readonly visible?: boolean;
 }
 
 type Loadable =
@@ -44,19 +71,47 @@ type Loadable =
   | { readonly status: "error"; readonly message: string }
   | { readonly status: "ready"; readonly runs: readonly BenchRunSummary[] };
 
-const tierOptions = TIER_IDS.map((id) => ({ value: id, label: getTier(id).label }));
+/**
+ * Les paliers proposés : ceux du benchmark **actif**, dans son ordre. Calculés
+ * au rendu, pas au chargement du module : un autre benchmark a d'autres paliers
+ * (DECISIONS.md D5).
+ */
+function tierOptionsFor(benchmarkId: BenchmarkId) {
+  return tierIdsFor(benchmarkId).map((id) => ({
+    value: id,
+    label: getTierFor(benchmarkId, id).label,
+  }));
+}
 
 function failureMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
 }
 
-export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
+/**
+ * Déclenche le téléchargement d'un texte, côté navigateur.
+ *
+ * L'`URL` objet est révoquée juste après : sans cela, chaque export garderait
+ * son fichier en mémoire jusqu'au rechargement de l'onglet.
+ */
+function downloadText(content: string, fileName: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export function HistoryView({ focusRunId, onFocusRun, visible = true }: HistoryViewProps) {
+  const { benchmarkId, benchmark } = useActiveBenchmark();
+  const tierOptions = useMemo(() => tierOptionsFor(benchmarkId), [benchmarkId]);
   const [state, setState] = useState<Loadable>({ status: "loading" });
   const [tier, setTier] = useState<TierId | null>(null);
   const [subcategory, setSubcategory] = useState<string | null>(null);
-  const [confirmingId, setConfirmingId] = useState<number | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // `focusRunId` ne sert au chargement qu'à choisir le palier initial. Le
   // passer en dépendance relancerait la liste à chaque dépliage de passe : on
@@ -64,14 +119,22 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
   const focusRunIdRef = useRef(focusRunId);
   focusRunIdRef.current = focusRunId;
 
+  // Même raison pour le benchmark actif : il ne sert au chargement qu'à choisir
+  // le palier initial. Le mettre en dépendance rechargerait toute la liste à
+  // chaque changement de benchmark, alors que la lecture n'est pas filtrée en
+  // base — c'est le rendu qui filtre, et il suit déjà.
+  const benchmarkIdRef = useRef(benchmarkId);
+  benchmarkIdRef.current = benchmarkId;
+
   const load = useCallback(async () => {
     setState({ status: "loading" });
     try {
       const runs = await listBenchRuns();
       // Le palier initial se choisit dans ce que la vue va réellement montrer,
-      // c'est-à-dire la saison courante : le déduire d'une passe d'archive
+      // c'est-à-dire le benchmark actif : le déduire d'une passe d'archive
       // ouvrirait l'historique sur un palier vide.
-      const shown = runs.filter((run) => run.season === CURRENT_SEASON);
+      const active = benchmarkIdRef.current;
+      const shown = runs.filter((run) => run.benchmarkId === active);
 
       setState({ status: "ready", runs });
       // Le palier n'est choisi qu'une fois, au premier chargement : celui de la
@@ -81,36 +144,91 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
           current ??
           shown.find((run) => run.id === focusRunIdRef.current)?.tier ??
           shown[0]?.tier ??
-          TIER_IDS[0],
+          firstTierFor(active),
       );
     } catch (cause) {
       setState({ status: "error", message: failureMessage(cause, "Chargement impossible.") });
     }
   }, []);
 
+  // Au premier affichage, puis à chaque retour à l'écran. Rien n'est lu tant
+  // que la vue est cachée : une liste qu'on ne regarde pas n'a pas à être
+  // fraîche, et le nombre de requêtes reste celui d'avant, quand chaque retour
+  // remontait le composant.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (visible) void load();
+  }, [load, visible]);
 
-  const runs = state.status === "ready" ? state.runs : [];
-  const activeTier = tier ?? TIER_IDS[0];
-  // Le filtre de saison passe **avant** celui de palier : le graphe ne doit
-  // jamais tracer deux échelles de seuils sur le même axe.
-  const seasonRuns = useMemo(() => runs.filter((run) => run.season === CURRENT_SEASON), [runs]);
-  const otherSeasonCount = runs.length - seasonRuns.length;
-  const tierRuns = useMemo(
-    () => seasonRuns.filter((run) => run.tier === activeTier),
-    [seasonRuns, activeTier],
+  /** La confirmation en deux appuis, partagée par toutes les lignes. */
+  const confirm = useConfirm();
+  /**
+   * La passe supprimée qui attend son « Annuler ».
+   *
+   * Elle est **cachée** de la liste plutôt qu'enlevée : l'annulation n'a alors
+   * rien à réinsérer, et surtout rien à re-trier.
+   *
+   * Le filtre est posé **à la source**, sur `runs`, et pas au moment d'afficher
+   * les lignes : tout ce qui compte des passes en dérive — le décompte par
+   * palier, celui des autres barèmes, la passe précédente, l'export CSV. Filtrer
+   * plus bas aurait laissé la passe supprimée dans les totaux et dans le
+   * fichier exporté pendant cinq secondes.
+   */
+  const removed = usePendingUndo<BenchRunSummary>((run) => void commitDelete(run));
+  const hiddenId = removed.pending?.id ?? null;
+  const runs = useMemo(
+    () => (state.status === "ready" ? state.runs.filter((run) => run.id !== hiddenId) : []),
+    [state, hiddenId],
   );
-  const otherTierCount = seasonRuns.length - tierRuns.length;
+  /**
+   * Le palier affiché, **ramené dans le benchmark actif**.
+   *
+   * Un palier choisi sous un benchmark peut ne pas exister sous le suivant
+   * (DECISIONS.md D5) : sans ce garde-fou, changer de benchmark depuis le Profil
+   * ferait lever `getTier` sur un palier inconnu au retour ici.
+   */
+  const activeTier = useMemo(() => {
+    const tiers = tierIdsFor(benchmarkId);
+
+    return tier !== null && tiers.includes(tier) ? tier : firstTierFor(benchmarkId);
+  }, [tier, benchmarkId]);
+  // Le filtre de benchmark passe **avant** celui de palier : le graphe ne doit
+  // jamais tracer deux échelles de seuils sur le même axe.
+  const benchmarkRuns = useMemo(
+    () => runs.filter((run) => run.benchmarkId === benchmarkId),
+    [runs, benchmarkId],
+  );
+  const otherBenchmarkCount = runs.length - benchmarkRuns.length;
+  const tierRuns = useMemo(
+    () => benchmarkRuns.filter((run) => run.tier === activeTier),
+    [benchmarkRuns, activeTier],
+  );
+  const otherTierCount = benchmarkRuns.length - tierRuns.length;
+
+  /**
+   * La passe qui précède celle qu'on a dépliée (§4.4).
+   *
+   * Elle est cherchée dans **toutes** les passes chargées, pas dans `tierRuns` :
+   * `previousRun` applique lui-même le cadrage palier + benchmark, et le lui
+   * laisser évite qu'un filtre d'affichage devienne la définition de « la passe
+   * précédente ».
+   */
+  const focusPrevious = useMemo(() => {
+    const current = tierRuns.find((run) => run.id === focusRunId);
+
+    return current === undefined ? null : previousRun(runs, current);
+  }, [runs, tierRuns, focusRunId]);
 
   const neededIds = useMemo(() => {
     const ids = new Set<number>();
 
     if (focusRunId !== null) ids.add(focusRunId);
+    // Le détail de la précédente est chargé avec celui de la passe ouverte :
+    // les écarts par sous-catégorie ne se lisent pas dans le résumé, qui ne
+    // porte que l'overall.
+    if (focusPrevious !== null) ids.add(focusPrevious.id);
     if (subcategory !== null) for (const run of tierRuns) ids.add(run.id);
     return [...ids].sort((a, b) => a - b);
-  }, [focusRunId, subcategory, tierRuns]);
+  }, [focusRunId, focusPrevious, subcategory, tierRuns]);
 
   const details = useRunDetails(neededIds);
   const points = useMemo(
@@ -120,39 +238,120 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
 
   function changeTier(next: TierId): void {
     setTier(next);
-    setConfirmingId(null);
+    confirm.cancel();
     setDeleteError(null);
     onFocusRun(null);
   }
 
-  async function confirmDelete(id: number): Promise<void> {
-    setDeletingId(id);
-    setDeleteError(null);
+  /**
+   * L'export CSV du benchmark actif (§4.8).
+   *
+   * Toutes ses passes, tous paliers confondus — l'historique en filtre un à
+   * l'écran, mais un fichier qu'on ouvre dans un tableur n'a aucune raison
+   * d'être amputé. Les colonnes de scénario, elles, sont celles du palier
+   * affiché : ce sont les seules qui se remplissent, et les passes des autres
+   * paliers y laissent des cases vides plutôt qu'un score sous une mauvaise
+   * étiquette.
+   *
+   * Une seule requête pour les scores (`listScenarioScores`), même sur cinquante
+   * passes. Le fichier, lui, est fabriqué et téléchargé sans quitter le
+   * navigateur : rien de tout cela ne repasse par le serveur.
+   */
+  async function exportCsv(): Promise<void> {
+    setExporting(true);
+    setExportError(null);
     try {
-      await deleteBenchRun(id);
-      setState((current) =>
-        current.status === "ready"
-          ? { status: "ready", runs: current.runs.filter((run) => run.id !== id) }
-          : current,
+      const scoresByRun = await listScenarioScores(benchmarkRuns.map((run) => run.id));
+      const rows: readonly CsvRun[] = benchmarkRuns.map((run) => ({
+        date: run.date,
+        tierLabel: getTierFor(run.benchmarkId, run.tier).label,
+        overall: run.overall,
+        rank: run.rank,
+        complete: run.complete,
+        // Le garde-fou du cadrage : une passe d'un autre palier n'apporte aucun
+        // score aux colonnes affichées, même si un benchmark venait à nommer
+        // deux scénarios de paliers différents de la même façon.
+        scores: run.tier === activeTier ? (scoresByRun.get(run.id) ?? {}) : {},
+      }));
+      const columns = listScenariosFor(benchmarkId, activeTier).map((scenario) => scenario.name);
+
+      downloadText(
+        benchRunsCsv(rows, columns),
+        csvFileName(benchmarkId, getTier(activeTier).label, new Date()),
       );
-      details.forget(id);
-      setConfirmingId(null);
-      if (focusRunId === id) onFocusRun(null);
     } catch (cause) {
-      setDeleteError(failureMessage(cause, "La suppression a échoué."));
+      setExportError(failureMessage(cause, "L'export n'a pas pu être généré."));
     } finally {
-      setDeletingId(null);
+      setExporting(false);
     }
   }
 
+  /**
+   * La suppression **différée** (V5-A §5.4).
+   *
+   * L'appel ne part qu'au bout de cinq secondes. Entre-temps la passe a
+   * simplement disparu de la liste — c'est le filtre `hiddenId` ci-dessus qui
+   * l'escamote, pas une modification de `state`. Rien n'a donc à être remis à sa
+   * place si l'utilisateur annule : la liste n'a jamais changé, et l'ordre
+   * chronologique se retrouve intact sans qu'on ait à le recalculer.
+   */
+  async function commitDelete(run: BenchRunSummary): Promise<void> {
+    setDeleteError(null);
+    try {
+      await deleteBenchRun(run.id);
+      setState((current) =>
+        current.status === "ready"
+          ? { status: "ready", runs: current.runs.filter((entry) => entry.id !== run.id) }
+          : current,
+      );
+      details.forget(run.id);
+    } catch (cause) {
+      // Le délai est passé, l'appel a échoué : la passe **réapparaît**, puisque
+      // rien n'a été retiré de la liste. L'erreur dit pourquoi.
+      setDeleteError(failureMessage(cause, "La suppression a échoué."));
+    }
+  }
+
+  function askDelete(run: BenchRunSummary): void {
+    if (!confirm.press(`run-${run.id}`)) return;
+    if (focusRunId === run.id) onFocusRun(null);
+    removed.schedule(run);
+  }
+
+  /**
+   * Le toast d'annulation, rendu par **les trois** sorties de la fonction.
+   *
+   * Il ne dépend pas de l'état de chargement : la suppression est en attente,
+   * qu'on soit en train de relire la liste ou qu'on ait échoué à la relire. Le
+   * laisser sous le seul rendu nominal le faisait disparaître pendant le
+   * rechargement déclenché au retour à l'écran — c'est-à-dire précisément
+   * pendant la seconde où l'utilisateur revient pour cliquer « Annuler ».
+   */
+  const undo =
+    removed.pending === null ? null : (
+      <UndoToast message="Passe supprimée." onUndo={removed.undo} />
+    );
+
   if (state.status === "loading") {
-    return <Notice tone="loading" title="Chargement de l'historique…" />;
+    return (
+      <>
+        <Notice tone="loading" title="Chargement de l'historique…" />
+        {undo}
+      </>
+    );
   }
   if (state.status === "error") {
     return (
-      <Notice tone="error" title="L'historique n'a pas pu être chargé." onRetry={() => void load()}>
-        {state.message}
-      </Notice>
+      <>
+        <Notice
+          tone="error"
+          title="L'historique n'a pas pu être chargé."
+          onRetry={() => void load()}
+        >
+          {state.message}
+        </Notice>
+        {undo}
+      </>
     );
   }
 
@@ -164,24 +363,47 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
           <p className="mt-0.5 text-xs text-steel-500">
             {tierRuns.length} passe{tierRuns.length > 1 ? "s" : ""} en {getTier(activeTier).label}
             {otherTierCount > 0 ? ` · ${otherTierCount} dans les autres paliers` : ""}
-            {otherSeasonCount > 0 ? ` · ${otherSeasonCount} dans une saison précédente` : ""}
+            {otherBenchmarkCount > 0 ? ` · ${otherBenchmarkCount} dans un autre barème` : ""}
           </p>
+          {/* Le barème avec lequel ces passes se relisent, discrètement : c'est
+              lui qui décide des seuils, donc des énergies affichées ci-dessous. */}
+          <BenchmarkNote benchmark={benchmark} />
         </div>
-        <Segmented
-          label="Palier de l'historique"
-          options={tierOptions}
-          value={activeTier}
-          onChange={changeTier}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            label="Palier de l'historique"
+            options={tierOptions}
+            value={activeTier}
+            onChange={changeTier}
+          />
+          {/* L'export n'a de sens que s'il y a quelque chose à exporter : sans
+              passe dans ce barème, le bouton produirait un fichier d'en-têtes. */}
+          {benchmarkRuns.length === 0 ? null : (
+            <button
+              type="button"
+              onClick={() => void exportCsv()}
+              disabled={exporting}
+              className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-500"
+            >
+              {exporting ? "Export…" : "Exporter (CSV)"}
+            </button>
+          )}
+        </div>
       </div>
+
+      {exportError === null ? null : (
+        <Notice tone="error" title="Export impossible.">
+          {exportError}
+        </Notice>
+      )}
 
       {tierRuns.length === 0 ? (
         <Notice tone="empty" title={`Aucune passe en ${getTier(activeTier).label}.`}>
           {otherTierCount > 0
-            ? "Change de palier ci-dessus, ou enregistre une passe depuis le tracker."
-            : otherSeasonCount > 0
-              ? `L'historique ne montre que la saison courante : ${otherSeasonCount} passe${otherSeasonCount > 1 ? "s" : ""} d'une saison précédente en ${otherSeasonCount > 1 ? "sont" : "est"} écartée${otherSeasonCount > 1 ? "s" : ""}, ses seuils n'étant pas comparables.`
-              : "Saisis tes scores dans le tracker puis sauvegarde : la passe apparaîtra ici."}
+            ? "Change de palier ci-dessus, ou enregistre une passe depuis la saisie."
+            : otherBenchmarkCount > 0
+              ? `L'historique ne montre que le barème ${benchmark.name} : ${otherBenchmarkCount} passe${otherBenchmarkCount > 1 ? "s" : ""} d'un autre barème en ${otherBenchmarkCount > 1 ? "sont" : "est"} écartée${otherBenchmarkCount > 1 ? "s" : ""}, ses seuils n'étant pas comparables.`
+              : "Passe en Saisie, entre tes scores puis sauvegarde : la passe apparaîtra ici."}
         </Notice>
       ) : (
         <>
@@ -195,7 +417,10 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
                 <select
                   value={subcategory ?? ""}
                   onChange={(event) => setSubcategory(event.target.value || null)}
-                  className="min-w-0 rounded-lg border border-steel-700 bg-steel-800 px-2.5 py-1.5 text-xs text-steel-100 transition-colors hover:border-steel-600"
+                  // Même plancher tactile que le sélecteur d'objectif de rang
+                  // (V5-A §5.5c) : deux `select` de hauteurs différentes dans
+                  // la même application, c'est un des deux qui est faux.
+                  className="min-h-11 min-w-0 rounded-lg border border-steel-700 bg-steel-800 px-2.5 py-1.5 text-xs text-steel-100 transition-colors hover:border-steel-600"
                 >
                   <option value="">Aucune</option>
                   {listSubcategories(activeTier).map((sub) => (
@@ -215,7 +440,7 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
 
             <ProgressChart
               tier={activeTier}
-              season={CURRENT_SEASON}
+              benchmarkId={benchmarkId}
               points={points}
               subcategory={subcategory}
             />
@@ -233,22 +458,26 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
                 key={run.id}
                 run={run}
                 detail={details.byId.get(run.id)}
+                previous={
+                  focusRunId === run.id && focusPrevious !== null
+                    ? details.byId.get(focusPrevious.id)
+                    : undefined
+                }
                 detailError={focusRunId === run.id ? details.error : null}
                 expanded={focusRunId === run.id}
                 onToggle={() => {
-                  setConfirmingId(null);
+                  confirm.cancel();
                   onFocusRun(focusRunId === run.id ? null : run.id);
                 }}
-                confirming={confirmingId === run.id}
-                deleting={deletingId === run.id}
-                onAskDelete={() => setConfirmingId(run.id)}
-                onCancelDelete={() => setConfirmingId(null)}
-                onConfirmDelete={() => void confirmDelete(run.id)}
+                deleteArmed={confirm.armed(`run-${run.id}`)}
+                onPressDelete={() => askDelete(run)}
               />
             ))}
           </ul>
         </>
       )}
+
+      {undo}
     </div>
   );
 }

@@ -21,9 +21,16 @@
  * La portée exacte de ce second contrôle est décrite dans
  * `../shared/scenarios.ts` : il attrape les mentions préfixées « VT », pas les
  * inventions déguisées en français (« PraFlick »), que seul le prompt combat.
+ *
+ * Puis, une fois les deux contrôles passés, une **retouche** et non un
+ * contrôle : le garde-fou de français (`../shared/french-guard.ts`) repose la
+ * typographie mécanique du debrief et signale ce qui reste bancal. Il ne refuse
+ * rien — un français maladroit n'est pas un debrief inexploitable, et une
+ * relance ne le rendrait pas meilleur de façon fiable.
  */
 
 import { type CoachDebrief, coachDebriefSchema } from "../../shared/coach-contract.js";
+import { frenchGuard } from "../shared/french-guard.js";
 import { unknownScenarioReason, unknownScenariosInTexts } from "../shared/scenarios.js";
 
 export type DebriefParse =
@@ -91,6 +98,39 @@ export function unknownScenarios(
 }
 
 /**
+ * Le debrief, passé au garde-fou de français (`../shared/french-guard.ts`).
+ *
+ * Il ne réécrit aucune phrase : il repose les majuscules après un point, resserre
+ * la ponctuation, et **signale** ce qui reste bancal. Les titres d'axes sont
+ * déclarés comme tels — le contrat leur demande 3 à 6 mots, donc exiger d'eux
+ * une phrase complète produirait un signal faux à chaque génération.
+ *
+ * Les noms de scénarios sont passés en zone protégée : « VT 1w4ts Novice » n'est
+ * pas du français, et lui appliquer la typographie française serait exactement
+ * la faute qu'on essaie d'éviter.
+ */
+export function guardDebriefFrench(
+  debrief: CoachDebrief,
+  allowed: readonly string[],
+): CoachDebrief {
+  const guard = frenchGuard("coach", { protectedNames: allowed });
+  const guarded: CoachDebrief = {
+    resume: guard.apply(debrief.resume, "resume"),
+    points_forts: debrief.points_forts.map((point, index) =>
+      guard.apply(point, `points_forts[${index}]`),
+    ),
+    axes: debrief.axes.map((axe, index) => ({
+      titre: guard.apply(axe.titre, `axes[${index}].titre`, "titre"),
+      detail: guard.apply(axe.detail, `axes[${index}].detail`),
+    })),
+    focus: guard.apply(debrief.focus, "focus"),
+  };
+
+  guard.flush();
+  return guarded;
+}
+
+/**
  * Le texte brut du modèle → un debrief conforme au contrat **et** au palier, ou
  * la raison du refus.
  *
@@ -125,5 +165,7 @@ export function parseDebrief(raw: string, allowed: readonly string[]): DebriefPa
   const unknown = unknownScenarios(parsed.data, allowed);
 
   if (unknown.length > 0) return { ok: false, reason: unknownScenarioReason(unknown) };
-  return { ok: true, debrief: parsed.data };
+  // Le garde-fou vient **en dernier** : il s'applique au debrief qui part
+  // vraiment à l'écran, pas à une sortie qu'une relance va remplacer.
+  return { ok: true, debrief: guardDebriefFrench(parsed.data, allowed) };
 }

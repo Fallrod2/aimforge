@@ -25,45 +25,43 @@
  *    quand on l'ouvre. Il garde tout ce qui existait (collage manuel,
  *    suppression, conversations archivées) sans encombrer la conversation, et
  *    sans payer son chargement pour ceux qui ne l'ouvrent pas.
+ *
+ * ## L'attente (V4-C §4.9)
+ *
+ * Les deux générations du fil — répondre, et débriefer un match — vivent dans
+ * des magasins de module (`./thread-generation.ts`), au-dessus de cette vue.
+ * Partir sur Perfs pendant que le coach répond ne perd donc plus la réponse :
+ * elle attend d'être relevée au retour. Le squelette d'attente
+ * (`./GenerationProgress`) est plus court que celui de la routine, parce qu'un
+ * tour de conversation l'est ; le refus du streaming, lui, est le même, et il
+ * est expliqué dans `./progress.ts`.
  */
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { CHAT_DAILY_QUOTA } from "../../shared/coach-chat-contract";
 import type { StoredDebrief } from "../../shared/coach-contract";
 import {
   type DebriefSuggestion,
   THREAD_MESSAGE_MAX,
   type ThreadMessage,
 } from "../../shared/coach-thread-contract";
+import { ConfirmButton } from "../components/Destructive";
 import { Notice } from "../components/Notice";
-import { clearThread, lastUndebriefedMatch, listDebriefs, listThreadMessages } from "../data";
+import { QuotaNote } from "../components/QuotaNote";
+import { useConfirm } from "../components/useConfirm";
+import { clearThread, listDebriefs, listThreadMessages } from "../data";
 import { CoachView } from "./CoachView";
-import { CoachError, requestDebriefForMatch } from "./coach-api";
 import { DebriefCard } from "./DebriefCard";
 import { appendMessages, planDebriefFocus } from "./focus";
+import { GenerationProgress } from "./GenerationProgress";
+import { upsertById, useGeneration } from "./generation-store";
 import { setCoachDebriefFocus, takeCoachDebriefFocus, takeCoachPrefill } from "./prefill";
-import { requestThreadReply, ThreadError } from "./thread-api";
+import { THREAD_EXPECTATION, THREAD_STEPS } from "./progress";
+import { threadDebriefGeneration, threadReplyGeneration } from "./thread-generation";
 
 type Thread =
   | { readonly status: "loading" }
   | { readonly status: "error"; readonly message: string }
   | { readonly status: "ready"; readonly messages: readonly ThreadMessage[] };
-
-/** Un échec : quota atteint et panne ne se disent pas pareil. */
-interface Failure {
-  readonly message: string;
-  readonly quota: boolean;
-}
-
-/**
- * Ce que l'écran sait du quota du jour. Trois états et non un `number | null` :
- * `null` voudrait dire à la fois « pas encore demandé » et « il n'y a plus rien
- * à compter » (configuration IA personnelle, SPEC §5 ter).
- */
-type Quota =
-  | { readonly status: "unknown" }
-  | { readonly status: "lifted" }
-  | { readonly status: "counted"; readonly remaining: number };
 
 const PLACEHOLDER = "Pose ta question au coach…";
 
@@ -82,33 +80,49 @@ const CHIPS = [
 const ANALYSE_LAST_MATCH = "Analyse mon dernier match";
 
 const NO_MATCH_TO_DEBRIEF =
-  "Aucun match importé en attente de debrief. Importe une partie depuis le tracker, ou colle tes stats dans l'historique ci-dessous.";
+  "Aucun match importé en attente de debrief. Rafraîchis le bloc Valorant de l'accueil, ou colle tes stats dans l'historique ci-dessous.";
+
+/** La clé du bouton destructif du fil (cf. `../components/confirm.ts`). */
+const CLEAR_THREAD = "coach:effacer-le-fil";
 
 const CARD_NOT_POSTED =
   "Le debrief est généré, mais sa carte n'a pas pu être posée dans le fil. Il est ouvert dans l'historique, juste en dessous.";
-
-function failureOf(cause: unknown, fallback: string): Failure {
-  if (cause instanceof ThreadError || cause instanceof CoachError) {
-    return { message: cause.message, quota: cause.quotaReached };
-  }
-  return { message: cause instanceof Error ? cause.message : fallback, quota: false };
-}
 
 export function CoachThreadView() {
   const [thread, setThread] = useState<Thread>({ status: "loading" });
   const [debriefs, setDebriefs] = useState<readonly StoredDebrief[]>([]);
   const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [failure, setFailure] = useState<Failure | null>(null);
+  /** Les deux générations du fil, où qu'on soit passé (`./thread-generation`). */
+  const reply = useGeneration(threadReplyGeneration);
+  const debriefing = useGeneration(threadDebriefGeneration);
+  const sending = reply.status === "running";
+  const generating = debriefing.status === "running";
   // Un état à annoncer sans que ce soit un échec : « rien à débriefer », « la
   // carte n'a pas pu être posée ». Le titre voyage avec le texte parce que les
   // deux cas ne se disent pas pareil.
   const [notice, setNotice] = useState<{ title: string; body: string } | null>(null);
-  const [quota, setQuota] = useState<Quota>({ status: "unknown" });
+  /**
+   * Ce que la dernière réponse du fil a dit du restant : `undefined` tant qu'il
+   * n'y en a pas eu, `null` quand elle n'a rien compté (SPEC §5 ter). La limite
+   * et l'heure de réinitialisation appartiennent à `QuotaNote`, qui les tient
+   * du serveur — l'écran n'a pas à les connaître.
+   */
+  const [remaining, setRemaining] = useState<number | null | undefined>(undefined);
   const [suggestion, setSuggestion] = useState<DebriefSuggestion | null>(null);
+  /** L'échec de l'effacement du fil : le seul qui ne vienne pas d'une génération. */
+  const [clearFailure, setClearFailure] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<number | null>(null);
-  const [confirmingClear, setConfirmingClear] = useState(false);
+  /**
+   * L'effacement du fil demande deux appuis (V5-A §5.4).
+   *
+   * Il n'a **pas** de toast « Annuler », et c'est délibéré : contrairement à une
+   * passe ou à une routine, un fil effacé n'est pas récupérable côté serveur —
+   * différer l'appel ne ferait que promettre un retour en arrière qu'on ne
+   * saurait pas tenir. La confirmation est donc la seule barrière, et c'est
+   * pour ça qu'elle nomme ce qui reste (les debriefs) plutôt que de se contenter
+   * d'un « Confirmer ? ».
+   */
+  const confirm = useConfirm();
   const [clearing, setClearing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scrollToCard, setScrollToCard] = useState<number | null>(null);
@@ -196,108 +210,119 @@ export function CoachThreadView() {
     setScrollToCard(null);
   }, [scrollToCard]);
 
+  /**
+   * On relève le tour de conversation quand il est prêt, puis on rend la place.
+   *
+   * Il a pu se terminer alors que cette vue était démontée (l'utilisateur est
+   * parti sur Perfs) : c'est donc le rendu qui découvre la réponse, pas
+   * l'appelant. Les messages passent par `appendMessages`, qui déduplique sur
+   * l'identifiant de la base — un rechargement du fil peut les avoir déjà
+   * ramenés.
+   *
+   * Le brouillon n'est vidé que s'il **est** le message envoyé : un chip
+   * n'efface pas ce que l'utilisateur était en train d'écrire à côté.
+   */
+  useEffect(() => {
+    if (reply.status === "failed") {
+      if (reply.failure.remaining !== null) setRemaining(reply.failure.remaining);
+      return;
+    }
+    if (reply.status !== "done") return;
+
+    const { question, answer, suggestion: proposed, remaining: left } = reply.result;
+
+    setThread((current) =>
+      current.status === "ready"
+        ? { status: "ready", messages: appendMessages(current.messages, [question, answer]) }
+        : { status: "ready", messages: [question, answer] },
+    );
+    setSuggestion(proposed);
+    setRemaining(left);
+    setDraft((current) => (current.trim() === reply.request ? "" : current));
+    threadReplyGeneration.settle();
+  }, [reply]);
+
+  /**
+   * Idem pour le debrief. Son quota n'est **pas** repris ici : c'est celui du
+   * coach, et le compteur affiché sous le fil est celui des messages.
+   */
+  useEffect(() => {
+    if (debriefing.status !== "done") return;
+
+    const outcome = debriefing.result;
+
+    if (outcome.kind === "none") {
+      setNotice({ title: "Rien à débriefer.", body: NO_MATCH_TO_DEBRIEF });
+      threadDebriefGeneration.settle();
+      return;
+    }
+    setDebriefs((current) => upsertById(current, outcome.debrief));
+    setExpandedCard(outcome.debrief.id);
+    setSuggestion(null);
+
+    // Carte absente = sa pose a échoué alors que le debrief, lui, est bien
+    // enregistré et facturé. On ne perd pas le geste : l'historique l'a.
+    if (outcome.thread === undefined) {
+      setNotice({ title: "Le fil n'a pas reçu la carte.", body: CARD_NOT_POSTED });
+      setCoachDebriefFocus(outcome.debrief.id);
+      setHistoryOpen(true);
+    } else {
+      const posted = outcome.thread;
+
+      setThread((current) =>
+        current.status === "ready"
+          ? { status: "ready", messages: appendMessages(current.messages, posted) }
+          : { status: "ready", messages: posted },
+      );
+      setScrollToCard(outcome.debrief.id);
+    }
+    threadDebriefGeneration.settle();
+  }, [debriefing]);
+
   const trimmed = draft.trim();
   const tooLong = draft.length > THREAD_MESSAGE_MAX;
   const busy = sending || generating;
   const canSend = trimmed !== "" && !tooLong && !busy;
 
-  function appended(added: readonly ThreadMessage[]): void {
-    setThread((current) =>
-      current.status === "ready"
-        ? { status: "ready", messages: appendMessages(current.messages, added) }
-        : { status: "ready", messages: added },
-    );
-  }
-
   /** Un tour de conversation. Le brouillon n'est vidé qu'en cas de succès. */
-  async function send(message: string, clearDraft: boolean): Promise<void> {
-    setSending(true);
-    setFailure(null);
+  function send(message: string): void {
     setNotice(null);
     setSuggestion(null);
-    try {
-      const reply = await requestThreadReply(message);
-
-      appended([reply.question, reply.answer]);
-      setSuggestion(reply.suggestion);
-      setQuota(
-        reply.remaining === null
-          ? { status: "lifted" }
-          : { status: "counted", remaining: reply.remaining },
-      );
-      if (clearDraft) setDraft("");
-    } catch (cause) {
-      setFailure(failureOf(cause, "L'envoi a échoué."));
-      if (cause instanceof ThreadError && cause.remaining !== null) {
-        setQuota({ status: "counted", remaining: cause.remaining });
-      }
-    } finally {
-      setSending(false);
-    }
+    setClearFailure(null);
+    // Le magasin ignore une demande pendant qu'une autre est en vol : c'est lui
+    // qui garantit qu'un double clic ne consomme pas deux messages de quota.
+    threadReplyGeneration.start(message);
   }
 
-  async function submit(event: FormEvent): Promise<void> {
+  function submit(event: FormEvent): void {
     event.preventDefault();
     if (!canSend) return;
-    await send(trimmed, true);
+    send(trimmed);
   }
 
   /**
-   * Génère un debrief et le pose dans le fil.
+   * Demande le debrief d'un match, et sa carte dans le fil.
    *
-   * `matchId` non fourni = le geste part du chip : on cherche d'abord s'il y a
-   * quelque chose à débriefer, pour ne pas envoyer l'utilisateur chercher un
-   * 404. Fourni = il vient de la suggestion du coach, que le serveur a déjà
-   * choisie.
+   * `matchId` non fourni = le geste part du chip ; la recherche du dernier match
+   * non débriefé fait alors partie de la demande (`./thread-generation`), donc
+   * « Réessayer » la rejoue elle aussi. Fourni = il vient de la suggestion du
+   * coach, que le serveur a déjà choisie.
    */
-  async function generateDebrief(matchId: string | null): Promise<void> {
-    setGenerating(true);
-    setFailure(null);
+  function generateDebrief(matchId: string | null): void {
     setNotice(null);
-    try {
-      const target = matchId ?? (await lastUndebriefedMatch())?.matchId ?? null;
-
-      if (target === null) {
-        setNotice({ title: "Rien à débriefer.", body: NO_MATCH_TO_DEBRIEF });
-        return;
-      }
-
-      // `thread: true` : c'est la fonction qui pose la carte dans le fil, sous
-      // la service key (migration 0015), et qui la rend ici. Le navigateur ne
-      // peut plus l'écrire — et n'a plus à le faire.
-      const { debrief, thread: posted } = await requestDebriefForMatch(target, { thread: true });
-
-      setDebriefs((current) => [debrief, ...current]);
-      setExpandedCard(debrief.id);
-      setSuggestion(null);
-
-      // Carte absente = sa pose a échoué alors que le debrief, lui, est bien
-      // enregistré et facturé. On ne perd pas le geste : l'historique l'a.
-      if (posted === undefined) {
-        setNotice({ title: "Le fil n'a pas reçu la carte.", body: CARD_NOT_POSTED });
-        setCoachDebriefFocus(debrief.id);
-        setHistoryOpen(true);
-        return;
-      }
-      appended(posted);
-      setScrollToCard(debrief.id);
-    } catch (cause) {
-      setFailure(failureOf(cause, "Le debrief n'a pas pu être généré."));
-    } finally {
-      setGenerating(false);
-    }
+    setClearFailure(null);
+    threadDebriefGeneration.start({ matchId });
   }
 
   async function confirmClear(): Promise<void> {
     setClearing(true);
-    setFailure(null);
+    setClearFailure(null);
     try {
       await clearThread();
       setThread({ status: "ready", messages: [] });
       setSuggestion(null);
-      setConfirmingClear(false);
     } catch (cause) {
-      setFailure(failureOf(cause, "Le fil n'a pas pu être effacé."));
+      setClearFailure(cause instanceof Error ? cause.message : "Le fil n'a pas pu être effacé.");
     } finally {
       setClearing(false);
     }
@@ -309,45 +334,35 @@ export function CoachThreadView() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold text-steel-100">Coach</h2>
+          {/* « Fil du coach » et non « Coach » depuis V6 : le titre de la
+              section est porté par `CoachSpace`, qui coiffe aussi la routine du
+              jour. Deux « Coach » l'un sous l'autre ne diraient rien de plus. */}
+          <h2 className="text-sm font-semibold text-steel-100">Fil du coach</h2>
           <p className="mt-0.5 text-xs text-steel-500">
             Une seule conversation, qui connaît tes matchs, ton dernier bench et ton profil.
           </p>
         </div>
 
-        {count > 0 && !confirmingClear ? (
-          <button
-            type="button"
-            onClick={() => setConfirmingClear(true)}
-            className="rounded-lg border border-steel-800 px-3 py-1.5 text-xs font-medium text-steel-500 transition-colors hover:border-ember-600 hover:text-ember-400"
-          >
-            Effacer le fil
-          </button>
+        {count > 0 ? (
+          <ConfirmButton
+            label="Effacer le fil"
+            // La question porte ce qui est en jeu **et** ce qui ne l'est pas :
+            // on efface la conversation, pas les debriefs.
+            question="Effacer tout le fil ?"
+            busyLabel="Effacement…"
+            armed={confirm.armed(CLEAR_THREAD)}
+            busy={clearing}
+            onPress={() => {
+              if (confirm.press(CLEAR_THREAD)) void confirmClear();
+            }}
+          />
         ) : null}
       </div>
 
-      {confirmingClear ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-steel-800 bg-steel-900/60 px-4 py-3">
-          <p className="mr-auto text-xs text-steel-400">
-            Effacer tout le fil ? Tes debriefs, eux, restent dans l'historique.
-          </p>
-          <button
-            type="button"
-            onClick={() => setConfirmingClear(false)}
-            disabled={clearing}
-            className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:text-steel-100 disabled:opacity-50"
-          >
-            Annuler
-          </button>
-          <button
-            type="button"
-            onClick={() => void confirmClear()}
-            disabled={clearing}
-            className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
-          >
-            {clearing ? "Effacement…" : "Confirmer"}
-          </button>
-        </div>
+      {confirm.armed(CLEAR_THREAD) ? (
+        <p aria-live="polite" className="-mt-3 text-xs text-steel-400">
+          Tes debriefs, eux, restent dans l'historique.
+        </p>
       ) : null}
 
       <section className="flex flex-col gap-3">
@@ -383,16 +398,22 @@ export function CoachThreadView() {
         )}
         <div ref={endRef} />
 
-        {sending ? (
-          <Notice tone="loading" title="Le coach réfléchit…">
-            Quelques secondes. Ne recharge pas la page.
-          </Notice>
+        {reply.status === "running" ? (
+          <GenerationProgress
+            title="Le coach réfléchit…"
+            steps={THREAD_STEPS}
+            expectation={THREAD_EXPECTATION}
+            startedAt={reply.startedAt}
+          />
         ) : null}
 
-        {generating ? (
-          <Notice tone="loading" title="Le coach analyse ta partie…">
-            La génération d'un debrief prend quelques secondes.
-          </Notice>
+        {debriefing.status === "running" ? (
+          <GenerationProgress
+            title="Le coach analyse ta partie…"
+            steps={THREAD_STEPS}
+            expectation={THREAD_EXPECTATION}
+            startedAt={debriefing.startedAt}
+          />
         ) : null}
 
         {suggestion !== null && !busy ? (
@@ -402,8 +423,8 @@ export function CoachThreadView() {
             ) : (
               <button
                 type="button"
-                onClick={() => void generateDebrief(suggestion.matchId)}
-                className="rounded-lg bg-ember-500 px-3 py-2 text-xs font-semibold text-steel-950 transition-colors hover:bg-ember-400"
+                onClick={() => generateDebrief(suggestion.matchId)}
+                className="rounded-lg bg-brand-fill px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-fill-hover"
               >
                 Générer le debrief de ce match
               </button>
@@ -417,29 +438,56 @@ export function CoachThreadView() {
           </Notice>
         ) : null}
 
-        {failure !== null ? (
-          failure.quota ? (
+        {/* Les deux échecs de génération portent chacun leur reprise : elle
+            rejoue la même demande, sans que rien soit à ressaisir. */}
+        {reply.status === "failed" ? (
+          reply.failure.quota ? (
             <Notice tone="empty" title="Quota du jour atteint.">
-              {failure.message}
+              {reply.failure.message}
             </Notice>
           ) : (
-            <Notice tone="error" title="Le coach n'a pas pu répondre.">
-              <p>{failure.message}</p>
-              <p className="mt-1">Ton texte est resté dans la zone de saisie.</p>
+            <Notice
+              tone="error"
+              title="Le coach n'a pas pu répondre."
+              onRetry={() => threadReplyGeneration.retry()}
+            >
+              <p>{reply.failure.message}</p>
+              <p className="mt-1">
+                « Réessayer » renvoie le même message ; ton texte est de toute façon resté dans la
+                zone de saisie.
+              </p>
             </Notice>
           )
         ) : null}
+
+        {debriefing.status === "failed" ? (
+          debriefing.failure.quota ? (
+            <Notice tone="empty" title="Quota de debriefs atteint.">
+              {debriefing.failure.message}
+            </Notice>
+          ) : (
+            <Notice
+              tone="error"
+              title="Le debrief n'a pas pu être généré."
+              onRetry={() => threadDebriefGeneration.retry()}
+            >
+              {debriefing.failure.message}
+            </Notice>
+          )
+        ) : null}
+
+        {clearFailure !== null ? (
+          <Notice tone="error" title="Le fil n'a pas pu être effacé.">
+            {clearFailure}
+          </Notice>
+        ) : null}
       </section>
 
-      <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-2">
+      <form onSubmit={submit} className="flex flex-col gap-2">
         <div className="flex flex-wrap gap-2">
-          <Chip
-            label={ANALYSE_LAST_MATCH}
-            disabled={busy}
-            onClick={() => void generateDebrief(null)}
-          />
+          <Chip label={ANALYSE_LAST_MATCH} disabled={busy} onClick={() => generateDebrief(null)} />
           {CHIPS.map((chip) => (
-            <Chip key={chip} label={chip} disabled={busy} onClick={() => void send(chip, false)} />
+            <Chip key={chip} label={chip} disabled={busy} onClick={() => send(chip)} />
           ))}
         </div>
 
@@ -454,14 +502,14 @@ export function CoachThreadView() {
           placeholder={PLACEHOLDER}
           aria-describedby="coach-thread-count"
           onChange={(event) => setDraft(event.target.value)}
-          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2 text-sm leading-relaxed text-steel-100 transition-colors placeholder:text-steel-600 hover:border-steel-600 focus:border-ember-500 focus:outline-none disabled:opacity-60"
+          className="w-full resize-y rounded-md border border-steel-700 bg-steel-800 px-3 py-2 text-sm leading-relaxed text-steel-100 transition-colors placeholder:text-steel-400 hover:border-steel-600 focus:border-ember-500 disabled:opacity-60"
         />
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <button
             type="submit"
             disabled={!canSend}
-            className="rounded-lg bg-ember-500 px-4 py-2 text-sm font-semibold text-steel-950 transition-colors hover:bg-ember-400 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
+            className="rounded-lg bg-brand-fill px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
           >
             {sending ? "Envoi…" : "Envoyer"}
           </button>
@@ -474,13 +522,7 @@ export function CoachThreadView() {
             {tooLong ? " · trop long" : ""}
           </p>
 
-          <p className="ml-auto text-[11px] text-steel-500">
-            {quota.status === "unknown"
-              ? `${CHAT_DAILY_QUOTA} messages par jour`
-              : quota.status === "lifted"
-                ? "Quota levé · ta configuration IA"
-                : `${quota.remaining} message${quota.remaining > 1 ? "s" : ""} restant${quota.remaining > 1 ? "s" : ""}`}
-          </p>
+          <QuotaNote kind="chat" remaining={remaining} className="ml-auto text-[11px]" />
         </div>
       </form>
 

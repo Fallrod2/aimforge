@@ -10,65 +10,17 @@
  */
 
 import { Segmented } from "../components/Segmented";
-import type { LinkedAccount, StatTotals } from "../data";
+import type { StatTotals } from "../data";
 import { formatAdr, formatCount, formatPercent, formatRatio, UNKNOWN } from "./display";
 import { PERIOD_CAPTIONS, PERIOD_OPTIONS, type PeriodId } from "./periods";
 import { Empty, Section } from "./ui";
 
-interface RankHeaderProps {
-  readonly account: LinkedAccount;
-  readonly refreshing: boolean;
-  readonly onRefresh: () => void;
-  /** Ce qui n'a pas pu être mis à jour, dit en petit et sans alarme. */
-  readonly notice: string | null;
-}
-
-/**
- * Rang, RR et dernière variation — lus sur le compte lié (`riot_mmr`), pas
- * demandés à la volée : l'écran montre d'abord ce qu'il sait, le
- * rafraîchissement corrige ensuite. Une vue qui attendrait une API non
- * officielle avant d'afficher quoi que ce soit serait vide à chaque ouverture.
+/*
+ * Le rang et son bouton « Rafraîchir » vivaient ici (`RankHeader`) tant que
+ * Valorant était un onglet. Depuis V6, c'est `ValorantPanel` qui les porte, en
+ * tête du bloc de l'accueil : deux rangs et deux boutons de rafraîchissement
+ * l'un sous l'autre auraient posé la question de savoir lequel dit vrai.
  */
-export function RankHeader({ account, refreshing, onRefresh, notice }: RankHeaderProps) {
-  const mmr = account.riotMmr;
-  const change = mmr?.lastChange ?? null;
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-        <div>
-          <p className="text-2xl leading-none font-semibold text-steel-100">
-            {mmr?.tier ?? "Rang inconnu"}
-          </p>
-          <p className="mt-1.5 text-xs text-steel-500">
-            {account.externalId}
-            {mmr?.rr === null || mmr?.rr === undefined ? null : ` · ${mmr.rr} RR`}
-            {change === null ? null : (
-              <span className={change >= 0 ? "text-quench-500" : "text-ember-400"}>
-                {" "}
-                ({change > 0 ? "+" : ""}
-                {change})
-              </span>
-            )}
-          </p>
-        </div>
-        <button
-          type="button"
-          disabled={refreshing}
-          onClick={onRefresh}
-          className="ml-auto rounded-lg border border-steel-700 px-3 py-1.5 text-[11px] font-medium text-steel-300 transition-colors hover:border-steel-600 hover:text-steel-100 disabled:cursor-not-allowed disabled:text-steel-600"
-        >
-          {refreshing ? "Mise à jour…" : "Rafraîchir"}
-        </button>
-      </div>
-      {notice === null ? null : (
-        <p aria-live="polite" className="text-[11px] leading-relaxed text-steel-500">
-          {notice}
-        </p>
-      )}
-    </div>
-  );
-}
 
 interface OverviewProps {
   readonly totals: StatTotals;

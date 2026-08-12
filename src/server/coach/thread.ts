@@ -30,6 +30,7 @@ import {
   DEBRIEF_SUGGESTION_MARKER,
   THREAD_ANSWER_MAX,
 } from "../../shared/coach-thread-contract.js";
+import { frenchGuard } from "../shared/french-guard.js";
 import {
   scenarioNames,
   unknownScenarioReason,
@@ -83,9 +84,20 @@ export function stripDebriefSuggestion(raw: string): {
  */
 export function parseThreadAnswer(raw: string, allowed: readonly string[]): ThreadAnswerParse {
   const { text, suggested } = stripDebriefSuggestion(raw);
-  const answer = text.trim();
+  const trimmed = text.trim();
 
-  if (answer === "") return { ok: false, reason: "la réponse est vide" };
+  if (trimmed === "") return { ok: false, reason: "la réponse est vide" };
+
+  // Le garde-fou passe **avant** la borne de longueur : la longueur mesurée
+  // doit être celle du texte livré (`../shared/french-guard.ts`). Il passe aussi
+  // après le retrait du marqueur, qui n'est pas du français et n'a rien à faire
+  // dans une analyse de phrases.
+  // `consigne` : la réponse du fil est une consigne d'entraînement, où la
+  // phrase nominale (« Objectif : 480 sur ces deux scénarios. ») est correcte.
+  const guard = frenchGuard("coach-thread", { protectedNames: allowed });
+  const answer = guard.apply(trimmed, "answer", "consigne");
+
+  guard.flush();
 
   if (answer.length > THREAD_ANSWER_MAX) {
     return {

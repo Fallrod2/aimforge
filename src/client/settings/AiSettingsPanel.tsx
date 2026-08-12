@@ -613,10 +613,17 @@ function Header({ active }: { readonly active: boolean }) {
           </span>
         ) : null}
       </div>
+      {/*
+        Aucun chiffre ici, et c'est délibéré : les limites se règlent en base
+        (`platform_settings`), donc une phrase qui en annonce un promet ce que
+        le serveur n'applique pas forcément. Les compteurs exacts — utilisé,
+        limite, heure de réinitialisation — sont affichés là où ils se
+        dépensent, à côté de chaque bouton de génération (`QuotaNote`).
+      */}
       <p className="mt-1 text-xs text-steel-500">
         {active
-          ? "Le coach et la routine passent par ton fournisseur : tu paies tes jetons, et la limite de 5 par jour ne s'applique plus."
-          : "Par défaut, le coach et la routine utilisent le fournisseur d'AimForge, limité à 5 debriefs et 5 routines par jour. Apporte ta clé pour lever cette limite."}
+          ? "Le coach, la routine et le fil passent par ton fournisseur : tu paies tes jetons, et les quotas journaliers d'AimForge ne s'appliquent plus."
+          : "Par défaut, le coach, la routine et le fil utilisent le fournisseur d'AimForge, chacun avec son quota journalier — affiché à côté du bouton qui le dépense. Apporte ta clé pour lever ces limites."}
       </p>
     </div>
   );

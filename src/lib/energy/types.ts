@@ -1,6 +1,30 @@
-/** Types du benchmark Voltaic S5. Lib pure : aucune dépendance externe. */
+/** Types d'un benchmark d'aim trainer. Lib pure : aucune dépendance externe. */
 
-export type TierId = "novice" | "intermediate" | "advanced";
+/**
+ * Identifiant d'un palier (`novice`, `intermediate`, `advanced`…).
+ *
+ * **Volontairement ouvert** (DECISIONS.md D5) : les trois paliers Voltaic sont
+ * une structure de *ce* benchmark, pas du domaine. Un autre benchmark peut en
+ * avoir d'autres, ou un seul — une union fermée obligerait à retoucher le type
+ * à chaque benchmark ajouté, c'est-à-dire à retoucher le code pour ajouter une
+ * donnée.
+ *
+ * Il n'est pas marqué, à la différence de `BenchmarkId` : un palier ne se
+ * valide que **contre un benchmark**, et le marquage forcerait un cast dans
+ * chaque littéral (`"novice"`) alors que la vérification utile — « ce palier
+ * existe-t-il dans ce benchmark ? » — vit dans `toTierId(benchmarkId, value)`.
+ */
+export type TierId = string;
+
+/**
+ * Identifiant d'une formule d'énergie (`voltaic-anchors`…).
+ *
+ * Une définition de benchmark nomme sa formule ; le registre de `formulas.ts`
+ * la résout en implémentation. C'est le point de branchement qui permet à un
+ * benchmark d'un autre éditeur de calculer autrement sans toucher au cœur
+ * mathématique Voltaic.
+ */
+export type EnergyFormulaId = string;
 
 /** Un scénario KovaaK's et ses seuils, un par ancre d'énergie du palier. */
 export interface Scenario {
@@ -27,7 +51,7 @@ export interface Rank {
   readonly color: string;
 }
 
-/** Un palier : Novice, Intermediate ou Advanced. */
+/** Un palier du benchmark (Voltaic : Novice, Intermediate, Advanced). */
 export interface Tier {
   readonly id: TierId;
   readonly label: string;
@@ -44,15 +68,22 @@ export interface Tier {
   readonly categories: readonly Category[];
 }
 
-export interface VoltaicMeta {
+/**
+ * Les métadonnées du jeu de données lui-même, telles que le fichier source les
+ * porte. À ne pas confondre avec les métadonnées **produit** d'un benchmark
+ * (nom affichable, éditeur, statut…), qui vivent dans `BenchmarkDefinition` :
+ * celles-ci décrivent le fichier, celles-là décrivent le benchmark.
+ */
+export interface BenchmarkMeta {
   readonly season: string;
   readonly source: string;
   readonly extractedAt: string;
   readonly note: string;
 }
 
-export interface VoltaicData {
-  readonly meta: VoltaicMeta;
+/** Le jeu de données complet d'un benchmark : ses paliers et leurs seuils. */
+export interface BenchmarkData {
+  readonly meta: BenchmarkMeta;
   readonly tiers: readonly Tier[];
 }
 

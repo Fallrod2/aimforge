@@ -22,6 +22,7 @@ import {
 } from "../../shared/coach-contract";
 import { NO_SESSION_MESSAGE } from "../data/errors";
 import { supabase } from "../supabase/client";
+import { aiRequestSignal, opaqueMessage, transportMessage } from "./ai-http";
 
 /** Échec d'une demande de debrief, porteur d'un message destiné à l'écran. */
 export class CoachError extends Error {
@@ -93,7 +94,11 @@ function errorMessage(status: number, body: string): HttpFailure {
   }
   // Un 404 **avec** un corps JSON vient de la fonction (match inconnu) et a été
   // traité au-dessus ; celui-ci vient du serveur de développement.
-  return { message: status === 404 ? NOT_DEPLOYED : UNEXPECTED, remaining: null, debriefId: null };
+  return {
+    message: opaqueMessage(status, NOT_DEPLOYED, UNEXPECTED),
+    remaining: null,
+    debriefId: null,
+  };
 }
 
 /**
@@ -119,9 +124,11 @@ async function postCoach(payload: Record<string, unknown>): Promise<CoachRespons
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
+      // Plus long que le `maxDuration` de la fonction : voir `./ai-http`.
+      signal: aiRequestSignal(),
     });
   } catch (cause) {
-    throw new CoachError(OFFLINE, 0, null, null, cause);
+    throw new CoachError(transportMessage(cause, OFFLINE), 0, null, null, cause);
   }
 
   const body = await response.text();

@@ -7,41 +7,47 @@
  */
 
 import { getTierFor, listScenariosFor } from "../../lib/energy";
+import { DeltaBadge } from "../components/Delta";
+import { ConfirmButton } from "../components/Destructive";
 import { EnergyRail } from "../components/EnergyRail";
 import { RankBadge } from "../components/RankBadge";
 import type { BenchRunDetail, BenchRunSummary } from "../data";
 import { formatEnergy, formatRunDate, formatScore, scenarioLabel } from "../format";
+import { deltaOf, subcategoryDeltas } from "../run-delta";
 import { runRankColor } from "./series";
 
 interface RunCardProps {
   readonly run: BenchRunSummary;
   readonly detail: BenchRunDetail | undefined;
+  /**
+   * Le détail de la passe **précédente** du même palier et du même benchmark
+   * (§4.4), `undefined` tant qu'il n'est pas chargé — ou pour toujours s'il
+   * s'agit de la première passe. Les écarts sont alors simplement absents :
+   * aucun zéro trompeur, aucun « ▲ +447 » tiré d'une passe qui n'existe pas.
+   */
+  readonly previous: BenchRunDetail | undefined;
   readonly detailError: string | null;
   readonly expanded: boolean;
   readonly onToggle: () => void;
-  /** `true` tant que l'utilisateur n'a pas confirmé la suppression. */
-  readonly confirming: boolean;
-  readonly deleting: boolean;
-  readonly onAskDelete: () => void;
-  readonly onCancelDelete: () => void;
-  readonly onConfirmDelete: () => void;
+  /** Le bouton attend sa confirmation (`../components/confirm.ts`). */
+  readonly deleteArmed: boolean;
+  /** Les deux appuis passent par le même rappel : la machine les distingue. */
+  readonly onPressDelete: () => void;
 }
 
 export function RunCard({
   run,
   detail,
+  previous,
   detailError,
   expanded,
   onToggle,
-  confirming,
-  deleting,
-  onAskDelete,
-  onCancelDelete,
-  onConfirmDelete,
+  deleteArmed,
+  onPressDelete,
 }: RunCardProps) {
-  // Les libellés, l'échelle et les seuils viennent de la saison **de la
+  // Les libellés, l'échelle et les seuils viennent du benchmark **de la
   // passe** : une passe d'archive ne se relit pas avec les seuils du jour.
-  const tier = getTierFor(run.season, run.tier);
+  const tier = getTierFor(run.benchmarkId, run.tier);
   const color = runRankColor(run);
   const panelId = `run-${run.id}-detail`;
 
@@ -87,39 +93,22 @@ export function RunCard({
           ) : detail === undefined ? (
             <p className="text-xs text-steel-500">Chargement du détail…</p>
           ) : (
-            <RunDetailBody detail={detail} />
+            <RunDetailBody detail={detail} previous={previous} />
           )}
 
+          {/* La suppression tient désormais dans un seul bouton (V5-A §5.4) :
+              il devient « Supprimer définitivement ? » pendant quatre secondes,
+              puis la passe part — avec cinq secondes pour l'annuler. Le panneau
+              de confirmation qui poussait la mise en page vers le bas a
+              disparu : rien ne bouge sous le doigt entre les deux appuis. */}
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
-            {confirming ? (
-              <>
-                <p className="mr-auto text-xs text-steel-400">Supprimer définitivement ?</p>
-                <button
-                  type="button"
-                  onClick={onCancelDelete}
-                  disabled={deleting}
-                  className="rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-300 transition-colors hover:text-steel-100 disabled:opacity-50"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="button"
-                  onClick={onConfirmDelete}
-                  disabled={deleting}
-                  className="rounded-lg bg-ember-600 px-3 py-1.5 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:opacity-50"
-                >
-                  {deleting ? "Suppression…" : "Confirmer"}
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={onAskDelete}
-                className="ml-auto rounded-lg border border-steel-700 px-3 py-1.5 text-xs font-medium text-steel-400 transition-colors hover:border-ember-600 hover:text-ember-400"
-              >
-                Supprimer cette passe
-              </button>
-            )}
+            <ConfirmButton
+              label="Supprimer cette passe"
+              question="Supprimer définitivement ?"
+              armed={deleteArmed}
+              onPress={onPressDelete}
+              className="ml-auto"
+            />
           </div>
         </div>
       ) : null}
@@ -127,27 +116,62 @@ export function RunCard({
   );
 }
 
-function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
-  const tier = getTierFor(detail.season, detail.tier);
+function RunDetailBody({
+  detail,
+  previous,
+}: {
+  readonly detail: BenchRunDetail;
+  readonly previous: BenchRunDetail | undefined;
+}) {
+  const tier = getTierFor(detail.benchmarkId, detail.tier);
   const scoreByScenario = new Map(detail.scores.map((row) => [row.scenario, row]));
+  // Deux benchs incomplets ont tous deux un overall à 0 : leur « écart nul »
+  // ne dirait rien de la progression réelle. On ne compare que des overalls.
+  const overallDelta =
+    previous === undefined || detail.overall === 0 || previous.overall === 0
+      ? null
+      : deltaOf(detail.overall, previous.overall);
+  const deltas = new Map(
+    subcategoryDeltas(detail.subcategories, previous?.subcategories ?? []).map((entry) => [
+      entry.name,
+      entry.delta,
+    ]),
+  );
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      {previous === undefined ? null : (
+        <p className="flex flex-wrap items-baseline gap-2 text-xs text-steel-500 lg:col-span-2">
+          <span>vs passe du {formatRunDate(previous.date)} :</span>
+          {overallDelta === null ? (
+            <span className="text-steel-400">écart d'overall indisponible (bench incomplet)</span>
+          ) : (
+            <DeltaBadge delta={overallDelta} label="Énergie overall" />
+          )}
+        </p>
+      )}
+
       <section>
         <h3 className="text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
           Sous-catégories
         </h3>
         <ul className="mt-3 space-y-2.5">
           {detail.subcategories.map((sub) => (
-            <li key={sub.name} className="grid grid-cols-[7rem_1fr_4.5rem] items-center gap-3">
+            <li key={sub.name} className="grid grid-cols-[7rem_1fr_5.5rem] items-center gap-3">
               <span className="truncate text-xs text-steel-300">{sub.name}</span>
-              <EnergyRail tier={detail.tier} season={detail.season} energy={sub.energy} />
-              <span className="text-right font-mono text-xs tabular-nums text-steel-200">
-                {sub.energy > 0 ? (
-                  formatEnergy(sub.energy)
-                ) : (
-                  <span className="text-steel-600">—</span>
-                )}
+              <EnergyRail tier={detail.tier} benchmarkId={detail.benchmarkId} energy={sub.energy} />
+              {/* L'écart s'empile sous l'énergie plutôt que d'ouvrir une
+                  quatrième colonne : sur 390 px, celle-ci prenait sa place à la
+                  jauge, qui est justement ce qui rend la ligne lisible. */}
+              <span className="flex flex-col items-end">
+                <span className="font-mono text-xs tabular-nums text-steel-200">
+                  {sub.energy > 0 ? (
+                    formatEnergy(sub.energy)
+                  ) : (
+                    <span className="text-steel-500">—</span>
+                  )}
+                </span>
+                <DeltaBadge delta={deltas.get(sub.name) ?? null} label={sub.name} size="sm" />
               </span>
             </li>
           ))}
@@ -156,10 +180,11 @@ function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
 
       <section>
         <h3 className="text-[11px] font-medium tracking-[0.18em] text-steel-400 uppercase">
-          Scénarios ({detail.scores.length}/{listScenariosFor(detail.season, detail.tier).length})
+          Scénarios ({detail.scores.length}/
+          {listScenariosFor(detail.benchmarkId, detail.tier).length})
         </h3>
         <ul className="mt-3 divide-y divide-steel-800/70">
-          {listScenariosFor(detail.season, detail.tier).map((scenario) => {
+          {listScenariosFor(detail.benchmarkId, detail.tier).map((scenario) => {
             const row = scoreByScenario.get(scenario.name);
 
             return (
@@ -168,13 +193,13 @@ function RunDetailBody({ detail }: { readonly detail: BenchRunDetail }) {
                 className="grid grid-cols-[1fr_4.5rem_4.5rem] items-center gap-2 py-1.5"
               >
                 <span className="truncate text-xs text-steel-300" title={scenario.name}>
-                  {scenarioLabel(scenario.name, tier.label)}
+                  {scenarioLabel(scenario.name, tier.label, detail.benchmarkId)}
                 </span>
                 <span className="text-right font-mono text-xs tabular-nums text-steel-200">
-                  {row ? formatScore(row.score) : <span className="text-steel-600">—</span>}
+                  {row ? formatScore(row.score) : <span className="text-steel-500">—</span>}
                 </span>
                 <span className="text-right font-mono text-xs tabular-nums text-steel-400">
-                  {row ? formatEnergy(row.energy) : <span className="text-steel-600">—</span>}
+                  {row ? formatEnergy(row.energy) : <span className="text-steel-500">—</span>}
                 </span>
               </li>
             );

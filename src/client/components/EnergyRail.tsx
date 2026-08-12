@@ -4,21 +4,28 @@
  *
  * L'acier porte le remplissage, la couleur officielle du rang ne s'allume que
  * sur la tête de jauge et sur les graduations franchies.
+ *
+ * Les trois teintes viennent des jetons `rail-*` (V5-A §5.1). La piste vide en
+ * était encore à `steel-800`, soit 1,15:1 sur une carte : on ne voyait pas
+ * jusqu'où allait l'échelle, donc on ne pouvait pas lire le niveau. Elle est
+ * passée à 3,07:1, ce qui a obligé le remplissage à s'éclaircir avec elle — à
+ * `steel-500`, il ne s'en détachait plus que de 1,50:1. Les mesures sont dans
+ * `index.css`, et `contrast.test.ts` les tient.
  */
 
-import { currentSeason, type SeasonId, type TierId } from "../../lib/energy";
-import { railFractionFor, rankColorForSeason, rankTicksFor } from "../energy-view";
+import { type BenchmarkId, currentBenchmark, type TierId } from "../../lib/energy";
+import { railFractionFor, rankColorForBenchmark, rankTicksFor } from "../energy-view";
 
 interface EnergyRailProps {
   readonly tier: TierId;
   readonly energy: number;
   /**
-   * Saison dont l'échelle et les graduations s'appliquent. Par défaut la
+   * Benchmark dont l'échelle et les graduations s'appliquent. Par défaut le
    * courante — c'est le cas du tracker, qui montre la saisie en cours. Une
-   * jauge qui décrit une passe **enregistrée** doit passer `run.season` :
-   * `maxEnergy` et les seuils de rang changent d'une saison à l'autre.
+   * jauge qui décrit une passe **enregistrée** doit passer `run.benchmarkId` :
+   * `maxEnergy` et les seuils de rang changent d'un benchmark à l'autre.
    */
-  readonly season?: SeasonId;
+  readonly benchmarkId?: BenchmarkId;
   /** Jauge de synthèse : plus épaisse, graduations nommées. */
   readonly emphasis?: boolean;
 }
@@ -26,18 +33,18 @@ interface EnergyRailProps {
 export function EnergyRail({
   tier,
   energy,
-  season = currentSeason(),
+  benchmarkId = currentBenchmark(),
   emphasis = false,
 }: EnergyRailProps) {
-  const fraction = railFractionFor(season, tier, energy);
-  const color = rankColorForSeason(season, tier, energy);
-  const ticks = rankTicksFor(season, tier, energy);
+  const fraction = railFractionFor(benchmarkId, tier, energy);
+  const color = rankColorForBenchmark(benchmarkId, tier, energy);
+  const ticks = rankTicksFor(benchmarkId, tier, energy);
   const width = `${fraction * 100}%`;
 
   return (
-    <div className={`relative w-full rounded-full bg-steel-800 ${emphasis ? "h-2.5" : "h-1.5"}`}>
+    <div className={`relative w-full rounded-full bg-rail-track ${emphasis ? "h-2.5" : "h-1.5"}`}>
       <div
-        className="absolute inset-y-0 left-0 rounded-full bg-steel-500 transition-[width] duration-300 ease-out"
+        className="absolute inset-y-0 left-0 rounded-full bg-rail-fill transition-[width] duration-300 ease-out"
         style={{ width }}
       />
       {ticks.map((tick) => (
@@ -47,7 +54,7 @@ export function EnergyRail({
           className="absolute inset-y-0 w-px"
           style={{
             left: `${tick.fraction * 100}%`,
-            backgroundColor: tick.reached ? tick.color : "var(--color-steel-700)",
+            backgroundColor: tick.reached ? tick.color : "var(--color-surface)",
             opacity: tick.reached ? 0.9 : 1,
           }}
         />

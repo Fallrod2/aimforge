@@ -1,0 +1,9 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
+	"root": false,
+	"html": {
+		"parser": {
+			"interpolation": true
+		}
+	}
+}

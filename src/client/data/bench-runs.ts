@@ -17,10 +17,10 @@
  */
 
 import {
-  computeBenchRun,
-  currentSeason,
-  type SeasonId,
-  scenarioNames,
+  type BenchmarkId,
+  computeBenchRunFor,
+  currentBenchmark,
+  scenarioNamesFor,
   type TierId,
 } from "../../lib/energy";
 import { supabase } from "../supabase/client";
@@ -34,7 +34,15 @@ import {
 import { currentUserId } from "./session";
 import type { BenchRunDetail, BenchRunSummary, BenchSource, SaveBenchRunInput } from "./types";
 
-const RUN_COLUMNS = "id, date, tier, overall, rank, complete, source, season";
+/**
+ * La colonne du benchmark est `benchmark_id` (migration `0017`).
+ *
+ * L'ancienne colonne `season` existe toujours, tenue synchrone par un trigger
+ * le temps de l'expand/contract : ce code n'écrit **que** `benchmark_id`, et le
+ * trigger recopie la valeur dans `season` pour un client déployé plus ancien.
+ * `0018` supprimera la colonne et le trigger une fois ce code en production.
+ */
+const RUN_COLUMNS = "id, date, tier, overall, rank, complete, source, benchmark_id";
 const SCORE_COLUMNS = "scenario, score, energy";
 
 const RUN_NOT_FOUND = "Passe introuvable : elle a peut-être été supprimée.";
@@ -54,8 +62,8 @@ export interface BenchRunStore {
     readonly rank: string | null;
     readonly complete: boolean;
     readonly source: BenchSource;
-    /** Saison Voltaic estampillée à l'écriture ; jamais déduite à la lecture. */
-    readonly season: SeasonId;
+    /** Benchmark estampillé à l'écriture ; jamais déduit à la lecture. */
+    readonly benchmarkId: BenchmarkId;
   }): Promise<BenchRunRow>;
   /** Insère les scores d'une passe, en un seul lot. */
   insertScores(runId: number, scores: readonly ScenarioScoreRow[]): Promise<void>;
@@ -74,7 +82,20 @@ export async function saveBenchRunTo(
   input: SaveBenchRunInput,
 ): Promise<BenchRunDetail> {
   const { tier, scores } = input;
-  const known = scenarioNames(tier);
+  /**
+   * Le benchmark de la passe, résolu **une fois** — et c'est lui qui sert aux
+   * trois usages : valider les noms de scénarios, calculer les énergies,
+   * estampiller la ligne.
+   *
+   * Avant, le calcul passait par les accesseurs non qualifiés (donc par le
+   * benchmark courant de la lib) pendant que l'estampille prenait
+   * `input.benchmarkId`. Les deux coïncident pour le tracker, qui passe le
+   * benchmark actif — mais un appelant qui en nommerait un autre aurait fait
+   * enregistrer une passe calculée sur le barème courant sous l'étiquette d'un
+   * autre barème, c'est-à-dire des énergies fausses et indétectables.
+   */
+  const benchmarkId = input.benchmarkId ?? currentBenchmark();
+  const known = scenarioNamesFor(benchmarkId, tier);
 
   for (const name of Object.keys(scores)) {
     if (!known.has(name)) {
@@ -82,7 +103,7 @@ export async function saveBenchRunTo(
     }
   }
 
-  const computed = computeBenchRun(tier, scores);
+  const computed = computeBenchRunFor(benchmarkId, tier, scores);
 
   if (computed.scores.length === 0) {
     throw new DataError("Aucun score à enregistrer.");
@@ -97,10 +118,12 @@ export async function saveBenchRunTo(
     // Une passe dont personne n'a dit d'où elle vient a été tapée à la main :
     // c'est le seul défaut qui ne surestime pas ce qu'on sait de la donnée.
     source: input.source ?? "manual",
-    // La saison n'est pas un choix de l'appelant : on enregistre ce qui est
-    // joué aujourd'hui, avec les seuils qui ont servi à calculer les énergies
-    // trois lignes plus haut (SPEC §5 quinquies).
-    season: currentSeason(),
+    // Le même identifiant que celui du calcul, par construction : l'appelant
+    // peut nommer son benchmark — le tracker le fait, il tient le benchmark
+    // actif de son hook — mais nommer, ici, veut dire *calculer dedans*. À
+    // défaut, c'est le benchmark courant de la lib, aligné sur le benchmark
+    // actif de l'utilisateur par le provider (D6, SPEC §5 quinquies).
+    benchmarkId,
   });
 
   try {
@@ -141,7 +164,9 @@ function supabaseStore(userId: string): BenchRunStore {
           rank: run.rank,
           complete: run.complete,
           source: run.source,
-          season: run.season,
+          // Le seul endroit où le champ métier redevient le nom de la colonne.
+          // `season` n'est pas envoyée : le trigger de `0017` l'aligne.
+          benchmark_id: run.benchmarkId,
         })
         .select(RUN_COLUMNS)
         .single();
@@ -227,6 +252,43 @@ export async function getBenchRunDetail(id: number): Promise<BenchRunDetail> {
   if (scores.error !== null) throw queryError(scores.error, "Les scores n'ont pas pu être lus.");
 
   return toBenchRunDetail(run.data, scores.data ?? []);
+}
+
+/**
+ * Les scores de plusieurs passes, en **une** requête (export CSV, §4.8).
+ *
+ * L'alternative aurait été d'appeler `getBenchRunDetail` par passe : sur un
+ * historique de cinquante passes, cela fait cent requêtes pour un bouton. Ici,
+ * un seul `in (…)`, et le regroupement se fait au retour. Les énergies ne sont
+ * pas lues : l'export porte les scores, l'énergie s'y recalcule (et l'overall,
+ * lui, est déjà sur la passe).
+ *
+ * Rien n'est dérivé de ces lignes — ni sous-catégorie, ni rang : c'est pourquoi
+ * elles ne passent pas par `mapping.ts`, qui construit un `BenchRunDetail`
+ * complet à partir d'une passe et de ses scores.
+ */
+export async function listScenarioScores(
+  runIds: readonly number[],
+): Promise<ReadonlyMap<number, Readonly<Record<string, number>>>> {
+  const byRun = new Map<number, Record<string, number>>();
+
+  if (runIds.length === 0) return byRun;
+
+  const { data, error } = await supabase
+    .from("scenario_scores")
+    .select("run_id, scenario, score")
+    .in("run_id", [...runIds]);
+
+  if (error !== null || data === null) {
+    throw queryError(error, "Les scores des passes n'ont pas pu être lus.");
+  }
+  for (const row of data) {
+    const scores = byRun.get(row.run_id) ?? {};
+
+    scores[row.scenario] = row.score;
+    byRun.set(row.run_id, scores);
+  }
+  return byRun;
 }
 
 /** Supprime une passe. Les `scenario_scores` partent en cascade (contrainte FK). */

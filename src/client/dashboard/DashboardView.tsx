@@ -1,16 +1,23 @@
 /**
- * Dashboard : les quatre emplacements de la synthèse, dans leur ordre de
+ * Accueil : les quatre emplacements de la synthèse, dans leur ordre de
  * lecture (où j'en suis · ce qui coince · quoi faire aujourd'hui · ce que
- * disait la dernière partie).
+ * disait la dernière partie), plus le bloc Valorant.
  *
- * Les quatre viennent de Supabase (`../data`), comme le tracker et
- * l'historique.
+ * Les quatre viennent de Supabase (`../data`), comme les perfs.
+ *
+ * **Le bloc Valorant n'apparaît que pour un Riot ID lié** (V6). C'est la
+ * contrepartie de la disparition de l'onglet : sans compte lié il n'y avait rien
+ * à montrer, et une carte qui n'aurait porté qu'une invitation à lier ferait de
+ * l'accueil une page de réglages. L'invitation vit au Profil, avec les autres
+ * comptes. Tant que la lecture des comptes n'a pas répondu, le bloc reste en
+ * place : le faire apparaître après coup ferait sauter la grille.
  *
  * Sur un compte neuf, l'emplacement « dernier bench » ne montre pas un vide
  * mais **le chemin le plus court vers une passe** : lier son pseudo KovaaK's,
- * qui remplit les 18 scores tout seuls (SPEC §5 bis). La saisie manuelle vient
- * juste derrière — elle marche toujours, et redevient le seul chemin dès qu'un
- * compte est lié.
+ * qui va chercher les scénarios déjà joués (SPEC §5 bis). Ce qu'il promet est
+ * borné à ce que la source rend — un palier entamé revient incomplet, et
+ * l'invitation le dit. La saisie manuelle vient juste derrière : elle marche
+ * toujours, et reste le seul chemin pour ce que l'import n'a pas ramené.
  *
  * La routine affichée est celle **du jour et pas encore faite**
  * (`../routine/today.ts`) : le dashboard répond à « qu'est-ce que je fais
@@ -20,9 +27,10 @@
  */
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { getTierFor } from "../../lib/energy";
+import { getTierFor, partialEnergy } from "../../lib/energy";
 import type { StoredDebrief } from "../../shared/coach-contract";
 import type { StoredRoutine } from "../../shared/routine-contract";
+import { DeltaBadge } from "../components/Delta";
 import { RankBadge } from "../components/RankBadge";
 import {
   accountsOf,
@@ -31,8 +39,9 @@ import {
   listBenchRuns,
   listDebriefs,
   listRoutines,
+  primaryAccount,
 } from "../data";
-import { rankColorForSeason } from "../energy-view";
+import { rankColorForBenchmark } from "../energy-view";
 import { formatEnergy, formatRunDate } from "../format";
 import { LinkInvite } from "../linked/LinkInvite";
 import { useLinkedAccounts } from "../linked/useLinkedAccounts";
@@ -40,18 +49,37 @@ import { ValorantPanel } from "../linked/ValorantPanel";
 import { type RouteTarget, routeHash } from "../route";
 import { formatDuration } from "../routine/duration";
 import { routineOfToday } from "../routine/today";
+import { deltaOf, previousRun, subcategoryDeltas } from "../run-delta";
+import { ValorantInsightsPanel } from "../valorant/InsightsPanel";
 import { latestRun, weakestSubcategories } from "./summary";
 
-type Bench =
+/**
+ * L'état de l'emplacement « dernier bench ».
+ *
+ * Exporté depuis V4-B pour la **démonstration publique** (`demo/DemoView`), qui
+ * rend les mêmes cartes avec des données calculées localement : la démo montre
+ * le produit, elle ne montre pas une copie du produit.
+ */
+export type Bench =
   | { readonly status: "loading" }
   /** Aucune passe, ou base injoignable : dans les deux cas, rien à montrer. */
   | { readonly status: "empty"; readonly reason: string | null }
-  | { readonly status: "ready"; readonly run: BenchRunDetail };
+  | {
+      readonly status: "ready";
+      readonly run: BenchRunDetail;
+      /**
+       * La passe précédente du même palier et du même benchmark (§4.4), `null`
+       * quand c'est la première — ou quand son détail n'a pas pu être lu. Un
+       * écart est un supplément : son absence ne doit jamais empêcher la carte
+       * d'afficher la passe elle-même.
+       */
+      readonly previous: BenchRunDetail | null;
+    };
 
 /**
  * L'état de la routine du jour. `empty` couvre les deux cas où il n'y a rien à
  * montrer — aucune routine ouverte aujourd'hui, ou lecture impossible : dans
- * les deux cas, le bon geste proposé est le même (ouvrir la page Routine).
+ * les deux cas, le bon geste proposé est le même (ouvrir l'espace Coach).
  */
 type Today =
   | { readonly status: "loading" }
@@ -64,20 +92,17 @@ type Latest =
   | { readonly status: "empty"; readonly reason: string | null }
   | { readonly status: "ready"; readonly debrief: StoredDebrief };
 
-const TRACKER_HASH = routeHash({ view: "tracker", runId: null });
+const TRACKER_HASH = routeHash({ view: "perfs", tab: "saisie" });
 
-const ROUTINE_HASH = routeHash({ view: "routine", runId: null });
-
-const COACH_HASH = routeHash({ view: "coach", runId: null });
-
-const VALORANT_HASH = routeHash({ view: "valorant" });
+/** La routine vit dans l'espace Coach depuis V6 : une seule adresse pour deux. */
+const COACH_HASH = routeHash({ view: "coach" });
 
 /** Le geste principal d'un emplacement vide. Un seul par carte, jamais deux. */
 const PRIMARY_ACTION =
-  "rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500";
+  "rounded-lg bg-brand-fill px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-fill-hover";
 
 function historyHash(runId: number | null): string {
-  const route: RouteTarget = { view: "history", runId };
+  const route: RouteTarget = { view: "perfs", tab: "historique", runId };
 
   return routeHash(route);
 }
@@ -96,6 +121,17 @@ export function DashboardView() {
     linked.state.status === "ready"
       ? accountsOf(linked.state.accounts, "kovaaks").length > 0
       : null;
+  /**
+   * Le compte Riot principal, `null` tant qu'on ne sait pas — ou s'il n'y en a
+   * pas. Il commande deux choses : l'existence du bloc Valorant (voir plus bas)
+   * et celle de son repli d'analyse, qui n'a de sens que rattaché à un compte.
+   */
+  const riot =
+    linked.state.status === "ready" ? primaryAccount(linked.state.accounts, "riot") : null;
+  // Le bloc disparaît quand on **sait** qu'aucun Riot ID n'est lié. Pendant le
+  // chargement et en cas d'échec de lecture, il reste : le panneau dit lui-même
+  // où il en est, et c'est mieux qu'une grille qui se réorganise après coup.
+  const showValorant = linked.state.status !== "ready" || riot !== null;
 
   const loadLatest = useCallback(async () => {
     setLatest({ status: "loading" });
@@ -142,13 +178,24 @@ export function DashboardView() {
   const load = useCallback(async () => {
     setBench({ status: "loading" });
     try {
-      const last = latestRun(await listBenchRuns());
+      const runs = await listBenchRuns();
+      const last = latestRun(runs);
 
       if (last === null) {
         setBench({ status: "empty", reason: null });
         return;
       }
-      setBench({ status: "ready", run: await getBenchRunDetail(last.id) });
+      // La passe précédente est choisie sur la **liste** (une lecture déjà
+      // faite) ; seul son détail coûte une requête de plus, et cette requête est
+      // facultative : un échec la ramène à `null`, l'écart disparaît, la carte
+      // reste.
+      const earlier = previousRun(runs, last);
+      const [run, previous] = await Promise.all([
+        getBenchRunDetail(last.id),
+        earlier === null ? null : getBenchRunDetail(earlier.id).catch(() => null),
+      ]);
+
+      setBench({ status: "ready", run, previous });
     } catch (cause) {
       // Le dashboard n'est pas le bon endroit pour crier : il annonce
       // l'absence de données et laisse le tracker traiter l'erreur en détail.
@@ -178,21 +225,24 @@ export function DashboardView() {
         </Card>
 
         {/* Le rang Valorant tient sur toute la largeur : c'est le seul
-            emplacement qui porte une liste (les dernières parties). Depuis V2
-            (SPEC §5 sexies) il n'en montre que trois et renvoie vers l'onglet
-            Valorant, qui porte les tendances, les ventilations et les
-            scoreboards — le dashboard résume, il n'analyse pas. */}
-        <div className="lg:col-span-2 lg:order-last">
-          <Card title="Valorant" action={{ href: VALORANT_HASH, label: "Voir tout" }}>
-            <ValorantPanel state={linked.state} />
-          </Card>
-        </div>
+            emplacement qui porte une liste (les trois dernières parties, chacune
+            un lien vers son scoreboard). Le reste — tendances, ventilations,
+            pont bench ↔ in-game — est dans le repli en pied de carte : l'accueil
+            résume, et il n'analyse que si on le lui demande. */}
+        {showValorant ? (
+          <div className="lg:col-span-2 lg:order-last">
+            <Card title="Valorant">
+              <ValorantPanel state={linked.state} />
+              {riot === null ? null : <ValorantInsightsPanel account={riot} />}
+            </Card>
+          </div>
+        ) : null}
 
         <Card title="Sous-catégories les plus faibles">
           <Weaknesses bench={bench} />
         </Card>
 
-        <Card title="Routine du jour" action={{ href: ROUTINE_HASH, label: "Routine" }}>
+        <Card title="Routine du jour" action={{ href: COACH_HASH, label: "Coach" }}>
           <TodayRoutine today={today} />
         </Card>
 
@@ -204,13 +254,14 @@ export function DashboardView() {
   );
 }
 
-interface CardProps {
+export interface CardProps {
   readonly title: string;
   readonly action?: { readonly href: string; readonly label: string };
   readonly children: ReactNode;
 }
 
-function Card({ title, action, children }: CardProps) {
+/** La coque d'un emplacement du tableau de bord ; la démonstration la reprend. */
+export function Card({ title, action, children }: CardProps) {
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-steel-800 bg-steel-900/60 p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
@@ -231,14 +282,19 @@ function Card({ title, action, children }: CardProps) {
   );
 }
 
-interface LastBenchProps {
+export interface LastBenchProps {
   readonly bench: Bench;
   /** Un compte KovaaK's est-il lié ? `null` tant qu'on ne sait pas. */
   readonly kovaaksLinked: boolean | null;
   readonly onRetry: () => void;
 }
 
-function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
+/**
+ * L'emplacement « dernier bench », exporté pour le rendu statique des tests :
+ * c'est lui qui porte l'invitation à lier KovaaK's, donc la promesse d'import
+ * de l'accueil — et la page entière demanderait une session pour être rendue.
+ */
+export function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
   if (bench.status === "loading") return <Skeleton />;
 
   if (bench.status === "empty") {
@@ -250,7 +306,7 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
           <Placeholder headline="Aucune passe enregistrée." detail={bench.reason} />
           <div className="flex gap-2">
             <a href={TRACKER_HASH} className={PRIMARY_ACTION}>
-              Ouvrir le tracker
+              Saisir une passe
             </a>
             <button
               type="button"
@@ -265,15 +321,20 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
     }
 
     // Compte neuf, aucun pseudo KovaaK's lié : le chemin premier est la
-    // liaison, qui remplit les 18 scores d'un coup. Le tracker reste offert
-    // juste dessous, en second — c'est le seul chemin quand rien n'est lié à
-    // aller chercher, et il ne doit jamais disparaître.
+    // liaison, qui remplit d'un coup les scénarios déjà joués. Le tracker reste
+    // offert juste dessous, en second — c'est le seul chemin quand rien n'est
+    // lié à aller chercher, et il ne doit jamais disparaître.
     if (kovaaksLinked === false) {
       return (
         <div className="flex flex-col gap-3">
-          <LinkInvite title="Tes 18 scores peuvent arriver tout seuls" action="Lier KovaaK's">
-            Lie ton pseudo kovaaks.com une fois : le tracker ira chercher tes scores du benchmark
-            Voltaic, tu vérifies, tu enregistres.
+          {/* Le titre ne promet pas dix-huit chiffres : l'import ne ramène que
+              les scénarios déjà joués, et un palier entamé en rend la moitié.
+              Annoncer « tes 18 scores » ferait passer le cas fréquent — un
+              import partiel, complété à la main — pour une panne. */}
+          <LinkInvite title="Tes scores peuvent arriver tout seuls" action="Lier KovaaK's">
+            Lie ton pseudo kovaaks.com une fois : la saisie ira chercher les scénarios du benchmark
+            Voltaic que tu as déjà joués, tu vérifies, tu enregistres. Ce que la source ne rend pas
+            se tape à la main, dans la même grille.
           </LinkInvite>
           <a
             href={TRACKER_HASH}
@@ -289,16 +350,31 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
       <div className="flex flex-col items-start gap-3">
         <Placeholder
           headline="Aucune passe enregistrée."
-          detail="Ouvre le tracker : tes scores KovaaK's s'y importent en un clic, et la saisie manuelle reste là pour les corriger."
+          detail="Ouvre la saisie des perfs : l'import de tes scores KovaaK's y part tout seul, et la saisie manuelle reste là pour compléter ce qu'il n'a pas ramené ou corriger le reste."
         />
         <a href={TRACKER_HASH} className={PRIMARY_ACTION}>
-          Ouvrir le tracker
+          Saisir une passe
         </a>
       </div>
     );
   }
 
-  const { run } = bench;
+  const { run, previous } = bench;
+  /**
+   * L'énergie partielle de la passe (§4.1a), quand son overall vaut 0 : une
+   * passe enregistrée incomplète affichait un tiret, exactement comme une
+   * absence de passe. Elle n'est ni enregistrée ni classée — c'est une lecture
+   * des sous-catégories déjà dérivées à la lecture (`mapping.ts`).
+   */
+  const partial =
+    run.overall > 0 ? null : partialEnergy(run.subcategories.map((sub) => sub.energy));
+  // L'écart ne se calcule que sur des overalls réels : comparer deux benchs
+  // incomplets (0 contre 0) afficherait « stable » pour deux passes qui n'ont
+  // rien mesuré.
+  const delta =
+    previous === null || run.overall === 0 || previous.overall === 0
+      ? null
+      : deltaOf(run.overall, previous.overall);
 
   // Libellé de palier et couleur de rang lus dans la saison **de la passe** :
   // le dashboard montre la dernière passe, quelle que soit sa saison, et ne
@@ -306,17 +382,34 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
   return (
     <a href={historyHash(run.id)} className="flex items-end gap-4">
       <div>
-        <p className="font-mono text-3xl leading-none font-semibold tabular-nums text-steel-100">
-          {run.overall > 0 ? formatEnergy(run.overall) : "—"}
+        <p className="flex items-baseline gap-2">
+          <span
+            className={`font-mono text-3xl leading-none font-semibold tabular-nums ${
+              partial === null ? "text-steel-100" : "text-steel-300"
+            }`}
+          >
+            {run.overall > 0
+              ? formatEnergy(run.overall)
+              : partial
+                ? formatEnergy(partial.energy)
+                : "—"}
+          </span>
+          {partial === null ? (
+            <DeltaBadge delta={delta} label="Énergie overall" />
+          ) : (
+            <span className="text-[10px] font-medium tracking-wide text-steel-500 uppercase">
+              Partiel {partial.counted}/{partial.total}
+            </span>
+          )}
         </p>
         <p className="mt-2 text-xs text-steel-500">
-          {getTierFor(run.season, run.tier).label} · {formatRunDate(run.date)}
+          {getTierFor(run.benchmarkId, run.tier).label} · {formatRunDate(run.date)}
         </p>
       </div>
       <div className="ml-auto shrink-0">
         <RankBadge
           rank={run.rank}
-          color={rankColorForSeason(run.season, run.tier, run.overall)}
+          color={rankColorForBenchmark(run.benchmarkId, run.tier, run.overall)}
           complete={run.complete}
         />
       </div>
@@ -345,7 +438,7 @@ function TodayRoutine({ today }: { readonly today: Today }) {
             "Dis combien de temps tu as : la séance partira des sous-catégories basses de ton dernier bench et des axes de tes derniers debriefs."
           }
         />
-        <a href={ROUTINE_HASH} className={PRIMARY_ACTION}>
+        <a href={COACH_HASH} className={PRIMARY_ACTION}>
           Générer une routine
         </a>
       </div>
@@ -355,7 +448,7 @@ function TodayRoutine({ today }: { readonly today: Today }) {
   const { routine } = today;
 
   return (
-    <a href={ROUTINE_HASH} className="flex flex-col gap-2">
+    <a href={COACH_HASH} className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-3">
         <p className="min-w-0 text-sm text-steel-100">{routine.titre}</p>
         <p className="shrink-0 font-mono text-sm tabular-nums text-steel-400">
@@ -422,7 +515,8 @@ function LastDebrief({ latest }: { readonly latest: Latest }) {
   );
 }
 
-function Weaknesses({ bench }: { readonly bench: Bench }) {
+/** Les trois sous-catégories les plus basses et leur écart ; reprise par la démo. */
+export function Weaknesses({ bench }: { readonly bench: Bench }) {
   if (bench.status === "loading") return <Skeleton />;
   if (bench.status === "empty") {
     return (
@@ -434,6 +528,20 @@ function Weaknesses({ bench }: { readonly bench: Bench }) {
   }
 
   const weakest = weakestSubcategories(bench.run.subcategories);
+  /**
+   * L'écart par sous-catégorie vs la passe précédente (§4.4).
+   *
+   * C'est ici qu'il a le plus de sens, et pas seulement parce que c'est ici que
+   * les sous-catégories sont affichées : une faiblesse qui progresse et une
+   * faiblesse qui stagne demandent deux décisions d'entraînement différentes, et
+   * le chiffre seul ne les distingue pas.
+   */
+  const deltas = new Map(
+    subcategoryDeltas(bench.run.subcategories, bench.previous?.subcategories ?? []).map((entry) => [
+      entry.name,
+      entry.delta,
+    ]),
+  );
 
   return (
     <ul className="flex flex-col gap-2">
@@ -443,8 +551,11 @@ function Weaknesses({ bench }: { readonly bench: Bench }) {
           className="flex items-baseline justify-between gap-3 rounded-lg bg-steel-950/60 px-3 py-2"
         >
           <span className="min-w-0 truncate text-sm text-steel-200">{sub.name}</span>
-          <span className="shrink-0 font-mono text-sm tabular-nums text-steel-400">
-            {sub.energy > 0 ? formatEnergy(sub.energy) : "—"}
+          <span className="flex shrink-0 items-baseline gap-2">
+            <DeltaBadge delta={deltas.get(sub.name) ?? null} label={sub.name} size="sm" />
+            <span className="font-mono text-sm tabular-nums text-steel-400">
+              {sub.energy > 0 ? formatEnergy(sub.energy) : "—"}
+            </span>
           </span>
         </li>
       ))}

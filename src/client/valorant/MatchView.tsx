@@ -2,8 +2,9 @@
  * La page d'une partie (SPEC §5 sexies, V2) : scoreboard des dix joueurs,
  * performance par side, déroulé des rounds.
  *
- * Elle vit derrière `#/valorant?match=<id>` — une **adresse**, pas un panneau
- * déplié : un lien vers une partie doit survivre au rechargement.
+ * Elle vit derrière `#/accueil?match=<id>` — une **adresse**, pas un panneau
+ * déplié : un lien vers une partie doit survivre au rechargement. (C'était
+ * `#/valorant?match=<id>` jusqu'à V6 ; le routeur lit encore cette adresse-là.)
  *
  * Trois partis pris :
  *
@@ -30,6 +31,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CoachError, requestDebriefForMatch } from "../coach/coach-api";
 import { setCoachDebriefFocus, setCoachPrefill } from "../coach/prefill";
 import { Notice } from "../components/Notice";
+import { QuotaNote } from "../components/QuotaNote";
 import {
   analyzeMatch,
   debriefedMatches,
@@ -66,7 +68,7 @@ type Detail =
 
 interface MatchViewProps {
   readonly matchId: string;
-  /** Retour à la vue d'ensemble ; le routeur reste maître de l'adresse. */
+  /** Retour au tableau de bord ; le routeur reste maître de l'adresse. */
   readonly onBack: () => void;
 }
 
@@ -189,7 +191,7 @@ export function MatchView({ matchId, onBack }: MatchViewProps) {
           onClick={onBack}
           className="text-xs text-steel-500 transition-colors hover:text-steel-200"
         >
-          ← Toutes les parties
+          ← Retour à l'accueil
         </button>
         <h1 className="mt-2 text-lg font-semibold text-steel-100">
           {state.status === "ready" ? (state.detail.map ?? "Partie") : "Partie"}
@@ -276,7 +278,7 @@ function DebriefAction({ debriefId, generating, error, onDebrief }: DebriefActio
             type="button"
             disabled={generating}
             onClick={onDebrief}
-            className="rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500 disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
+            className="rounded-lg bg-brand-fill px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-fill-hover disabled:cursor-not-allowed disabled:bg-steel-800 disabled:text-steel-500"
           >
             {generating ? "Le coach lit ta partie…" : "Débriefer ce match"}
           </button>
@@ -365,6 +367,11 @@ export function Analysis({
               Compte pour un message de coach sur ton quota du jour. Une fois faite, la relecture
               est gratuite.
             </p>
+            {/*
+              Le compteur avant la dépense, dans la même phrase que partout
+              ailleurs : le coût annoncé sans le solde laissait deviner.
+            */}
+            <QuotaNote kind="chat" remaining={remaining ?? undefined} className="text-[11px]" />
           </div>
           {generating ? <Skeleton lines={2} /> : null}
         </div>
@@ -375,17 +382,17 @@ export function Analysis({
             <a
               href={COACH_HASH}
               onClick={() => setCoachPrefill(coachPrefillForMatch(detail))}
-              className="rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500"
+              className="rounded-lg bg-brand-fill px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-fill-hover"
             >
               Approfondir avec le coach →
             </a>
-            {remaining === null ? null : (
-              <p className="text-[11px] text-steel-500">
-                {remaining === 0
-                  ? "Plus de message de coach aujourd'hui : le compteur repart demain."
-                  : `Il te reste ${remaining} message${remaining > 1 ? "s" : ""} de coach aujourd'hui.`}
-              </p>
-            )}
+            {/*
+              `null` ne veut pas dire « quota levé » ici, mais « rien compté
+              cette fois » — l'analyse était déjà en base, donc gratuite. On le
+              traduit en « rien de neuf » (`undefined`) pour que la note garde
+              l'état qu'elle a lu au montage, qui est le vrai.
+            */}
+            <QuotaNote kind="chat" remaining={remaining ?? undefined} className="text-[11px]" />
           </div>
         </div>
       )}
