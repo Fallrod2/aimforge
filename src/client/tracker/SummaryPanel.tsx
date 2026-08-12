@@ -19,14 +19,34 @@
  * a pas — et le chiffre à côté ne peut pas se lire comme un overall classé.
  */
 
-import { type ComputedBenchRun, getTier, partialEnergy, type TierId } from "../../lib/energy";
+import {
+  type BenchmarkId,
+  type ComputedBenchRun,
+  getTierFor,
+  partialEnergy,
+  type TierId,
+} from "../../lib/energy";
 import { EnergyRail } from "../components/EnergyRail";
 import { RankBadge } from "../components/RankBadge";
-import { nextRank, rankColorFor } from "../energy-view";
+import { nextRankFor, rankColorForBenchmark } from "../energy-view";
 import { formatEnergy } from "../format";
-import { weakestView } from "./weakest";
+import { weakestViewFor } from "./weakest";
 
 interface SummaryPanelProps {
+  /**
+   * Le benchmark dont ce panneau parle. **Obligatoire, et jamais déduit** : les
+   * seuils de rang, les couleurs, `maxEnergy` et la liste des paliers lui
+   * appartiennent (SPEC §5 quinquies).
+   *
+   * Il l'était de fait tant que le panneau ne vivait que sous
+   * `ActiveBenchmarkProvider`, qui aligne le pointeur de la lib. Depuis V4-B, la
+   * landing et la démonstration publique le rendent **hors du provider** — et
+   * rien ne remet ce pointeur à sa valeur par défaut à la déconnexion. Un
+   * visiteur dont la session précédente avait adopté un autre benchmark verrait
+   * donc des chiffres résolus dans ce benchmark-là, ou une exception si le
+   * palier n'y existe pas. D'où la prop : le panneau ne devine plus.
+   */
+  readonly benchmarkId: BenchmarkId;
   readonly tier: TierId;
   readonly computed: ComputedBenchRun;
   readonly scenarioCount: number;
@@ -34,12 +54,18 @@ interface SummaryPanelProps {
   readonly onTierChange: (tier: TierId) => void;
 }
 
-export function SummaryPanel({ tier, computed, scenarioCount, onTierChange }: SummaryPanelProps) {
+export function SummaryPanel({
+  benchmarkId,
+  tier,
+  computed,
+  scenarioCount,
+  onTierChange,
+}: SummaryPanelProps) {
   const { overall, rank, complete, subcategories, scores } = computed;
-  const color = rankColorFor(tier, overall);
-  const upcoming = nextRank(tier, overall);
+  const color = rankColorForBenchmark(benchmarkId, tier, overall);
+  const upcoming = nextRankFor(benchmarkId, tier, overall);
   const missing = subcategories.filter((sub) => sub.energy === 0);
-  const weakest = weakestView(tier, subcategories);
+  const weakest = weakestViewFor(benchmarkId, tier, subcategories);
   // `null` tant qu'aucune sous-catégorie n'est complète ; ignorée dès que
   // l'overall existe, puisqu'elle lui est alors égale.
   const partial =
@@ -72,7 +98,7 @@ export function SummaryPanel({ tier, computed, scenarioCount, onTierChange }: Su
         {showPartial ? (
           <SubcategoryProgress counted={partial.counted} total={partial.total} />
         ) : (
-          <EnergyRail tier={tier} energy={overall} emphasis />
+          <EnergyRail tier={tier} energy={overall} benchmarkId={benchmarkId} emphasis />
         )}
       </div>
 
@@ -131,7 +157,12 @@ export function SummaryPanel({ tier, computed, scenarioCount, onTierChange }: Su
             {weakest.kind === "capped" ? "Palier au plafond" : "Maillons faibles"}
           </p>
           {weakest.kind === "capped" ? (
-            <TierCapped tier={tier} next={weakest.next} onTierChange={onTierChange} />
+            <TierCapped
+              benchmarkId={benchmarkId}
+              tier={tier}
+              next={weakest.next}
+              onTierChange={onTierChange}
+            />
           ) : (
             <ul className="mt-3 space-y-2">
               {weakest.subcategories.map((sub) => (
@@ -187,6 +218,8 @@ function SubcategoryProgress({
 }
 
 interface TierCappedProps {
+  /** Le benchmark dont les libellés de paliers sont lus. */
+  readonly benchmarkId: BenchmarkId;
   readonly tier: TierId;
   /** Le palier au-dessus, `null` quand il n'y en a plus (Advanced). */
   readonly next: TierId | null;
@@ -200,26 +233,27 @@ interface TierCappedProps {
  * sélecteur : c'est le seul geste qui reste à faire ici. Au sommet d'Advanced
  * il n'y a rien à proposer — on le dit sobrement, sans inventer une suite.
  */
-function TierCapped({ tier, next, onTierChange }: TierCappedProps) {
+function TierCapped({ benchmarkId, tier, next, onTierChange }: TierCappedProps) {
   if (next === null) {
     return (
       <p className="mt-3 text-xs leading-relaxed text-steel-300">
-        Les 9 sous-catégories sont au plafond du palier {getTier(tier).label}. C'est le dernier du
-        benchmark Voltaic : il n'y a rien au-dessus.
+        Les 9 sous-catégories sont au plafond du palier {getTierFor(benchmarkId, tier).label}. C'est
+        le dernier du benchmark Voltaic : il n'y a rien au-dessus.
       </p>
     );
   }
   return (
     <>
       <p className="mt-3 text-xs leading-relaxed text-steel-300">
-        Tout est au plafond du palier {getTier(tier).label} — passe au palier supérieur.
+        Tout est au plafond du palier {getTierFor(benchmarkId, tier).label} — passe au palier
+        supérieur.
       </p>
       <button
         type="button"
         onClick={() => onTierChange(next)}
         className="mt-3 w-full rounded-lg border border-ember-600/60 bg-ember-600/10 px-3 py-2 text-xs font-semibold text-ember-400 transition-colors hover:bg-ember-600/20"
       >
-        Passer en {getTier(next).label} →
+        Passer en {getTierFor(benchmarkId, next).label} →
       </button>
     </>
   );

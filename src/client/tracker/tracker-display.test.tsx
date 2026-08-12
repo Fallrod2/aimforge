@@ -56,6 +56,7 @@ function summary(scores: Record<string, number>): string {
   return textOf(
     renderToStaticMarkup(
       <SummaryPanel
+        benchmarkId={currentBenchmark()}
         tier={TIER}
         computed={computeBenchRun(TIER, scores)}
         scenarioCount={listScenarios(TIER).length}

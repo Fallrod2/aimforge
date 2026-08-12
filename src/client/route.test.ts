@@ -4,6 +4,7 @@ import {
   AUTH_ROUTE,
   canonicalHash,
   DEFAULT_ROUTE,
+  DEMO_ROUTE,
   isLegalView,
   LEGAL_VIEWS,
   NAV_ITEMS,
@@ -22,13 +23,14 @@ const ALL_VIEWS: readonly ViewId[] = [
   "profile",
   "admin",
   "auth",
+  "demo",
   "privacy",
   "terms",
   "legal",
 ];
 
 /** Les vues qu'un visiteur sans session doit pouvoir ouvrir. */
-const PUBLIC_VIEWS: readonly ViewId[] = ["auth", "privacy", "terms", "legal"];
+const PUBLIC_VIEWS: readonly ViewId[] = ["auth", "demo", "privacy", "terms", "legal"];
 
 describe("parseRoute", () => {
   it("retombe sur l'accueil quand le hash est absent, vide ou inconnu", () => {
@@ -44,6 +46,7 @@ describe("parseRoute", () => {
     expect(parseRoute("#/profil").view).toBe("profile");
     expect(parseRoute("#/administration").view).toBe("admin");
     expect(parseRoute("#/connexion").view).toBe("auth");
+    expect(parseRoute("#/demo").view).toBe("demo");
     expect(parseRoute("#/confidentialite").view).toBe("privacy");
     expect(parseRoute("#/cgu").view).toBe("terms");
     expect(parseRoute("#/mentions-legales").view).toBe("legal");
@@ -180,7 +183,7 @@ describe("parseRoute · adresses d'avant V6", () => {
   }
 
   it("laisse les adresses qui n'ont pas bougé", () => {
-    for (const hash of ["#/coach", "#/profil", "#/administration", "#/connexion"]) {
+    for (const hash of ["#/coach", "#/profil", "#/administration", "#/connexion", "#/demo"]) {
       expect(canonicalHash(hash), hash).toBeNull();
     }
   });
@@ -292,10 +295,30 @@ describe("requiresSession", () => {
     }
   });
 
-  it("ne rend publique aucune vue de l'application", () => {
-    for (const view of ALL_VIEWS.filter((candidate) => candidate !== "auth")) {
-      expect(requiresSession(view), view).toBe(!isLegalView(view));
+  /**
+   * Rien de ce qui **lit des données d'utilisateur** n'est public. La liste
+   * blanche ne contient que des vues qui n'en lisent aucune : la connexion, les
+   * trois documents légaux, et la démonstration — qui calcule ses chiffres dans
+   * le navigateur et ne touche jamais Supabase (`demo/demo-data.ts`).
+   */
+  it("ne rend publique aucune vue qui lise des données de compte", () => {
+    for (const view of ALL_VIEWS.filter((candidate) => !PUBLIC_VIEWS.includes(candidate))) {
+      expect(requiresSession(view), view).toBe(true);
+      expect(isLegalView(view), view).toBe(false);
     }
+  });
+});
+
+describe("démonstration publique", () => {
+  it("s'ouvre sans session, à une adresse partageable", () => {
+    expect(requiresSession(DEMO_ROUTE.view)).toBe(false);
+    expect(routeHash(DEMO_ROUTE)).toBe("#/demo");
+    expect(parseRoute("#/demo")).toEqual(DEMO_ROUTE);
+  });
+
+  it("n'est ni un document légal ni un onglet de navigation", () => {
+    expect(isLegalView(DEMO_ROUTE.view)).toBe(false);
+    expect(NAV_ITEMS.some((item) => item.view === DEMO_ROUTE.view)).toBe(false);
   });
 });
 

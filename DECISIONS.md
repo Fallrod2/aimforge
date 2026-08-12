@@ -100,6 +100,33 @@ appliqué (coalesce → ''), login re-testé : 200. Le compte de test sera suppr
 en fin de chantier. Leçon consignée : ne jamais créer d'utilisateur GoTrue par
 INSERT partiel — passer par l'API admin ou renseigner toutes les colonnes texte.
 
+## D13 — Attente IA : pas de SSE, une attente honnête
+Les sorties IA sont du JSON validé côté serveur (police anti-hallucination,
+relance corrective, garde-fou de français) : streamer les jetons exposerait du
+texte non validé et casserait la relance. Décision : pas de SSE — à la place,
+génération portée par un état global (l'app reste navigable, le résultat
+atterrit où qu'on soit), squelette progressif honnête avec temps écoulé, erreur
+avec « Réessayer », et alignement des timeouts client/serveur/maxDuration.
+
+## D14 — Énergie partielle : affichage provisoire, moteur intact
+« Énergie partielle sur N/9 sous-catégories » = moyenne harmonique des seules
+sous-catégories complètes, fonction pure séparée, jamais persistée, toujours
+étiquetée « partiel », aucun rang dérivé. L'overall officiel (0 si bench
+incomplet) ne change pas — c'est la règle du benchmark, pas un bug.
+
+## D15 — Objectif de rang : préférence locale (localStorage)
+Le rang cible par benchmark+palier vit en localStorage : pas de migration pour
+une préférence d'affichage à un seul appareil ; à promouvoir en base si le
+besoin multi-appareil se confirme. Commenté dans le code.
+
+## D16 — Démo publique sans compte : le vrai moteur, des données d'exemple
+`#/demo` rend les composants réels du dashboard alimentés par une fabrique de
+données posées sur des ancres réelles du registre (aucun seuil inventé, tests
+qui recalculent l'affiché par le moteur). Bandeau « les chiffres sont un
+exemple », aucun appel réseau, pas de faux coach ni de fausses conversations.
+La landing rend les mêmes composants en visuels vivants plutôt que des
+captures figées : impossible à désynchroniser du produit.
+
 ## D9 — Piège d'outillage : gabarit d'environnement masqué par le sandbox
 Le sandbox de la session refuse la lecture des fichiers d'environnement à la
 racine : git voit alors le gabarit d'exemple comme « supprimé » alors qu'il

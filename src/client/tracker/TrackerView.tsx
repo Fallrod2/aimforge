@@ -378,6 +378,9 @@ export function TrackerView({ onSaved }: TrackerViewProps) {
         </div>
 
         <SummaryPanel
+          // Le benchmark **actif** du provider, nommé plutôt que supposé : le
+          // panneau ne lit plus le pointeur de la lib (cf. sa prop).
+          benchmarkId={benchmarkId}
           tier={tier}
           computed={computed}
           scenarioCount={scenarios.length}

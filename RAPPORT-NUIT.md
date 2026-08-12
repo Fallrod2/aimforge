@@ -88,7 +88,37 @@ rapport reflète toujours l'état réel au moment de sa dernière ligne.
   authentifiée a été interrompue deux fois (incident D12 puis limite de
   session) — relancée, résultat attendu.
 
-## Vague 3 — Crédibilité : EN COURS (13 h)
+## Vague 3 — Crédibilité : résultats mesurés (14 h)
+
+**3.1 Français IA — objectif atteint, preuves à l'appui.** Sur le VRAI chemin
+de prod (OpenRouter / deepseek-v4-flash, découvert en base — D11) :
+- avant durcissement : routine 7/20 sans faute, fil 16/20 ;
+- après durcissement + détecteur calibré : **routine 19/20 (zéro faute de
+  structure sur les 19 livrées ; le 20ᵉ est une non-livraison API), fil
+  20/20**. Vérification indépendante du reviewer : corpus adversarial
+  15 phrases correctes / 8 fautes réelles → 0 faux positif, 8/8 détectées.
+- La faute racine de prod est comprise et verrouillée : le modèle plaçait le
+  marqueur de citation en position de nom/sujet (« Ton [HS% 25.1] est ») —
+  règle au contact des citations + relecture finale + détecteur qui juge le
+  texte marqueurs retirés (ce que le joueur lit).
+- Garde-fou serveur `french-guard` branché sur les 5 chemins IA : répare la
+  typo mécanique, détecte sans réécrire, journalise.
+- Restent : la limite `chat` en constante (à porter en réglage un jour), le
+  budget de jetons face aux non-livraisons `reasoning_budget` (arbitrage
+  coût — non pris, documenté).
+
+**3.4 Quotas — une seule vérité.** Jour de quota = jour civil UTC (lu dans
+les 4 fonctions SQL, pas supposé) ; l'écran affiche « x/y aujourd'hui — se
+réinitialise à HH:MM » en heure locale, partout pareil (4 formulations
+divergentes remplacées, 5 messages 429 unifiés). L'incrément était déjà
+atomique (upsert `on conflict`) : prouvé par un test nommé, pas de migration.
+
+**3.5 Légal.** 3 pages publiques lazy (+ liste blanche de routes), footer
+global, consentement bloquant à l'inscription (y compris au clavier), mention
+OAuth. Aucune promesse fausse (suppression « sur demande »). Marquées « À
+faire relire par un juriste » — je ne le suis pas.
+
+**Anciennement « EN COURS (13 h) » :**
 
 - **3.1 Français IA** : cause racine identifiée et documentée (D11) — la prod
   sert `deepseek/deepseek-v4-flash-0731` via OpenRouter. Mesure réelle sur ce
@@ -116,7 +146,34 @@ rapport reflète toujours l'état réel au moment de sa dernière ligne.
   création par INSERT — colonnes tokens NULL. Confiné au compte de test,
   les comptes réels vérifiés sains ; corrigé, login re-testé 200.
 
-## Vagues 4 et 5 : non entamées à ce stade.
+## Vague 4 — Activation et stats : FAITE hors landing (commits `31c733e`, `b63e7dc` ; V4-B en cours)
+
+- **Énergie partielle** (D14) : harmonique des seules sous-catégories
+  complètes, pure, jamais persistée, aucun rang dérivé ; coïncide avec
+  l'overall à 9/9 (pas de saut). Moteur intact (diff vide sur energy.ts).
+- **Deltas** vs passe précédente (même palier ET benchmark), Accueil +
+  Historique ; « première passe » silencieuse.
+- **Records** par scénario (« PB 820 » sous chaque champ, badge Record live).
+- **Objectif de rang** sobre, seuils du registre, préférence locale (D15).
+- **Onboarding** première visite, grille desktop 2 colonnes, énergie live
+  dans la barre sticky mobile, export CSV Excel-FR.
+- **Attente IA** (D13) : état de génération global (app navigable pendant la
+  génération), squelette progressif honnête, Réessayer, budget modèle partagé.
+  **Bug de prod réel corrigé** : `api/coach.ts` pouvait dépasser son
+  maxDuration (45 s × 2 relances sous 60 s) → tué par la plateforme SANS
+  remboursement du quota. Désormais borné à 48 s, 504 rédigé et remboursé,
+  timeout client 70 s ajouté (il n'y en avait aucun).
+- **Streak** : jours consécutifs (fuseau local, DST-safe) + séances sur 7
+  jours, affiché sobrement, rien de plus.
+- Revue adversariale : APPROVE (recalculs à la main, arithmétique des budgets
+  vérifiée, injection CSV tracée). 1745 tests verts.
+- **V4-B en cours** : landing enrichie (visuels live du produit, extrait de
+  routine avec SOURCES, courbe exemple, « Gratuit pendant la bêta ») + démo
+  `#/demo` sans compte calculée par le vrai moteur.
+
+## Vague 5 : entamée ensuite — ordre par valeur/risque : confirmations
+destructives, contrastes WCAG mesurés + focus, design tokens, robots/sitemap/
+404, puis routing history + prerender (les plus risqués, en dernier).
 
 ## Templates email (Vague 3.6, fait en avance car sans conflit)
 `supabase/templates/` : 5 templates FR aux couleurs AimForge (contrastes

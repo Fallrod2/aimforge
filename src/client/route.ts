@@ -28,7 +28,15 @@
 
 import { MATCH_ID_MAX } from "../shared/valorant-contract";
 
-export type ViewId = "home" | "perfs" | "coach" | "profile" | "admin" | "auth" | LegalViewId;
+export type ViewId =
+  | "home"
+  | "perfs"
+  | "coach"
+  | "profile"
+  | "admin"
+  | "auth"
+  | "demo"
+  | LegalViewId;
 
 /**
  * Les trois documents légaux (vague 3.5).
@@ -41,8 +49,16 @@ export type ViewId = "home" | "perfs" | "coach" | "profile" | "admin" | "auth" |
  */
 export type LegalViewId = "privacy" | "terms" | "legal";
 
-/** Les vues de l'application proprement dite : tout sauf les pages légales. */
-export type AppViewId = Exclude<ViewId, LegalViewId>;
+/**
+ * Les vues de l'application proprement dite.
+ *
+ * Tout sauf les pages que l'application **héberge** sans les habiller : les
+ * trois documents légaux, et la démonstration publique. Celles-là portent leur
+ * propre coque (`LegalShell`, `DemoView`), n'ont ni onglet ni icône, et se
+ * lisent sans session — les faire entrer ici obligerait à leur inventer une
+ * entrée de navigation que personne n'affiche.
+ */
+export type AppViewId = Exclude<ViewId, LegalViewId | "demo">;
 
 /** Les trois pages légales, dans l'ordre où le pied de page les affiche. */
 export const LEGAL_VIEWS: readonly LegalViewId[] = ["privacy", "terms", "legal"];
@@ -102,6 +118,7 @@ const PATHS: Readonly<Record<ViewId, string>> = {
   profile: "profil",
   admin: "administration",
   auth: "connexion",
+  demo: "demo",
   privacy: "confidentialite",
   terms: "cgu",
   legal: "mentions-legales",
@@ -181,6 +198,15 @@ export const NAV_ITEMS: readonly NavItem[] = [
 export const ADMIN_ROUTE: Route = viewRoute("admin");
 
 /**
+ * La démonstration publique : l'application, avec des données d'exemple.
+ *
+ * Elle a une **adresse** et pas un bouton, pour la raison habituelle : c'est ce
+ * qui la rend partageable, indexable, et rechargeable. La landing y envoie, et
+ * un visiteur peut y arriver directement.
+ */
+export const DEMO_ROUTE: Route = viewRoute("demo");
+
+/**
  * Les vues accessibles **sans session**, et la raison de chacune.
  *
  * - `auth` : la page de connexion, évidemment — c'est par elle qu'on obtient
@@ -188,12 +214,16 @@ export const ADMIN_ROUTE: Route = viewRoute("admin");
  * - `privacy`, `terms`, `legal` : les trois documents légaux. Ils doivent être
  *   lisibles *avant* de créer un compte, puisque c'est en les acceptant qu'on
  *   s'inscrit, et rester lisibles par un visiteur qui n'en créera jamais — un
- *   document légal derrière un mur d'authentification n'est pas publié.
+ *   document légal derrière un mur d'authentification n'est pas publié ;
+ * - `demo` : la démonstration. Elle est publique **par construction** — elle ne
+ *   lit rien, elle calcule des données d'exemple dans le navigateur (cf.
+ *   `demo/demo-data.ts`) — et c'est tout l'intérêt : on ne demande pas de créer
+ *   un compte pour savoir à quoi ressemble le produit.
  *
  * La liste est **blanche** et non noire : une vue ajoutée demain est protégée
  * par défaut, et ne devient publique que si quelqu'un l'écrit ici.
  */
-const PUBLIC_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["auth", ...LEGAL_VIEWS]);
+const PUBLIC_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["auth", "demo", ...LEGAL_VIEWS]);
 
 /** Une vue exige-t-elle une session ? Tout ce qui n'est pas public. */
 export function requiresSession(view: ViewId): boolean {

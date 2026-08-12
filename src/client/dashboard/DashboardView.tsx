@@ -53,7 +53,14 @@ import { deltaOf, previousRun, subcategoryDeltas } from "../run-delta";
 import { ValorantInsightsPanel } from "../valorant/InsightsPanel";
 import { latestRun, weakestSubcategories } from "./summary";
 
-type Bench =
+/**
+ * L'état de l'emplacement « dernier bench ».
+ *
+ * Exporté depuis V4-B pour la **démonstration publique** (`demo/DemoView`), qui
+ * rend les mêmes cartes avec des données calculées localement : la démo montre
+ * le produit, elle ne montre pas une copie du produit.
+ */
+export type Bench =
   | { readonly status: "loading" }
   /** Aucune passe, ou base injoignable : dans les deux cas, rien à montrer. */
   | { readonly status: "empty"; readonly reason: string | null }
@@ -247,13 +254,14 @@ export function DashboardView() {
   );
 }
 
-interface CardProps {
+export interface CardProps {
   readonly title: string;
   readonly action?: { readonly href: string; readonly label: string };
   readonly children: ReactNode;
 }
 
-function Card({ title, action, children }: CardProps) {
+/** La coque d'un emplacement du tableau de bord ; la démonstration la reprend. */
+export function Card({ title, action, children }: CardProps) {
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-steel-800 bg-steel-900/60 p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
@@ -507,7 +515,8 @@ function LastDebrief({ latest }: { readonly latest: Latest }) {
   );
 }
 
-function Weaknesses({ bench }: { readonly bench: Bench }) {
+/** Les trois sous-catégories les plus basses et leur écart ; reprise par la démo. */
+export function Weaknesses({ bench }: { readonly bench: Bench }) {
   if (bench.status === "loading") return <Skeleton />;
   if (bench.status === "empty") {
     return (

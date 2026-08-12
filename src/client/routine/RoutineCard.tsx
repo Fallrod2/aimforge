@@ -204,7 +204,7 @@ export function RoutineCard({
             <p className="text-sm leading-relaxed text-steel-300">{routine.conseil}</p>
           </Section>
 
-          <Sources sources={routine.sources ?? []} />
+          <RoutineSources sources={routine.sources ?? []} />
 
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-steel-800 pt-4">
             <button
@@ -287,8 +287,12 @@ function BenchOnlyBanner({ routine }: { readonly routine: StoredRoutine }) {
  * Rendus en puces plutôt que laissés dans le texte : la phrase reste lisible, et
  * la donnée reste vérifiable. Rien à afficher quand la liste est vide — une
  * routine sans source n'a rien à prouver, elle n'a rien avancé.
+ *
+ * Exporté depuis V4-B : la landing montre ce bloc sur une routine d'exemple,
+ * parce que c'est lui qui porte la promesse (« chaque chiffre est vérifié »).
+ * Le montrer avec un autre composant reviendrait à montrer autre chose.
  */
-function Sources({ sources }: { readonly sources: readonly RoutineSource[] }) {
+export function RoutineSources({ sources }: { readonly sources: readonly RoutineSource[] }) {
   if (sources.length === 0) return null;
 
   return (

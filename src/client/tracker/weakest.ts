@@ -15,7 +15,7 @@ import {
   type BenchmarkId,
   type ComputedSubcategory,
   currentBenchmark,
-  getTier,
+  getTierFor,
   type TierId,
   tierIdsFor,
 } from "../../lib/energy";
@@ -56,8 +56,12 @@ export function nextTierAfter(
  * se rejoignent dès que le bench est complet, puisque les trois plus faibles
  * sont alors le minimum des neuf.
  */
-export function atTierCap(tier: TierId, subcategories: readonly ComputedSubcategory[]): boolean {
-  const { maxEnergy } = getTier(tier);
+export function atTierCapFor(
+  benchmarkId: BenchmarkId,
+  tier: TierId,
+  subcategories: readonly ComputedSubcategory[],
+): boolean {
+  const { maxEnergy } = getTierFor(benchmarkId, tier);
 
   return (
     subcategories.length > 0 &&
@@ -65,13 +69,26 @@ export function atTierCap(tier: TierId, subcategories: readonly ComputedSubcateg
   );
 }
 
-/** Ce qu'il faut afficher : la liste, l'invitation à monter, ou rien. */
-export function weakestView(
+export function atTierCap(tier: TierId, subcategories: readonly ComputedSubcategory[]): boolean {
+  return atTierCapFor(currentBenchmark(), tier, subcategories);
+}
+
+/**
+ * Ce qu'il faut afficher, **aux données de `benchmarkId`** : la liste,
+ * l'invitation à monter, ou rien.
+ *
+ * Le plafond (`maxEnergy`) et l'existence d'un palier au-dessus sont deux faits
+ * du benchmark, pas du domaine (DECISIONS.md D5) : les résoudre sur le
+ * benchmark ambiant ferait dire « tout est au plafond » à une passe qui ne l'est
+ * pas — ou lever, si le palier n'existe pas dans le benchmark ambiant.
+ */
+export function weakestViewFor(
+  benchmarkId: BenchmarkId,
   tier: TierId,
   subcategories: readonly ComputedSubcategory[],
 ): WeakestView {
-  if (atTierCap(tier, subcategories)) {
-    return { kind: "capped", next: nextTierAfter(tier) };
+  if (atTierCapFor(benchmarkId, tier, subcategories)) {
+    return { kind: "capped", next: nextTierAfter(tier, benchmarkId) };
   }
 
   const scored = subcategories.filter((subcategory) => subcategory.energy > 0);
@@ -81,4 +98,12 @@ export function weakestView(
     kind: "list",
     subcategories: [...scored].sort((a, b) => a.energy - b.energy).slice(0, WEAKEST_COUNT),
   };
+}
+
+/** Ce qu'il faut afficher : la liste, l'invitation à monter, ou rien. */
+export function weakestView(
+  tier: TierId,
+  subcategories: readonly ComputedSubcategory[],
+): WeakestView {
+  return weakestViewFor(currentBenchmark(), tier, subcategories);
 }

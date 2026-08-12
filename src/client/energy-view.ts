@@ -116,12 +116,27 @@ export function nextTarget(tier: TierId, scenarioName: string, score: number): N
   return null;
 }
 
-/** Le prochain rang overall du palier, ou `null` si le dernier est atteint. */
-export function nextRank(tier: TierId, overall: number): NextRank | null {
-  for (const rank of getTier(tier).overallRanks) {
+/**
+ * Le prochain rang overall du palier de `benchmarkId`, ou `null` au dernier.
+ *
+ * Les rangs et leurs seuils appartiennent au benchmark : un panneau qui décrit
+ * une passe donnée doit nommer le sien, sans quoi il annonce « il manque X pour
+ * Jade » d'après le barème d'un autre.
+ */
+export function nextRankFor(
+  benchmarkId: BenchmarkId,
+  tier: TierId,
+  overall: number,
+): NextRank | null {
+  for (const rank of getTierFor(benchmarkId, tier).overallRanks) {
     if (overall < rank.minEnergy) {
       return { rank, missing: rank.minEnergy - overall };
     }
   }
   return null;
+}
+
+/** Le prochain rang overall du palier, ou `null` si le dernier est atteint. */
+export function nextRank(tier: TierId, overall: number): NextRank | null {
+  return nextRankFor(currentBenchmark(), tier, overall);
 }

@@ -26,6 +26,11 @@
  * - **l'administration**, parce que presque personne ne l'ouvrira jamais : elle
  *   n'existe que pour les administrateurs (SPEC §5 quater), et il n'y a aucune
  *   raison de la faire télécharger à tous les autres ;
+ * - **la démonstration publique** (`demo/DemoView`), parce qu'elle n'est ouverte
+ *   que par les visiteurs qui cliquent « Voir la démo » : la faire peser sur la
+ *   landing, que tout le monde voit, coûterait à tous ce que quelques-uns
+ *   demandent. Elle est **publique** et sans session comme avec — elle ne lit
+ *   rien, elle calcule ses chiffres dans le navigateur ;
  * - **les trois documents légaux** (`legal/pages`), pour la même raison : du
  *   texte long, ouvert une fois, qui n'a rien à faire dans le premier
  *   chargement. Ils sont en revanche **publics** — la garde d'authentification
@@ -70,6 +75,15 @@ const MatchView = lazy(async () => ({
 
 const AdminView = lazy(async () => ({
   default: (await import("./admin/AdminView")).AdminView,
+}));
+
+/**
+ * La démonstration publique (`#/demo`), différée pour la raison habituelle :
+ * c'est un écran que la plupart des visiteurs n'ouvriront pas, et le charger
+ * d'office alourdirait la landing — la page qu'ils voient tous.
+ */
+const DemoView = lazy(async () => ({
+  default: (await import("./demo/DemoView")).DemoView,
 }));
 
 function currentRoute(): Route {
@@ -138,6 +152,18 @@ function Routed() {
   // Un lien « mot de passe oublié » ouvre une session : elle ne doit servir
   // qu'à choisir le nouveau mot de passe, jamais à parcourir l'application.
   if (recovering) return <RecoveryView />;
+
+  // La démonstration est la **même page pour tout le monde** : elle ne lit
+  // aucune donnée d'utilisateur, donc elle n'a pas à savoir s'il y a une
+  // session. Elle porte sa propre coque (marque, bandeau, pied de page) et
+  // passe donc avant `AppLayout`, qui ferait doublon.
+  if (route.view === "demo") {
+    return (
+      <Suspense fallback={<ViewLoading />}>
+        <DemoView />
+      </Suspense>
+    );
+  }
 
   if (!authenticated) {
     // Les documents légaux sont publics (cf. `requiresSession`) : sans session
