@@ -1,33 +1,33 @@
 /**
- * L'onglet Valorant (SPEC §5 sexies, V2) : vue d'ensemble, tendances,
- * ventilations, pont bench ↔ in-game, liste des parties — et, derrière
- * `#/valorant?match=<id>`, la page d'une partie.
+ * Ce que disent les parties classées : vue d'ensemble, tendances, ventilations,
+ * pont bench ↔ in-game, liste des parties (SPEC §5 sexies).
+ *
+ * C'était l'onglet Valorant ; depuis V6, c'est **le fond du bloc Valorant de
+ * l'accueil**, ouvert à la demande. Le raisonnement : le rang et les trois
+ * dernières parties répondent à « où j'en suis », et c'est ce que l'accueil doit
+ * dire tout de suite ; les courbes répondent à « qu'est-ce que ça donne dans le
+ * temps », et ça se demande. Un onglet permanent pour cette seconde question
+ * faisait payer sa place à tout le monde, tous les jours.
  *
  * ## Ce qui est chargé, et quand
  *
- * Trois lectures, indépendantes, dont deux peuvent échouer sans emporter
- * l'écran :
+ * Deux lectures indépendantes, dont une peut échouer sans emporter le bloc :
  *
- * - les **comptes liés** décident de tout : sans Riot ID lié, la vue n'est pas
- *   vide, elle invite à en lier un (patron `LinkInvite`, comme le tracker et le
- *   dashboard) ;
  * - les **agrégats** (`api/valorant/stats`) sont le cœur : leur échec est dit,
  *   avec un « Réessayer » ;
  * - les **passes de bench** ne servent qu'au pont ; leur échec fait disparaître
  *   la section, il n'alarme pas — on n'interrompt pas la lecture des stats de
  *   jeu parce qu'une courbe d'entraînement manque.
  *
- * Les **figures sont chargées à la demande** (`ValorantCharts`), pour la même
- * raison que l'historique : Recharts tire d3 et un store Redux, et le tableau
- * de bord n'a aucune raison de les télécharger. La vue elle-même est déjà
- * derrière un `lazy` dans `App.tsx` ; ce second découpage garde le chunk de la
- * vue léger, pour que les chiffres s'affichent avant les courbes.
+ * Les **figures sont elles-mêmes différées** (`ValorantCharts`), pour la même
+ * raison que l'historique des perfs : Recharts tire d3 et un store Redux. Ce
+ * second découpage garde le chunk du bloc léger, pour que les chiffres
+ * s'affichent avant les courbes.
  *
- * ## Le rafraîchissement
- *
- * Le bouton relance `api/valorant/refresh` (l'import des parties depuis la
- * source) **puis** relit les agrégats. L'ordre compte : relire les agrégats
- * seuls ne montrerait jamais une partie jouée depuis la dernière ouverture.
+ * Le **rafraîchissement** n'est pas ici mais dans `LinkedAccountsPanel` /
+ * `ValorantPanel`, juste au-dessus : c'est lui qui va chercher les parties chez
+ * la source. Ce bloc, lui, relit les agrégats à chaque montage — donc à chaque
+ * ouverture du repli, après un rafraîchissement.
  */
 
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -40,19 +40,14 @@ import {
   getValorantStats,
   type LinkedAccount,
   listBenchRuns,
-  primaryAccount,
-  refreshRiotAccount,
   type TrendPoint,
   type ValorantStatsResponse,
 } from "../data";
-import { LinkInvite } from "../linked/LinkInvite";
-import { useLinkedAccounts } from "../linked/useLinkedAccounts";
 import { BreakdownTables } from "./BreakdownTables";
 import { type Bridge, buildBridge } from "./bridge";
 import { formatCount } from "./display";
 import { MatchList } from "./MatchList";
-import { MatchView } from "./MatchView";
-import { Overview, RankHeader } from "./Overview";
+import { Overview } from "./Overview";
 import { PERIOD_CAPTIONS, type PeriodId, totalsFor, trendWithin } from "./periods";
 import { paddedDomain } from "./scale";
 import { buildTrendSeries, hasValues, metricSeries } from "./series";
@@ -71,87 +66,17 @@ type Stats =
   | { readonly status: "error"; readonly message: string }
   | { readonly status: "ready"; readonly response: ValorantStatsResponse };
 
-interface ValorantViewProps {
-  /** Partie ouverte, portée par la route ; `null` = la vue d'ensemble. */
-  readonly matchId: string | null;
-  readonly onOpenMatch: (matchId: string | null) => void;
+interface ValorantInsightsProps {
+  /** Le compte Riot principal : le bloc n'existe pas sans lui. */
+  readonly account: LinkedAccount;
 }
 
-export function ValorantView({ matchId, onOpenMatch }: ValorantViewProps) {
-  // Deux écrans, deux composants : la page de match n'a aucune raison de lire
-  // les comptes liés, et un `useLinkedAccounts` appelé pour être ignoré ferait
-  // une requête à chaque ouverture de partie.
-  if (matchId !== null) {
-    return <MatchView matchId={matchId} onBack={() => onOpenMatch(null)} />;
-  }
-  return <ProfileScreen />;
-}
-
-/** La vue d'ensemble : elle commence par savoir s'il y a un compte Riot lié. */
-function ProfileScreen() {
-  const linked = useLinkedAccounts();
-
-  if (linked.state.status === "loading") {
-    return (
-      <div className="flex flex-col gap-4">
-        <Header />
-        <Skeleton lines={4} />
-      </div>
-    );
-  }
-
-  if (linked.state.status === "error") {
-    return (
-      <div className="flex flex-col gap-4">
-        <Header />
-        <Notice tone="error" title="Comptes liés indisponibles." onRetry={linked.reload}>
-          {linked.state.message}
-        </Notice>
-      </div>
-    );
-  }
-
-  const account = primaryAccount(linked.state.accounts, "riot");
-
-  if (account === null) {
-    return (
-      <div className="flex flex-col gap-4">
-        <Header />
-        <LinkInvite title="Suis tes parties sans rien saisir">
-          Lie ton Riot ID : ton rang, tes parties classées, ton HS% et ton ADR partie après partie
-          apparaîtront ici, et le coach pourra débriefer un match sans que tu colles quoi que ce
-          soit.
-        </LinkInvite>
-      </div>
-    );
-  }
-
-  return <Live account={account} />;
-}
-
-function Header() {
-  return (
-    <div>
-      <h1 className="text-lg font-semibold text-steel-100">Valorant</h1>
-      <p className="mt-0.5 text-xs text-steel-500">
-        Ce que disent tes parties classées — et ce que ton entraînement y change.
-      </p>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* La vue, une fois le compte connu                                    */
-/* ------------------------------------------------------------------ */
-
-function Live({ account }: { readonly account: LinkedAccount }) {
+export function ValorantInsights({ account }: ValorantInsightsProps) {
   // Le pont bench/in-game ne trace que les passes du benchmark **actif** : deux
   // benchmarks n'ont pas la même échelle d'énergie, et la courbe n'a qu'un axe.
   const { benchmarkId } = useActiveBenchmark();
   const [stats, setStats] = useState<Stats>({ status: "loading" });
   const [period, setPeriod] = useState<PeriodId>("last30Days");
-  const [refreshing, setRefreshing] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [runs, setRuns] = useState<readonly BenchRunSummary[]>([]);
   const [debriefed, setDebriefed] = useState<ReadonlyMap<string, number>>(new Map());
 
@@ -175,7 +100,7 @@ function Live({ account }: { readonly account: LinkedAccount }) {
     let cancelled = false;
 
     // Deux lectures d'appoint : le pont et les badges. Ni l'une ni l'autre ne
-    // doit faire échouer l'écran — leur absence se voit, elle ne s'annonce pas.
+    // doit faire échouer le bloc — leur absence se voit, elle ne s'annonce pas.
     void listBenchRuns()
       .then((loaded) => {
         if (!cancelled) setRuns(loaded);
@@ -196,23 +121,6 @@ function Live({ account }: { readonly account: LinkedAccount }) {
     };
   }, []);
 
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    setNotice(null);
-    try {
-      await refreshRiotAccount(account.id);
-      await load();
-    } catch (cause) {
-      // Une source non configurée ou injoignable n'est pas une panne de l'écran :
-      // on le dit en petit et on laisse à l'affichage ce qu'on avait déjà.
-      setNotice(
-        cause instanceof Error ? cause.message : "Rang et parties n'ont pas pu être mis à jour.",
-      );
-    } finally {
-      setRefreshing(false);
-    }
-  }, [account.id, load]);
-
   const response = stats.status === "ready" ? stats.response : null;
   const trend = useMemo(
     () => (response === null ? [] : trendWithin(response.stats.trend, period)),
@@ -224,15 +132,7 @@ function Live({ account }: { readonly account: LinkedAccount }) {
   );
 
   return (
-    <div className="flex flex-col gap-6">
-      <Header />
-      <RankHeader
-        account={account}
-        refreshing={refreshing}
-        onRefresh={() => void refresh()}
-        notice={notice}
-      />
-
+    <div className="flex flex-col gap-4">
       {stats.status === "loading" ? <Skeleton lines={4} /> : null}
 
       {stats.status === "error" ? (
@@ -247,8 +147,9 @@ function Live({ account }: { readonly account: LinkedAccount }) {
 
       {response === null ? null : response.matchCount === 0 ? (
         <Notice tone="empty" title="Aucune partie importée pour l'instant.">
-          Lance « Rafraîchir » : les dernières parties classées de {account.externalId} seront
-          importées, puis analysées ici. Sans partie, il n'y a ni tendance ni scoreboard à montrer.
+          Lance « Rafraîchir » juste au-dessus : les dernières parties classées de{" "}
+          {account.externalId} seront importées, puis analysées ici. Sans partie, il n'y a ni
+          tendance ni scoreboard à montrer.
         </Notice>
       ) : (
         <>

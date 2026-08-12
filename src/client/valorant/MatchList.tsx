@@ -7,7 +7,7 @@
  * pourrait lire qu'en survolant un point serait une valeur inaccessible au
  * clavier — les figures survolent, elles ne gardent rien pour elles.
  *
- * Chaque ligne est un lien vers `#/valorant?match=<id>` : une adresse, donc un
+ * Chaque ligne est un lien vers `#/accueil?match=<id>` : une adresse, donc un
  * clic du milieu, un « ouvrir dans un nouvel onglet » et un partage de lien
  * marchent comme partout ailleurs.
  */
@@ -63,7 +63,7 @@ function MatchRow({
 }) {
   return (
     <a
-      href={routeHash({ view: "valorant", matchId: match.matchId })}
+      href={routeHash({ view: "home", matchId: match.matchId })}
       className="flex items-baseline justify-between gap-3 rounded-lg bg-steel-950/60 px-3 py-2 transition-colors hover:bg-steel-800/60"
     >
       <div className="min-w-0">

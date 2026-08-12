@@ -1,10 +1,16 @@
 /**
- * Dashboard : les quatre emplacements de la synthèse, dans leur ordre de
+ * Accueil : les quatre emplacements de la synthèse, dans leur ordre de
  * lecture (où j'en suis · ce qui coince · quoi faire aujourd'hui · ce que
- * disait la dernière partie).
+ * disait la dernière partie), plus le bloc Valorant.
  *
- * Les quatre viennent de Supabase (`../data`), comme le tracker et
- * l'historique.
+ * Les quatre viennent de Supabase (`../data`), comme les perfs.
+ *
+ * **Le bloc Valorant n'apparaît que pour un Riot ID lié** (V6). C'est la
+ * contrepartie de la disparition de l'onglet : sans compte lié il n'y avait rien
+ * à montrer, et une carte qui n'aurait porté qu'une invitation à lier ferait de
+ * l'accueil une page de réglages. L'invitation vit au Profil, avec les autres
+ * comptes. Tant que la lecture des comptes n'a pas répondu, le bloc reste en
+ * place : le faire apparaître après coup ferait sauter la grille.
  *
  * Sur un compte neuf, l'emplacement « dernier bench » ne montre pas un vide
  * mais **le chemin le plus court vers une passe** : lier son pseudo KovaaK's,
@@ -31,6 +37,7 @@ import {
   listBenchRuns,
   listDebriefs,
   listRoutines,
+  primaryAccount,
 } from "../data";
 import { rankColorForBenchmark } from "../energy-view";
 import { formatEnergy, formatRunDate } from "../format";
@@ -40,6 +47,7 @@ import { ValorantPanel } from "../linked/ValorantPanel";
 import { type RouteTarget, routeHash } from "../route";
 import { formatDuration } from "../routine/duration";
 import { routineOfToday } from "../routine/today";
+import { ValorantInsightsPanel } from "../valorant/InsightsPanel";
 import { latestRun, weakestSubcategories } from "./summary";
 
 type Bench =
@@ -51,7 +59,7 @@ type Bench =
 /**
  * L'état de la routine du jour. `empty` couvre les deux cas où il n'y a rien à
  * montrer — aucune routine ouverte aujourd'hui, ou lecture impossible : dans
- * les deux cas, le bon geste proposé est le même (ouvrir la page Routine).
+ * les deux cas, le bon geste proposé est le même (ouvrir l'espace Coach).
  */
 type Today =
   | { readonly status: "loading" }
@@ -64,20 +72,17 @@ type Latest =
   | { readonly status: "empty"; readonly reason: string | null }
   | { readonly status: "ready"; readonly debrief: StoredDebrief };
 
-const TRACKER_HASH = routeHash({ view: "tracker", runId: null });
+const TRACKER_HASH = routeHash({ view: "perfs", tab: "saisie" });
 
-const ROUTINE_HASH = routeHash({ view: "routine", runId: null });
-
-const COACH_HASH = routeHash({ view: "coach", runId: null });
-
-const VALORANT_HASH = routeHash({ view: "valorant" });
+/** La routine vit dans l'espace Coach depuis V6 : une seule adresse pour deux. */
+const COACH_HASH = routeHash({ view: "coach" });
 
 /** Le geste principal d'un emplacement vide. Un seul par carte, jamais deux. */
 const PRIMARY_ACTION =
   "rounded-lg bg-ember-600 px-3 py-2 text-xs font-semibold text-steel-100 transition-colors hover:bg-ember-500";
 
 function historyHash(runId: number | null): string {
-  const route: RouteTarget = { view: "history", runId };
+  const route: RouteTarget = { view: "perfs", tab: "historique", runId };
 
   return routeHash(route);
 }
@@ -96,6 +101,17 @@ export function DashboardView() {
     linked.state.status === "ready"
       ? accountsOf(linked.state.accounts, "kovaaks").length > 0
       : null;
+  /**
+   * Le compte Riot principal, `null` tant qu'on ne sait pas — ou s'il n'y en a
+   * pas. Il commande deux choses : l'existence du bloc Valorant (voir plus bas)
+   * et celle de son repli d'analyse, qui n'a de sens que rattaché à un compte.
+   */
+  const riot =
+    linked.state.status === "ready" ? primaryAccount(linked.state.accounts, "riot") : null;
+  // Le bloc disparaît quand on **sait** qu'aucun Riot ID n'est lié. Pendant le
+  // chargement et en cas d'échec de lecture, il reste : le panneau dit lui-même
+  // où il en est, et c'est mieux qu'une grille qui se réorganise après coup.
+  const showValorant = linked.state.status !== "ready" || riot !== null;
 
   const loadLatest = useCallback(async () => {
     setLatest({ status: "loading" });
@@ -178,21 +194,24 @@ export function DashboardView() {
         </Card>
 
         {/* Le rang Valorant tient sur toute la largeur : c'est le seul
-            emplacement qui porte une liste (les dernières parties). Depuis V2
-            (SPEC §5 sexies) il n'en montre que trois et renvoie vers l'onglet
-            Valorant, qui porte les tendances, les ventilations et les
-            scoreboards — le dashboard résume, il n'analyse pas. */}
-        <div className="lg:col-span-2 lg:order-last">
-          <Card title="Valorant" action={{ href: VALORANT_HASH, label: "Voir tout" }}>
-            <ValorantPanel state={linked.state} />
-          </Card>
-        </div>
+            emplacement qui porte une liste (les trois dernières parties, chacune
+            un lien vers son scoreboard). Le reste — tendances, ventilations,
+            pont bench ↔ in-game — est dans le repli en pied de carte : l'accueil
+            résume, et il n'analyse que si on le lui demande. */}
+        {showValorant ? (
+          <div className="lg:col-span-2 lg:order-last">
+            <Card title="Valorant">
+              <ValorantPanel state={linked.state} />
+              {riot === null ? null : <ValorantInsightsPanel account={riot} />}
+            </Card>
+          </div>
+        ) : null}
 
         <Card title="Sous-catégories les plus faibles">
           <Weaknesses bench={bench} />
         </Card>
 
-        <Card title="Routine du jour" action={{ href: ROUTINE_HASH, label: "Routine" }}>
+        <Card title="Routine du jour" action={{ href: COACH_HASH, label: "Coach" }}>
           <TodayRoutine today={today} />
         </Card>
 
@@ -250,7 +269,7 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
           <Placeholder headline="Aucune passe enregistrée." detail={bench.reason} />
           <div className="flex gap-2">
             <a href={TRACKER_HASH} className={PRIMARY_ACTION}>
-              Ouvrir le tracker
+              Saisir une passe
             </a>
             <button
               type="button"
@@ -272,7 +291,7 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
       return (
         <div className="flex flex-col gap-3">
           <LinkInvite title="Tes 18 scores peuvent arriver tout seuls" action="Lier KovaaK's">
-            Lie ton pseudo kovaaks.com une fois : le tracker ira chercher tes scores du benchmark
+            Lie ton pseudo kovaaks.com une fois : la saisie ira chercher tes scores du benchmark
             Voltaic, tu vérifies, tu enregistres.
           </LinkInvite>
           <a
@@ -289,10 +308,10 @@ function LastBench({ bench, kovaaksLinked, onRetry }: LastBenchProps) {
       <div className="flex flex-col items-start gap-3">
         <Placeholder
           headline="Aucune passe enregistrée."
-          detail="Ouvre le tracker : tes scores KovaaK's s'y importent en un clic, et la saisie manuelle reste là pour les corriger."
+          detail="Ouvre la saisie des perfs : tes scores KovaaK's s'y importent en un clic, et la saisie manuelle reste là pour les corriger."
         />
         <a href={TRACKER_HASH} className={PRIMARY_ACTION}>
-          Ouvrir le tracker
+          Saisir une passe
         </a>
       </div>
     );
@@ -345,7 +364,7 @@ function TodayRoutine({ today }: { readonly today: Today }) {
             "Dis combien de temps tu as : la séance partira des sous-catégories basses de ton dernier bench et des axes de tes derniers debriefs."
           }
         />
-        <a href={ROUTINE_HASH} className={PRIMARY_ACTION}>
+        <a href={COACH_HASH} className={PRIMARY_ACTION}>
           Générer une routine
         </a>
       </div>
@@ -355,7 +374,7 @@ function TodayRoutine({ today }: { readonly today: Today }) {
   const { routine } = today;
 
   return (
-    <a href={ROUTINE_HASH} className="flex flex-col gap-2">
+    <a href={COACH_HASH} className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-3">
         <p className="min-w-0 text-sm text-steel-100">{routine.titre}</p>
         <p className="shrink-0 font-mono text-sm tabular-nums text-steel-400">

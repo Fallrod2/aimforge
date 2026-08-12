@@ -222,10 +222,10 @@ export function HistoryView({ focusRunId, onFocusRun }: HistoryViewProps) {
       {tierRuns.length === 0 ? (
         <Notice tone="empty" title={`Aucune passe en ${getTier(activeTier).label}.`}>
           {otherTierCount > 0
-            ? "Change de palier ci-dessus, ou enregistre une passe depuis le tracker."
+            ? "Change de palier ci-dessus, ou enregistre une passe depuis la saisie."
             : otherBenchmarkCount > 0
               ? `L'historique ne montre que le barème ${benchmark.name} : ${otherBenchmarkCount} passe${otherBenchmarkCount > 1 ? "s" : ""} d'un autre barème en ${otherBenchmarkCount > 1 ? "sont" : "est"} écartée${otherBenchmarkCount > 1 ? "s" : ""}, ses seuils n'étant pas comparables.`
-              : "Saisis tes scores dans le tracker puis sauvegarde : la passe apparaîtra ici."}
+              : "Passe en Saisie, entre tes scores puis sauvegarde : la passe apparaîtra ici."}
         </Notice>
       ) : (
         <>

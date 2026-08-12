@@ -2,8 +2,9 @@
  * La page d'une partie (SPEC §5 sexies, V2) : scoreboard des dix joueurs,
  * performance par side, déroulé des rounds.
  *
- * Elle vit derrière `#/valorant?match=<id>` — une **adresse**, pas un panneau
- * déplié : un lien vers une partie doit survivre au rechargement.
+ * Elle vit derrière `#/accueil?match=<id>` — une **adresse**, pas un panneau
+ * déplié : un lien vers une partie doit survivre au rechargement. (C'était
+ * `#/valorant?match=<id>` jusqu'à V6 ; le routeur lit encore cette adresse-là.)
  *
  * Trois partis pris :
  *
@@ -66,7 +67,7 @@ type Detail =
 
 interface MatchViewProps {
   readonly matchId: string;
-  /** Retour à la vue d'ensemble ; le routeur reste maître de l'adresse. */
+  /** Retour au tableau de bord ; le routeur reste maître de l'adresse. */
   readonly onBack: () => void;
 }
 
@@ -189,7 +190,7 @@ export function MatchView({ matchId, onBack }: MatchViewProps) {
           onClick={onBack}
           className="text-xs text-steel-500 transition-colors hover:text-steel-200"
         >
-          ← Toutes les parties
+          ← Retour à l'accueil
         </button>
         <h1 className="mt-2 text-lg font-semibold text-steel-100">
           {state.status === "ready" ? (state.detail.map ?? "Partie") : "Partie"}

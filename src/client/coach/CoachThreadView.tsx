@@ -82,7 +82,7 @@ const CHIPS = [
 const ANALYSE_LAST_MATCH = "Analyse mon dernier match";
 
 const NO_MATCH_TO_DEBRIEF =
-  "Aucun match importé en attente de debrief. Importe une partie depuis le tracker, ou colle tes stats dans l'historique ci-dessous.";
+  "Aucun match importé en attente de debrief. Rafraîchis le bloc Valorant de l'accueil, ou colle tes stats dans l'historique ci-dessous.";
 
 const CARD_NOT_POSTED =
   "Le debrief est généré, mais sa carte n'a pas pu être posée dans le fil. Il est ouvert dans l'historique, juste en dessous.";
@@ -309,7 +309,10 @@ export function CoachThreadView() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold text-steel-100">Coach</h2>
+          {/* « Fil du coach » et non « Coach » depuis V6 : le titre de la
+              section est porté par `CoachSpace`, qui coiffe aussi la routine du
+              jour. Deux « Coach » l'un sous l'autre ne diraient rien de plus. */}
+          <h2 className="text-sm font-semibold text-steel-100">Fil du coach</h2>
           <p className="mt-0.5 text-xs text-steel-500">
             Une seule conversation, qui connaît tes matchs, ton dernier bench et ton profil.
           </p>

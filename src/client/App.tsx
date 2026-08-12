@@ -1,27 +1,34 @@
 /**
  * Racine de l'application : routage par hash, garde d'authentification, choix
- * de la vue.
+ * de la section.
  *
  * La garde est ici et nulle part ailleurs — une vue n'a jamais à vérifier
  * elle-même qu'il y a une session. Sans session, tout ce qui n'est pas la page
  * de connexion affiche la landing **sans changer le hash** : l'adresse
  * demandée survit à la connexion, et l'utilisateur atterrit là où il allait.
  *
- * Trois vues sont chargées à la demande, pour deux raisons différentes :
+ * ## Trois sections (V6)
  *
- * - **l'historique** et **Valorant**, parce que leurs courbes tirent Recharts,
- *   et Recharts tire d3 et un store Redux — environ un tiers du bundle pour des
- *   écrans que personne ne voit au premier chargement (l'application ouvre sur
- *   le tableau de bord). Valorant pousse le découpage d'un cran : ses figures
- *   sont elles-mêmes différées à l'intérieur de la vue, pour que ses chiffres
- *   s'affichent sans attendre ses graphes ;
+ * `Accueil` (tableau de bord, et la page d'une partie derrière
+ * `?match=<id>`), `Perfs` (saisie et historique) et `Coach` (routine du jour et
+ * fil). Les anciennes adresses sont toujours lues par `parseRoute` et
+ * **réécrites** ici, une fois, avec `history.replaceState` : un favori
+ * `#/historique?run=12` ouvre la bonne passe et l'adresse redevient canonique
+ * sans empiler d'entrée dans l'historique du navigateur.
+ *
+ * ## Ce qui est chargé à la demande, et pourquoi
+ *
+ * - **l'historique des perfs** (dans `PerfsView`) et **la page d'une partie**,
+ *   parce qu'ils entraînent Recharts — et Recharts tire d3 et un store Redux,
+ *   environ un tiers du bundle pour des écrans que personne ne voit au premier
+ *   chargement. Le bloc Valorant de l'accueil pousse le découpage d'un cran :
+ *   ses figures ne sont téléchargées qu'à l'ouverture de son repli ;
  * - **l'administration**, parce que presque personne ne l'ouvrira jamais : elle
  *   n'existe que pour les administrateurs (SPEC §5 quater), et il n'y a aucune
  *   raison de la faire télécharger à tous les autres.
  *
- * Les cinq autres vues restent en import statique : elles ne pèsent que leur
- * propre code, et les découper coûterait un aller-retour réseau à chaque onglet
- * pour rien.
+ * Le reste est en import statique : ces vues ne pèsent que leur propre code, et
+ * les découper coûterait un aller-retour réseau à chaque onglet pour rien.
  */
 
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
@@ -30,11 +37,13 @@ import { ActiveBenchmarkProvider } from "./app/active-benchmark";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { AuthView } from "./auth/AuthView";
 import { RecoveryView } from "./auth/RecoveryView";
-import { CoachThreadView } from "./coach/CoachThreadView";
+import { CoachSpace } from "./coach/CoachSpace";
 import { DashboardView } from "./dashboard/DashboardView";
 import { LandingView } from "./landing/LandingView";
+import { PerfsView } from "./perfs/PerfsView";
 import { ProfileView } from "./profile/ProfileView";
 import {
+  canonicalHash,
   DEFAULT_ROUTE,
   parseRoute,
   type Route,
@@ -42,20 +51,14 @@ import {
   requiresSession,
   routeHash,
 } from "./route";
-import { RoutineView } from "./routine/RoutineView";
-import { TrackerView } from "./tracker/TrackerView";
 
 /**
- * `HistoryView` est un export nommé, `lazy` attend un export par défaut : on
- * fait la conversion ici plutôt que d'ajouter un `export default` au module,
- * qui n'aurait de sens que pour ce chargeur.
+ * `MatchView` est un export nommé, `lazy` attend un export par défaut : on fait
+ * la conversion ici plutôt que d'ajouter un `export default` au module, qui
+ * n'aurait de sens que pour ce chargeur.
  */
-const HistoryView = lazy(async () => ({
-  default: (await import("./history/HistoryView")).HistoryView,
-}));
-
-const ValorantView = lazy(async () => ({
-  default: (await import("./valorant/ValorantView")).ValorantView,
+const MatchView = lazy(async () => ({
+  default: (await import("./valorant/MatchView")).MatchView,
 }));
 
 const AdminView = lazy(async () => ({
@@ -79,8 +82,23 @@ function Routed() {
   const [route, setRoute] = useState<Route>(currentRoute);
 
   useEffect(() => {
-    const sync = () => setRoute(currentRoute());
+    // La redirection des adresses d'avant V6, et le ménage des paramètres qui
+    // ne veulent rien dire. `replaceState` ne déclenche pas `hashchange` et
+    // n'empile rien dans l'historique du navigateur : seule l'adresse change,
+    // la route lue est la même avant et après (`canonicalHash` converge, cf.
+    // son test). D'où l'ordre — réécrire, puis lire.
+    const rewrite = () => {
+      const canonical = canonicalHash(window.location.hash);
 
+      if (canonical !== null) window.history.replaceState(null, "", canonical);
+    };
+    const sync = () => {
+      rewrite();
+      setRoute(currentRoute());
+    };
+
+    // L'adresse d'arrivée : elle n'a déclenché aucun `hashchange`.
+    rewrite();
     window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
   }, []);
@@ -116,13 +134,13 @@ function Routed() {
   return (
     // Le benchmark actif est une préférence du profil (DECISIONS.md D6) : il se
     // charge à l'ouverture de session, donc ici — au-dessus de toutes les vues
-    // qui le suivent (tracker, historique, Valorant, profil) et sous la garde
+    // qui le suivent (perfs, accueil, profil) et sous la garde
     // d'authentification, puisqu'il n'existe pas sans profil.
     <ActiveBenchmarkProvider>
       <AppLayout route={route}>
-        {/* Le repli ne s'affiche que le temps de télécharger l'historique, une
-            fois par session : un cadre muet, pas un écran de chargement, pour ne
-            pas faire clignoter la mise en page sous l'utilisateur. */}
+        {/* Le repli ne s'affiche que le temps de télécharger un morceau différé,
+            une fois par session : un cadre muet, pas un écran de chargement,
+            pour ne pas faire clignoter la mise en page sous l'utilisateur. */}
         <Suspense fallback={<ViewLoading />}>
           <View route={route} navigate={navigate} />
         </Suspense>
@@ -137,26 +155,20 @@ interface ViewProps {
 }
 
 function View({ route, navigate }: ViewProps) {
-  const focusRun = (runId: number | null) => navigate({ view: "history", runId });
-
   switch (route.view) {
-    case "tracker":
-      return <TrackerView onSaved={(run) => focusRun(run.id)} />;
-    case "history":
-      return <HistoryView focusRunId={route.runId} onFocusRun={focusRun} />;
-    case "valorant":
+    case "perfs":
       return (
-        <ValorantView
-          matchId={route.matchId}
-          onOpenMatch={(matchId) => navigate({ view: "valorant", matchId })}
+        <PerfsView
+          tab={route.tab}
+          focusRunId={route.runId}
+          onTabChange={(tab) => navigate({ view: "perfs", tab })}
+          onFocusRun={(runId) => navigate({ view: "perfs", tab: "historique", runId })}
         />
       );
     case "coach":
-      // L'onglet Coach est le fil (SPEC §5 sexies) ; l'historique des debriefs
-      // vit à l'intérieur, en repli.
-      return <CoachThreadView />;
-    case "routine":
-      return <RoutineView />;
+      // La routine du jour et le fil (SPEC §5 sexies, V6) ; l'historique des
+      // debriefs et celui des routines vivent à l'intérieur, en repli.
+      return <CoachSpace />;
     case "profile":
       return <ProfileView />;
     case "admin":
@@ -165,7 +177,14 @@ function View({ route, navigate }: ViewProps) {
       // refuserait ici annoncerait ce qu'il refuse.
       return <AdminView />;
     default:
-      return <DashboardView />;
+      // L'accueil porte deux écrans : le tableau de bord, et la page d'une
+      // partie quand l'adresse en désigne une. Le retour repasse par le
+      // routeur — l'adresse reste la seule vérité.
+      return route.matchId === null ? (
+        <DashboardView />
+      ) : (
+        <MatchView matchId={route.matchId} onBack={() => navigate({ view: "home" })} />
+      );
   }
 }
 

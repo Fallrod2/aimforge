@@ -5,6 +5,11 @@
  * Mobile d'abord : la navigation vit en bas, à portée de pouce, pendant que
  * l'en-tête (marque, compte) reste collé en haut. À partir de `lg`, la barre
  * basse disparaît et les onglets remontent dans l'en-tête.
+ *
+ * Trois entrées depuis V6 (cf. `NAV_ITEMS`), et rien d'autre dans la barre : le
+ * profil et l'administration restent des icônes de l'en-tête. Une barre du
+ * pouce n'est pas un sommaire, c'est un jeu de cibles — chacune fait ici un
+ * tiers de la largeur.
  */
 
 import type { ReactNode } from "react";
@@ -25,14 +30,11 @@ interface AppLayoutProps {
 const BOTTOM_BAR_HEIGHT = "h-16";
 
 const ICONS: Readonly<Record<ViewId, string>> = {
-  dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 11h7v9h-7zM4 14h7v6H4z",
-  tracker: "M12 3v3M12 18v3M3 12h3M18 12h3M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z",
-  history: "M4 19V5M4 19h16M7 15l4-5 3 3 5-7",
-  // Un fanion : la partie jouée, l'objectif pris — surtout pas un second
-  // réticule, qui se confondrait avec celui du tracker à 20 px.
-  valorant: "M6 4v16M6 5h11l-2.5 3.5L17 12H6z",
+  home: "M4 4h7v7H4zM13 4h7v4h-7zM13 11h7v9h-7zM4 14h7v6H4z",
+  // Une courbe montante : Perfs porte la saisie **et** l'historique, et c'est
+  // la progression qui les relie. Un réticule n'aurait parlé que de la saisie.
+  perfs: "M4 19V5M4 19h16M7 15l4-5 3 3 5-7",
   coach: "M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-5 4z",
-  routine: "M9 6h11M9 12h11M9 18h11M4 6l1.4 1.4L8 4.8M4 12l1.4 1.4L8 10.8M4 18l1.4 1.4L8 16.8",
   profile: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM5 20a7 7 0 0 1 14 0",
   // Un bouclier : la seule entrée qui n'existe pas pour tout le monde.
   admin: "M12 3l7 3v5c0 4.4-2.9 8.3-7 9.5C7.9 19.3 5 15.4 5 11V6z",
@@ -72,10 +74,7 @@ export function AppLayout({ route, children }: AppLayoutProps) {
               existe et que l'utilisateur choisit le sien (DECISIONS.md D6). Il
               vit désormais là où il est pertinent — en tête du tracker et de
               l'historique, avec son statut et sa date de version. */}
-          <a
-            href={routeHash(viewRoute("dashboard"))}
-            className="flex shrink-0 items-baseline gap-2"
-          >
+          <a href={routeHash(viewRoute("home"))} className="flex shrink-0 items-baseline gap-2">
             <span className="font-mono text-lg font-semibold tracking-tight text-ember-500">
               AimForge
             </span>
@@ -92,9 +91,8 @@ export function AppLayout({ route, children }: AppLayoutProps) {
                 — un confort, pas une protection : `api/admin/*` revérifie et
                 répond 404 à tout le reste (SPEC §5 quater). Elle vit dans
                 l'en-tête, à côté du profil, plutôt que dans la barre du pouce :
-                celle-ci est à six entrées depuis V2 (cf. `NAV_ITEMS`), et une
-                septième descendrait les cibles tactiles sous la largeur
-                utilisable sur un téléphone de 360 px. */}
+                celle-ci ne porte que les trois sections de travail (cf.
+                `NAV_ITEMS`), et un réglage n'en est pas une. */}
             {isAdmin ? (
               <a
                 href={routeHash(viewRoute("admin"))}
@@ -142,7 +140,11 @@ export function AppLayout({ route, children }: AppLayoutProps) {
         aria-label="Sections"
         className={`fixed inset-x-0 bottom-0 z-20 border-t border-steel-800 bg-steel-950/95 backdrop-blur lg:hidden ${BOTTOM_BAR_HEIGHT}`}
       >
-        <ul className="mx-auto grid h-full max-w-lg grid-flow-col">
+        {/* Trois colonnes, imposées : `grid-cols-3` plutôt qu'un `grid-flow-col`
+            qui suivrait le nombre d'entrées. La largeur d'une cible est une
+            décision d'ergonomie (un tiers de l'écran, jamais moins), pas une
+            conséquence de la longueur d'une liste. */}
+        <ul className="mx-auto grid h-full max-w-lg grid-cols-3">
           {NAV_ITEMS.map((item) => (
             <li key={item.view} className="contents">
               <BarLink view={item.view} label={item.label} active={route.view} />
@@ -181,20 +183,14 @@ function TabLink({ view, label, active }: LinkProps) {
 /**
  * Une entrée de la barre du pouce.
  *
- * Trois réglages ont changé au passage à six entrées, et ils tiennent tous au
- * même calcul : la barre répartit les entrées sur la largeur de l'écran, donc
- * une colonne fait 60 px sur un téléphone de 360 px, où le plus long libellé
- * (« HISTORIQUE ») demandait environ 62 px.
+ * Le passage à trois sections (V6) a rendu la place : la cible occupe un tiers
+ * de l'écran et toute la hauteur de la barre, soit 120 × 64 px sur un téléphone
+ * de 360 px — là où six entrées tombaient à 60 px de large et obligeaient à
+ * rogner l'interlettrage puis le corps du texte. Le `min-h-11` (44 px) est
+ * explicite et non déduit de `BOTTOM_BAR_HEIGHT` : c'est le plancher tactile
+ * recommandé, il doit survivre à un changement de hauteur de la barre.
  *
- * - l'interlettrage est resserré (`tracking-normal` et non `tracking-wide`) ;
- * - le corps descend à 9 px sous 400 px de large, où la place manque vraiment,
- *   et reprend 10 px au-dessus ;
- * - `min-w-0` + `truncate` sont la ceinture : un libellé qui ne tiendrait
- *   toujours pas s'abrège au lieu de déborder sur son voisin.
- *
- * La cible tactile, elle, ne bouge pas : elle occupe toute la colonne et toute
- * la hauteur de la barre, soit 60 × 64 px — bien au-dessus des 44 px
- * recommandés.
+ * `min-w-0` + `truncate` restent la ceinture, pour un libellé qui grandirait.
  */
 function BarLink({ view, label, active }: LinkProps) {
   const current = view === active;
@@ -203,7 +199,7 @@ function BarLink({ view, label, active }: LinkProps) {
     <a
       href={routeHash(viewRoute(view))}
       aria-current={current ? "page" : undefined}
-      className={`flex min-w-0 flex-col items-center justify-center gap-1 px-0.5 text-[9px] font-medium tracking-normal uppercase transition-colors min-[400px]:text-[10px] ${
+      className={`flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 px-1 text-[11px] font-medium tracking-wide uppercase transition-colors ${
         current ? "text-ember-400" : "text-steel-500"
       }`}
     >

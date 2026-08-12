@@ -87,7 +87,7 @@ export function LinkedAccountsPanel({ state, reload }: LinkedAccountsHandle) {
       <div>
         <h2 className="text-lg font-semibold text-steel-100">Comptes liés</h2>
         <p className="mt-1 text-xs leading-relaxed text-steel-500">
-          Lie tes comptes une fois : le tracker se pré-remplit depuis tes scores KovaaK's, et le
+          Lie tes comptes une fois : la saisie se pré-remplit depuis tes scores KovaaK's, et le
           tableau de bord suit ton rang Valorant sans que tu aies à ressaisir quoi que ce soit.
         </p>
       </div>

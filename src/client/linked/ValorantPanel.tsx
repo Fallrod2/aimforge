@@ -17,8 +17,17 @@
  * bouton « Débriefer » et le badge qui vivaient sur chaque ligne sont partis
  * sur la page de la partie (`src/client/valorant/MatchView.tsx`) : un geste qui
  * dépense un quota se prend devant le scoreboard, pas au passage sur l'accueil.
- * Chaque ligne est désormais un lien vers cette page, et la carte porte un
- * « Voir tout » vers l'onglet Valorant.
+ * Chaque ligne est un lien vers cette page (`#/accueil?match=<id>`).
+ *
+ * **Depuis V6, il n'y a plus d'onglet Valorant derrière lui** : l'analyse au
+ * long cours (tendances, ventilations, pont bench ↔ in-game) est dans le repli
+ * que la carte ajoute juste en dessous (`valorant/InsightsPanel.tsx`). Le rang
+ * et le bouton « Rafraîchir » restent ici, et nulle part ailleurs.
+ *
+ * Le panneau garde ses quatre états d'entrée, y compris « aucun compte lié » :
+ * c'est un composant pur, son contrat couvre tout ce que `LinkedAccountsState`
+ * peut valoir. C'est l'accueil qui décide, en amont, de ne pas afficher de bloc
+ * Valorant à qui n'a pas lié de Riot ID.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -38,7 +47,7 @@ import type { LinkedAccountsState } from "./useLinkedAccounts";
 
 /**
  * Parties affichées : trois. C'est un résumé — « où j'en suis », pas
- * « qu'ai-je joué » : la liste complète est à un clic, dans l'onglet Valorant.
+ * « qu'ai-je joué » : la liste complète est à un clic, dans le repli d'analyse.
  */
 const VISIBLE_MATCHES = 3;
 
@@ -49,7 +58,7 @@ const RESULT_LABELS: Readonly<Record<NonNullable<MatchSummary["result"]>, string
 };
 
 function matchHash(matchId: string): string {
-  return routeHash({ view: "valorant", matchId });
+  return routeHash({ view: "home", matchId });
 }
 
 export function ValorantPanel({ state }: { readonly state: LinkedAccountsState }) {

@@ -126,6 +126,18 @@ describe("carte Valorant du dashboard", () => {
       "Débriefer",
     );
   });
+
+  /**
+   * Le rang et le bouton « Rafraîchir » ne sont plus doublés par un onglet :
+   * ce panneau est le seul endroit d'où l'on va chercher les parties.
+   */
+  it("porte le rafraîchissement, et n'envoie plus vers un onglet Valorant", () => {
+    const state: LinkedAccountsState = { status: "ready", accounts: [account()] };
+    const markup = renderToStaticMarkup(<ValorantPanel state={state} />);
+
+    expect(textOf(markup)).toContain("Rafraîchir");
+    expect(markup).not.toContain("#/valorant");
+  });
 });
 
 describe("vue d'ensemble", () => {
@@ -214,12 +226,14 @@ describe("liste des parties", () => {
     expect(textOf(markup).indexOf("Lotus")).toBeLessThan(textOf(markup).indexOf("Bind"));
   });
 
+  /** Depuis V6 la page d'une partie vit sous l'accueil : l'onglet a disparu. */
   it("fait de chaque ligne une adresse vers la page de la partie", () => {
     const markup = renderToStaticMarkup(
       <MatchList trend={[trendPoint({ matchId: "abc-123" })]} debriefed={empty} />,
     );
 
-    expect(markup).toContain('href="#/valorant?match=abc-123"');
+    expect(markup).toContain('href="#/accueil?match=abc-123"');
+    expect(markup).not.toContain("#/valorant");
   });
 
   it("porte le badge des parties déjà débriefées, et seulement celles-là", () => {
