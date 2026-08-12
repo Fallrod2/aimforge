@@ -283,3 +283,25 @@ describe("buildThreadCorrectionMessages", () => {
     expect(messages[messages.length - 2]?.content).toBe("(réponse vide)");
   });
 });
+
+/** La police de français (Vague 3.1), commune aux cinq prompts. */
+describe("coachThreadSystemPrompt — police de français", () => {
+  it("exige des phrases complètes et interdit la citation en position de sujet", () => {
+    const prompt = coachThreadSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("Français — non négociable :");
+    expect(prompt).toContain("phrases COMPLÈTES");
+    expect(prompt).toContain("est un COMPLÉMENT, jamais le");
+  });
+
+  it("montre des exemples de la forme attendue, sans nommer de scénario", () => {
+    const prompt = coachThreadSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("Exemples de la forme attendue");
+    expect(prompt).not.toContain("VT Pasu");
+  });
+
+  it("laisse la règle du marqueur de debrief intacte", () => {
+    expect(coachThreadSystemPrompt(IDENTITY)).toContain(DEBRIEF_SUGGESTION_MARKER);
+  });
+});

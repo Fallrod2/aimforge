@@ -323,3 +323,25 @@ describe("matchAnalysisSystemPrompt", () => {
     expect(cs2).not.toContain("Valorant");
   });
 });
+
+/** La police de français (Vague 3.1), commune aux cinq prompts. */
+describe("matchAnalysisSystemPrompt — police de français", () => {
+  it("exige des phrases complètes et interdit la citation en position de sujet", () => {
+    const prompt = matchAnalysisSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("Français — non négociable :");
+    expect(prompt).toContain("phrases COMPLÈTES");
+    expect(prompt).toContain("est un COMPLÉMENT, jamais le");
+  });
+
+  it("montre des exemples de la forme attendue, sans nommer de scénario", () => {
+    const prompt = matchAnalysisSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("Exemples de la forme attendue");
+    expect(prompt).not.toContain("VT Pasu");
+  });
+
+  it("n'affaiblit pas la contrainte de longueur de l'encart", () => {
+    expect(matchAnalysisSystemPrompt(IDENTITY)).toContain("2 à 4 phrases");
+  });
+});

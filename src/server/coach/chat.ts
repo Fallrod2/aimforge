@@ -26,6 +26,7 @@
  */
 
 import { CHAT_ANSWER_MAX } from "../../shared/coach-chat-contract.js";
+import { frenchGuard } from "../shared/french-guard.js";
 import {
   scenarioNames,
   unknownScenarioReason,
@@ -45,9 +46,17 @@ export type ChatAnswerParse =
  * @param allowed Les noms exacts des scénarios du palier du joueur.
  */
 export function parseChatAnswer(raw: string, allowed: readonly string[]): ChatAnswerParse {
-  const answer = raw.trim();
+  const trimmed = raw.trim();
 
-  if (answer === "") return { ok: false, reason: "la réponse est vide" };
+  if (trimmed === "") return { ok: false, reason: "la réponse est vide" };
+
+  // Le garde-fou passe **avant** la borne de longueur : la longueur mesurée
+  // doit être celle du texte livré, pas celle d'un texte qu'on va encore
+  // retoucher (`../shared/french-guard.ts`).
+  const guard = frenchGuard("coach-chat", { protectedNames: allowed });
+  const answer = guard.apply(trimmed, "answer");
+
+  guard.flush();
 
   if (answer.length > CHAT_ANSWER_MAX) {
     return {

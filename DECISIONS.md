@@ -68,6 +68,27 @@ registre en `status: 'incomplete'` (donc invisible dans l'UI), avec les seuils
 vérifiés versionnés et un TODO listant ce qui manque (formule officielle, noms
 des groupes S2, resynchronisation des seuils susceptibles d'équilibrage).
 
+## D10 — Vague 2 : trois arbitrages de navigation entérinés
+1. Les tendances/ventilations/pont bench↔in-game Valorant ne sont PAS supprimés
+   avec l'onglet : ils vivent derrière un repli en pied de la carte Valorant de
+   l'Accueil (1 clic, chunk différé). « Rang + parties récentes » au sens strict
+   aurait jeté des écrans qui marchent — contraire au principe 5.
+2. Générer une SECONDE routine le même jour coûte 3 clics, volontairement : un
+   appel modèle payant ne doit pas être à portée de double-clic quand une séance
+   existe déjà. La première du jour reste à 2 clics.
+3. L'invitation « lier un Riot ID » quitte l'Accueil (le bloc Valorant n'y
+   apparaît que si un compte est lié) ; elle reste au Profil.
+
+## D11 — Modèle IA de la plateforme : la cause racine des fautes de français
+La config de production (table platform_settings) sert les utilisateurs
+plateforme via OpenRouter avec `deepseek/deepseek-v4-flash-0731` — un petit
+modèle rapide. Les fautes de structure capturées en prod viennent très
+probablement de lui, pas seulement des prompts. Décision : mesurer le taux de
+fautes sur le VRAI chemin (harnais QA pointé sur OpenRouter/DeepSeek), durcir
+les prompts, et si le taux ne tombe pas à zéro sur 20 générations, documenter
+le taux résiduel et recommander un changement de modèle plateforme (décision
+de coût qui appartient à Alex) plutôt que de le changer en douce.
+
 ## D9 — Piège d'outillage : gabarit d'environnement masqué par le sandbox
 Le sandbox de la session refuse la lecture des fichiers d'environnement à la
 racine : git voit alors le gabarit d'exemple comme « supprimé » alors qu'il

@@ -32,7 +32,7 @@
  * appliquée serait la seule faille qui compte.
  */
 
-import { type PromptIdentity, trainerIntro } from "../coach/prompt.js";
+import { FRENCH_RULES, type PromptIdentity, trainerIntro } from "../coach/prompt.js";
 import type { ScenarioGroup } from "../shared/scenarios.js";
 import type { RoutineBenchTiers, RoutineTierBench } from "./bench.js";
 import { type CitableFact, sanitizeCitationKey } from "./citations.js";
@@ -158,6 +158,20 @@ export function routineSystemPrompt(identity: PromptIdentity): string {
     "- La somme des durées des blocs doit tenir dans le temps disponible annoncé.",
     "- Priorise les sous-catégories les plus faibles, en tenant compte de l'écart au rang suivant.",
     "- Si un focus est donné, il oriente la séance sans faire disparaître les faiblesses mesurées.",
+    "",
+    ...FRENCH_RULES,
+    "- Un marqueur est un complément de phrase : la phrase doit rester juste et complète UNE FOIS",
+    "  LE MARQUEUR RETIRÉ, parce qu'il l'est avant l'affichage. « Ton [HS% 23] est bas » devient",
+    "  « Ton est bas » : c'est la faute à ne pas commettre.",
+    "",
+    "Exemples de la forme attendue (c'est la construction des phrases qui est montrée, jamais leur",
+    "contenu — les clés et les valeurs réelles sont dans <donnees_citables>, jamais ici) :",
+    '- items[].detail : "Trois runs sans forcer la vitesse : ton pourcentage de tirs à la tête est',
+    '  encore à [HS% 23]."',
+    '- items[].detail : "Cinq runs sur ce scénario, viseur au centre de la cible, en gardant la même',
+    "  sensibilité qu'en partie.\"",
+    '- conseil : "Coupe le chat vocal pendant toute la séance : tu tiens ta concentration plus',
+    '  longtemps."',
     "",
     "Format de sortie — non négociable :",
     "- Réponds uniquement avec un objet JSON valide, sans markdown, sans bloc de code, sans texte",

@@ -439,3 +439,32 @@ describe("buildCorrectionMessages", () => {
     );
   });
 });
+
+/**
+ * La police de français (Vague 3.1). Ce qui se vérifie n'est pas la rédaction
+ * de la section — c'est qu'elle soit **là**, et qu'elle dise les deux choses
+ * qui ont cassé des sorties réelles : la phrase complète, et la citation qui
+ * n'est jamais le sujet.
+ */
+describe("routineSystemPrompt — police de français", () => {
+  it("exige des phrases complètes et interdit la citation en position de sujet", () => {
+    const prompt = routineSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("Français — non négociable :");
+    expect(prompt).toContain("phrases COMPLÈTES");
+    expect(prompt).toContain("est un COMPLÉMENT, jamais le");
+    expect(prompt).toContain("Majuscule après chaque point");
+  });
+
+  it("dit que la phrase doit tenir une fois le marqueur retiré", () => {
+    expect(routineSystemPrompt(IDENTITY)).toContain("UNE FOIS");
+    expect(routineSystemPrompt(IDENTITY)).toContain("LE MARQUEUR RETIRÉ");
+  });
+
+  it("montre des exemples de phrases bien construites, sans nommer de scénario", () => {
+    const prompt = routineSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("Exemples de la forme attendue");
+    expect(prompt).not.toContain("VT Pasu");
+  });
+});

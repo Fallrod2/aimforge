@@ -161,6 +161,44 @@ export function scopeLine(game: GameId): string {
   return `- Tu ne parles que de visée, d'entraînement, ${gameVocab(game).topic} et de la progression de ce joueur.`;
 }
 
+/**
+ * La police de **français**, commune aux cinq prompts (Vague 3.1).
+ *
+ * Elle est ici et pas recopiée cinq fois, pour la raison qui a déjà sorti la
+ * liste des sous-catégories des prompts : cinq copies d'une même règle dérivent,
+ * et la dérive ne se voit qu'en production, sur la sortie qu'on a oublié de
+ * corriger.
+ *
+ * Chacune de ces lignes répond à une faute **réellement livrée** :
+ *
+ * - « tes stabilisations si tu tenus ces deux blocs » → la ligne sur les
+ *   conjugaisons ;
+ * - « Ton est très bas, chaque run compte » → la ligne sur les citations, qui
+ *   est la cause : le modèle avait écrit « Ton [HS% 23] est très bas », en
+ *   laissant le marqueur porter le nom du sujet. Le marqueur retiré, la phrase
+ *   n'a plus de sujet. C'est pourquoi la règle n'interdit pas de citer, elle
+ *   interdit de citer **à la place** du sujet ;
+ * - « avant de bouger. mérite un travail ciblé » → les lignes sur la phrase
+ *   complète et sur la majuscule ;
+ * - « car se construira bloc par bloc » → la ligne sur la phrase complète.
+ *
+ * Courte à dessein : une consigne de style qui fait dix lignes se dilue dans le
+ * reste du prompt, et ce prompt en a déjà quarante.
+ */
+export const FRENCH_RULES: readonly string[] = [
+  "Français — non négociable :",
+  "- Écris des phrases COMPLÈTES : un sujet exprimé, un verbe conjugué. Jamais de note",
+  "  télégraphique, jamais de fragment laissé en plan.",
+  "- Une donnée citée (un chiffre entre crochets, un nom de scénario) est un COMPLÉMENT, jamais le",
+  "  sujet de la phrase. Le sujet est toujours un mot français explicite : « ton pourcentage de tirs",
+  "  à la tête », « ce scénario », « ta stabilité ». Écris « ton pourcentage de tirs à la tête est",
+  "  encore bas », jamais « [HS% 23] est encore bas ».",
+  "- Majuscule après chaque point, point à la fin de chaque phrase, ponctuation française correcte.",
+  "- Relis chaque conjugaison avant d'écrire : « si tu tenais ces deux blocs », jamais « si tu tenus",
+  "  ces deux blocs ».",
+  "- Tutoiement direct, vocabulaire précis, aucune formule creuse.",
+];
+
 /** Une sous-catégorie faible du dernier bench. */
 export interface CoachWeakness {
   readonly name: string;
@@ -282,6 +320,16 @@ export function coachSystemPrompt(identity: PromptIdentity): string {
     "- Si le bloc ne contient pas de statistiques exploitables, dis-le dans `resume` et appuie tes",
     "  axes sur le bench et le profil plutôt que d'inventer des chiffres.",
     "- N'invente aucun chiffre : ne cite que ce qui est présent dans les données fournies.",
+    "",
+    ...FRENCH_RULES,
+    "",
+    "Exemples de la forme attendue (c'est la construction des phrases qui est montrée, jamais leur",
+    "contenu — les faits réels sont dans les blocs de données) :",
+    "- axes[].detail : « Ta prise d'information manque en post-plant : tu te fais reprendre de dos",
+    "  deux fois sur trois. Repositionne-toi dès la pose, dos à un mur. »",
+    "- points_forts[] : « Tes entrées sur A sont propres, tu prends l'angle en premier et tu gagnes",
+    "  le duel. »",
+    "- focus : « Garde ton viseur à hauteur de tête pendant toute la prochaine partie. »",
     "",
     "Format de sortie — non négociable :",
     "- Réponds uniquement avec un objet JSON valide, sans markdown, sans bloc de code, sans texte",

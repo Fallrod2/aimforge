@@ -185,3 +185,17 @@ describe("generateMatchAnalysis", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+/** Le garde-fou de français (`../shared/french-guard.ts`), branché sur l'analyse gravée. */
+describe("parseAnalysis — garde-fou de français", () => {
+  it("repose la majuscule après un point, sans réécrire la phrase", () => {
+    const parsed = parseAnalysis(
+      { text: "Tu meurs trop tôt en post-plant. replace-toi derrière la fumée.", truncated: false },
+      ALLOWED,
+    );
+
+    expect(parsed.ok && parsed.analysis).toBe(
+      "Tu meurs trop tôt en post-plant. Replace-toi derrière la fumée.",
+    );
+  });
+});

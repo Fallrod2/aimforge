@@ -257,3 +257,21 @@ describe("buildChatCorrectionMessages", () => {
     expect(messages.at(-2)?.content).toBe("(réponse vide)");
   });
 });
+
+/** La police de français (Vague 3.1), commune aux cinq prompts. */
+describe("coachChatSystemPrompt — police de français", () => {
+  it("exige des phrases complètes et interdit la citation en position de sujet", () => {
+    const prompt = coachChatSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("Français — non négociable :");
+    expect(prompt).toContain("phrases COMPLÈTES");
+    expect(prompt).toContain("est un COMPLÉMENT, jamais le");
+  });
+
+  it("montre des exemples de la forme attendue, sans nommer de scénario", () => {
+    const prompt = coachChatSystemPrompt(IDENTITY);
+
+    expect(prompt).toContain("Exemples de la forme attendue");
+    expect(prompt).not.toContain("VT Pasu");
+  });
+});

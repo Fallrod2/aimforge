@@ -247,3 +247,29 @@ describe("parseRoutine — citations chiffrées (V5)", () => {
     expect(parsed.ok && parsed.sources).toEqual([]);
   });
 });
+
+/**
+ * Le garde-fou de français (`../shared/french-guard.ts`) est branché **après**
+ * le retrait des marqueurs : c'est le texte affiché qu'il relit, pas celui que
+ * le modèle a écrit. Ce qui se vérifie ici est le branchement, pas le détail
+ * des règles — celui-ci a ses propres tests.
+ */
+describe("parseRoutine — garde-fou de français", () => {
+  it("repose la majuscule après un point, sans réécrire la phrase", () => {
+    const routine = {
+      ...ROUTINE,
+      conseil: "Coupe le chat vocal. garde le rythme jusqu'au bout.",
+    };
+    const parsed = parseRoutine(JSON.stringify(routine), ALLOWED);
+
+    expect(parsed.ok && parsed.routine.conseil).toBe(
+      "Coupe le chat vocal. Garde le rythme jusqu'au bout.",
+    );
+  });
+
+  it("laisse un nom de scénario du palier intact", () => {
+    const parsed = parseRoutine(JSON_TEXT, ALLOWED);
+
+    expect(parsed.ok && parsed.routine.blocs[0]?.items[0]?.texte).toBe("VT Pasu Novice");
+  });
+});
