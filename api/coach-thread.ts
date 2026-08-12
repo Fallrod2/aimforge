@@ -58,6 +58,11 @@ import { coachThreadSystemPrompt, type ThreadContext } from "../src/server/coach
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
 import { aiQuotaReachedMessage } from "../src/shared/ai-quota-contract.js";
+import {
+  AI_MODEL_BUDGET_MS,
+  AI_MODEL_CALL_CAP_MS,
+  AI_MODEL_CALL_FLOOR_MS,
+} from "../src/shared/ai-timing.js";
 import { CHAT_DAILY_QUOTA } from "../src/shared/coach-chat-contract.js";
 import {
   type DebriefSuggestion,
@@ -79,22 +84,24 @@ import {
   loadThreadHistory,
 } from "./_lib/coach-thread-context.js";
 import { insertCoachMessage, insertUserMessage, removeMessage } from "./_lib/coach-thread-write.js";
+import { BudgetExhaustedError, type ModelBudget, startModelBudget } from "./_lib/model-budget.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { authenticate, fail, json, readBody } from "./_lib/request.js";
 import { type ServiceClient, serviceClient } from "./_lib/service.js";
 
 /**
- * Un tour de fil est un aller-retour court, pas une génération complète : deux
- * tentatives de 25 s tiennent largement sous cette borne, relance corrective
- * comprise.
+ * Un tour de fil est un aller-retour court, pas une génération complète : les
+ * deux tentatives possibles tiennent largement sous cette borne, relance
+ * corrective comprise, parce qu'elles partagent le budget de
+ * `./_lib/model-budget.js` au lieu d'avoir chacune son délai.
+ *
+ * La valeur reste **littérale** : la plateforme la lit par analyse statique.
+ * `src/shared/ai-timing.ts` en tient le miroir, et son test refuse la dérive.
  */
 export const maxDuration = 60;
 
 /** Une réponse de coach fait quelques paragraphes ; le prompt vise 200 mots. */
 const MAX_TOKENS = 800;
-
-/** Marge sous `maxDuration` : deux tentatives possibles, et un 502 propre. */
-const MODEL_TIMEOUT_MS = 25_000;
 
 const usageCountSchema = z.number().int().min(0);
 
@@ -105,7 +112,18 @@ function failWithQuota(error: string, status: number, remaining: number | null):
   return remaining === null ? fail(error, status) : json({ error, remaining }, status);
 }
 
-function askWith(config: ProviderConfig, identity: PromptIdentity, deps: AskDeps): AskModel {
+/**
+ * Le délai vient du **budget** et non d'une constante par appel (V4-C §4.9) :
+ * deux tentatives à délai fixe pouvaient s'additionner au-delà du
+ * `maxDuration`, et la fonction était alors tuée avant d'avoir pu rembourser le
+ * quota (`./_lib/model-budget.js`).
+ */
+function askWith(
+  config: ProviderConfig,
+  identity: PromptIdentity,
+  budget: ModelBudget,
+  deps: AskDeps,
+): AskModel {
   const ask = createAsk(
     config,
     { system: coachThreadSystemPrompt(identity), maxTokens: MAX_TOKENS },
@@ -115,7 +133,7 @@ function askWith(config: ProviderConfig, identity: PromptIdentity, deps: AskDeps
   // Seul le texte est retenu : un tour de fil se rejoue en reposant la
   // question. Le drapeau de troncature ne compte que là où la sortie est écrite
   // en base pour toujours (`api/_lib/match-analysis.ts`).
-  return (messages) => ask(messages, MODEL_TIMEOUT_MS).then((answer) => answer.text);
+  return (messages) => ask(messages, budget.nextTimeout()).then((answer) => answer.text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -240,14 +258,28 @@ export async function POST(request: Request): Promise<Response> {
 
   let generated: Awaited<ReturnType<typeof generateThreadAnswer>>;
 
+  // Le budget s'ouvre **ici**, juste avant le premier appel : le contexte est
+  // déjà lu, et ce qui reste sous le `maxDuration` doit couvrir la génération,
+  // sa relance, l'écriture en base et, si besoin, le remboursement.
+  const budget = startModelBudget(AI_MODEL_BUDGET_MS, AI_MODEL_CALL_CAP_MS, AI_MODEL_CALL_FLOOR_MS);
+
   try {
     generated = await generateThreadAnswer(
-      askWith(config, identity, { persist: persistChatGptTokensWith(service, userId) }),
+      askWith(config, identity, budget, { persist: persistChatGptTokensWith(service, userId) }),
       context,
     );
   } catch (cause) {
     console.error("[coach-thread] appel au modèle en échec", cause);
+    // Le renoncement au budget fait partie des échecs remboursés : le temps
+    // manquant est le nôtre, pas celui de l'utilisateur.
     remaining = await refundQuota(refund, remaining);
+    if (cause instanceof BudgetExhaustedError) {
+      return failWithQuota(
+        "La réponse a pris trop de temps. Réessaie : c'est en général plus rapide.",
+        504,
+        remaining,
+      );
+    }
     if (cause instanceof ModelError) {
       return failWithQuota(modelErrorMessage(cause, "coach"), modelErrorStatus(cause), remaining);
     }

@@ -19,8 +19,9 @@
  * scénarios, remboursement, rédaction des erreurs — est le vrai code.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderConfig, Resolution } from "../../src/server/ai/index.js";
+import { AI_MAX_DURATION_S, AI_MODEL_CALL_CAP_MS } from "../../src/shared/ai-timing.js";
 
 /* ------------------------------------------------------------------ */
 /* Les doublures                                                       */
@@ -48,6 +49,10 @@ const state = vi.hoisted(() => ({
   answers: [] as (string | (() => never))[],
   /** Le nombre d'appels au modèle. */
   asked: 0,
+  /** Les délais accordés à chaque tentative : c'est le budget qui les décide. */
+  timeouts: [] as number[],
+  /** Le temps que chaque tentative fait passer à l'horloge (budget). */
+  spendMs: 0,
   /** L'écriture en base a-t-elle réussi ? */
   insertFails: false,
 }));
@@ -128,10 +133,14 @@ vi.mock("../../src/server/ai/index.js", async (importOriginal) => {
   return {
     ...actual,
     resolveModelFor: () => Promise.resolve(state.resolution),
-    createAsk: () => () => {
+    createAsk: () => (_messages: unknown, timeoutMs: number) => {
       const answer = state.answers[state.asked] ?? "";
 
       state.asked += 1;
+      state.timeouts.push(timeoutMs);
+      // L'horloge avance comme si l'appel avait duré : c'est la seule façon de
+      // voir le budget se consommer sans faire attendre le test.
+      if (state.spendMs > 0) vi.setSystemTime(Date.now() + state.spendMs);
       if (typeof answer === "function") return Promise.resolve().then(answer);
       return Promise.resolve({ text: answer, truncated: false });
     },
@@ -221,8 +230,17 @@ beforeEach(() => {
   state.resolution = resolved(PLATFORM);
   state.answers = [];
   state.asked = 0;
+  state.timeouts = [];
+  state.spendMs = 0;
   state.insertFails = false;
+  // Seule `Date` est truquée : les promesses et les délais réels continuent de
+  // tourner, on ne veut piloter que le budget.
+  vi.useFakeTimers({ toFake: ["Date"] });
   vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /* ------------------------------------------------------------------ */
@@ -342,6 +360,41 @@ describe("api/coach — remboursement du quota", () => {
     expect(state.rpcs).toEqual([]);
   });
 
+  it("borne chaque tentative par le budget, et non par un délai fixe", async () => {
+    // Avant V4-C, `api/coach` accordait 45 s à chaque appel : deux appels lents
+    // faisaient 90 s sous un `maxDuration` de 60 s, donc une fonction tuée par
+    // la plateforme — sans réponse rédigée et **sans remboursement**.
+    state.answers = ["pas du JSON", "toujours pas du JSON"];
+
+    const { POST } = await import("../coach.js");
+
+    await POST(coachRequest());
+    expect(state.timeouts).toHaveLength(2);
+    expect(state.timeouts[0]).toBe(AI_MODEL_CALL_CAP_MS);
+    for (const timeout of state.timeouts) {
+      expect(timeout).toBeLessThan(AI_MAX_DURATION_S * 1_000);
+    }
+  });
+
+  it("renonce et rembourse quand le budget ne permet plus de relancer", async () => {
+    // Le premier appel consomme presque tout le budget et rend une sortie hors
+    // contrat : la relance n'a plus de quoi aboutir. On préfère un 504 rédigé,
+    // quota rendu, à une coupure de plateforme qui ne rembourse rien.
+    state.spendMs = 41_000;
+    state.answers = ["pas du JSON", DEBRIEF];
+
+    const { POST } = await import("../coach.js");
+    const response = await POST(coachRequest());
+
+    expect(response.status).toBe(504);
+    expect(state.asked).toBe(1);
+    expect(refunds()).toHaveLength(1);
+    expect(await bodyOf(response)).toEqual({
+      error: expect.stringContaining("trop de temps"),
+      remaining: 4,
+    });
+  });
+
   it("laisse l'erreur d'origine intacte quand le remboursement échoue à son tour", async () => {
     state.refundFails = true;
     state.answers = [unreachable(), unreachable()];
@@ -416,5 +469,18 @@ describe("api/routine — remboursement du quota", () => {
     await POST(routineRequest());
     expect(increments()).toEqual([]);
     expect(refunds()).toEqual([]);
+  });
+
+  it("renonce et rembourse quand le budget ne permet plus de relancer", async () => {
+    state.spendMs = 41_000;
+    state.answers = ["pas du JSON", ROUTINE];
+
+    const { POST } = await import("../routine.js");
+    const response = await POST(routineRequest());
+
+    expect(response.status).toBe(504);
+    expect(state.asked).toBe(1);
+    expect(refunds()).toHaveLength(1);
+    expect((await bodyOf(response)).remaining).toBe(4);
   });
 });

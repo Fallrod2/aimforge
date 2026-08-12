@@ -97,6 +97,11 @@ import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/set
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
 import { aiQuotaReachedMessage } from "../src/shared/ai-quota-contract.js";
 import {
+  AI_MODEL_BUDGET_MS,
+  AI_MODEL_CALL_CAP_MS,
+  AI_MODEL_CALL_FLOOR_MS,
+} from "../src/shared/ai-timing.js";
+import {
   coachRequestSchema,
   MAX_STATS_LENGTH,
   type StoredDebrief,
@@ -111,6 +116,7 @@ import {
   preferencesOf,
 } from "./_lib/coach-context.js";
 import { postDebriefCard } from "./_lib/coach-thread-write.js";
+import { BudgetExhaustedError, type ModelBudget, startModelBudget } from "./_lib/model-budget.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
@@ -118,14 +124,14 @@ import { serviceClient } from "./_lib/service.js";
  * Un debrief demande une génération complète, pas un aller-retour de chat :
  * 60 s couvre le cas lent (relance corrective comprise) sans laisser une
  * requête bloquée pendre indéfiniment.
+ *
+ * La valeur reste **littérale** : la plateforme la lit par analyse statique.
+ * `src/shared/ai-timing.ts` en tient le miroir, et son test refuse la dérive.
  */
 export const maxDuration = 60;
 
 /** Assez pour un debrief structuré ; le contrat borne déjà les longueurs. */
 const MAX_TOKENS = 2000;
-
-/** Marge sous `maxDuration` : mieux vaut un 502 propre qu'un timeout de plateforme. */
-const MODEL_TIMEOUT_MS = 45_000;
 
 const usageCountSchema = z.number().int().min(0);
 
@@ -380,26 +386,39 @@ async function loadContext(
 /* ------------------------------------------------------------------ */
 
 /**
- * Le port du modèle, câblé sur l'adaptateur du fournisseur résolu (SPEC §5 ter).
+ * Le port du modèle, câblé sur l'adaptateur du fournisseur résolu (SPEC §5 ter)
+ * et sur le budget de temps.
  *
  * Le port n'a pas changé — c'est ce qui rend ce branchement minuscule. Ce qui
  * a changé est en amont : `createAsk` rend l'adaptateur du fournisseur de
  * l'utilisateur (ou celui de la plateforme), et toute la logique de génération
  * (relance corrective comprise) reste dans `generateDebrief`, qui ne sait
  * toujours pas qui répond au bout du fil.
+ *
+ * Le délai vient du **budget** et non d'une constante par appel (V4-C §4.9) :
+ * `generateDebrief` peut appeler deux fois, et deux fois 45 s dépassaient le
+ * `maxDuration`. La fonction était alors tuée avant d'avoir pu rembourser le
+ * quota — le raisonnement complet est dans `./_lib/model-budget.js`.
  */
-function askWith(config: ProviderConfig, identity: PromptIdentity, deps: AskDeps): AskModel {
+function askWith(
+  config: ProviderConfig,
+  identity: PromptIdentity,
+  budget: ModelBudget,
+  deps: AskDeps,
+): AskModel {
   const ask = createAsk(
     config,
     { system: coachSystemPrompt(identity), maxTokens: MAX_TOKENS },
     deps,
   );
 
-  // Seul le texte est retenu : un debrief n'est pas mis en cache, et une sortie
-  // coupée retombe déjà dans la relance corrective de `generateDebrief` — un
-  // JSON tronqué ne parse pas. C'est la mini-analyse d'un match, qu'on écrit en
-  // base pour toujours, qui a besoin du drapeau (`api/_lib/match-analysis.ts`).
-  return (messages) => ask(messages, MODEL_TIMEOUT_MS).then((answer) => answer.text);
+  return (messages) =>
+    // Seul le texte est retenu : un debrief n'est pas mis en cache, et une
+    // sortie coupée retombe déjà dans la relance corrective de
+    // `generateDebrief` — un JSON tronqué ne parse pas. C'est la mini-analyse
+    // d'un match, écrite en base pour toujours, qui a besoin du drapeau
+    // (`api/_lib/match-analysis.ts`).
+    ask(messages, budget.nextTimeout()).then((answer) => answer.text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -552,6 +571,10 @@ export async function POST(request: Request): Promise<Response> {
 
   // 6. Contexte puis génération.
   const { context, identity } = await loadContext(userClient, user.id, stats);
+  // Le budget s'ouvre **ici**, juste avant le premier appel : le contexte est
+  // déjà lu, et ce qui reste sous le `maxDuration` doit couvrir la génération,
+  // sa relance, l'écriture en base et, si besoin, le remboursement.
+  const budget = startModelBudget(AI_MODEL_BUDGET_MS, AI_MODEL_CALL_CAP_MS, AI_MODEL_CALL_FLOOR_MS);
 
   let generated: Awaited<ReturnType<typeof generateDebrief>>;
 
@@ -560,7 +583,7 @@ export async function POST(request: Request): Promise<Response> {
       // La réécriture des jetons ne concerne que la liaison ChatGPT ; les
       // adaptateurs à clé l'ignorent. La passer sans condition évite d'avoir à
       // se rappeler quel fournisseur en a besoin.
-      askWith(config, identity, { persist: persistChatGptTokensWith(service, user.id) }),
+      askWith(config, identity, budget, { persist: persistChatGptTokensWith(service, user.id) }),
       context,
     );
   } catch (cause) {
@@ -570,7 +593,15 @@ export async function POST(request: Request): Promise<Response> {
     // Aucun debrief produit : l'incrément n'a plus de contrepartie, on le rend.
     // Le remboursement ne lève pas et ne change pas le code de retour — c'est
     // l'erreur d'origine qui explique l'échec, pas l'état du compteur.
+    // Le renoncement au budget en fait partie : le temps manquant est le nôtre.
     remaining = await refundQuota(refund, remaining);
+    if (cause instanceof BudgetExhaustedError) {
+      return failWithQuota(
+        "Le debrief a pris trop de temps. Réessaie : c'est en général plus rapide.",
+        504,
+        remaining,
+      );
+    }
     if (cause instanceof ModelError) {
       // La rédaction dit **à qui appartient le problème** : une clé personnelle
       // refusée n'est pas une panne d'AimForge, et l'utilisateur est le seul à

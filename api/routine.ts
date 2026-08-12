@@ -80,7 +80,6 @@ import {
   type QuotaRefund,
   refundQuota,
 } from "../src/server/coach/quota.js";
-import { attemptTimeout, startBudget } from "../src/server/kovaaks/budget.js";
 import { GLOBAL_CAP_REACHED, globalCapReached } from "../src/server/platform/settings.js";
 import {
   type RoutineBenchTiers,
@@ -96,6 +95,11 @@ import {
 } from "../src/server/routine/prompt.js";
 import { scenarioCatalog } from "../src/server/shared/scenarios.js";
 import { aiQuotaReachedMessage } from "../src/shared/ai-quota-contract.js";
+import {
+  AI_MODEL_BUDGET_MS,
+  AI_MODEL_CALL_CAP_MS,
+  AI_MODEL_CALL_FLOOR_MS,
+} from "../src/shared/ai-timing.js";
 import { coachAxeSchema } from "../src/shared/coach-contract.js";
 import { routineRequestSchema, type StoredRoutine } from "../src/shared/routine-contract.js";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../src/shared/supabase-config.js";
@@ -107,31 +111,23 @@ import {
   loadProfile,
   preferencesOf,
 } from "./_lib/coach-context.js";
+import { BudgetExhaustedError, type ModelBudget, startModelBudget } from "./_lib/model-budget.js";
 import { loadPlatformSettings, platformAiUsageToday } from "./_lib/platform-settings.js";
 import { serviceClient } from "./_lib/service.js";
 
 /**
  * Une routine est plus longue à écrire qu'un debrief (blocs, items, durées) et
  * peut demander deux appels. 60 s couvre le pire cas réel — deux tentatives
- * bornées par le budget ci-dessous — sans laisser une requête pendre.
+ * bornées par le budget de `./_lib/model-budget.js` — sans laisser une requête
+ * pendre.
+ *
+ * La valeur reste **littérale** : la plateforme la lit par analyse statique.
+ * `src/shared/ai-timing.ts` en tient le miroir, et son test refuse la dérive.
  */
 export const maxDuration = 60;
 
 /** Assez pour une séance structurée ; le contrat borne déjà les longueurs. */
 const MAX_TOKENS = 3000;
-
-/**
- * Budget de temps des appels au modèle, ouvert juste avant le premier.
- *
- * `TOTAL` garde une marge sous `maxDuration` pour l'écriture en base et la
- * construction de la réponse. `CAP` empêche un premier appel lent d'avaler
- * tout le budget et de laisser la relance sans rien. `FLOOR` évite de lancer
- * une relance qui n'a aucune chance d'aboutir : mieux vaut un 502 rédigé
- * qu'une coupure de plateforme.
- */
-const BUDGET_TOTAL_MS = 48_000;
-const BUDGET_CALL_CAP_MS = 38_000;
-const BUDGET_CALL_FLOOR_MS = 8_000;
 
 /** Nombre de debriefs relus pour en tirer les axes (AIMFORGE_KICKOFF §3). */
 const DEBRIEF_COUNT = 3;
@@ -175,11 +171,6 @@ function fail(error: string, status: number): Response {
  */
 function failWithQuota(error: string, status: number, remaining: number | null): Response {
   return remaining === null ? fail(error, status) : json({ error, remaining }, status);
-}
-
-/** Renoncement volontaire faute de temps : distingué d'une panne du modèle. */
-class BudgetExhaustedError extends Error {
-  override readonly name = "BudgetExhaustedError";
 }
 
 /* ------------------------------------------------------------------ */
@@ -391,7 +382,7 @@ async function loadDebriefs(
 function askWith(
   config: ProviderConfig,
   identity: PromptIdentity,
-  budget: ReturnType<typeof startBudget>,
+  budget: ModelBudget,
   deps: AskDeps,
 ): AskModel {
   const ask = createAsk(
@@ -400,18 +391,12 @@ function askWith(
     deps,
   );
 
-  return (messages) => {
-    const timeout = attemptTimeout(budget.remaining(), BUDGET_CALL_CAP_MS, BUDGET_CALL_FLOOR_MS);
-
-    if (timeout === null) {
-      throw new BudgetExhaustedError("plus assez de temps pour une tentative");
-    }
+  return (messages) =>
     // Seul le texte est retenu : une routine hors contrat passe déjà par la
     // relance corrective de `generateRoutine` — un JSON coupé ne parse pas. Le
     // drapeau de troncature ne compte que là où la sortie est écrite en base
     // pour toujours (`api/_lib/match-analysis.ts`).
-    return ask(messages, timeout).then((answer) => answer.text);
-  };
+    ask(messages, budget.nextTimeout()).then((answer) => answer.text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -555,7 +540,7 @@ export async function POST(request: Request): Promise<Response> {
   const allowed = scenarioCatalog(
     context.bench.latestTier ?? defaultTierFor(activeBenchmark),
   ).names;
-  const budget = startBudget(BUDGET_TOTAL_MS);
+  const budget = startModelBudget(AI_MODEL_BUDGET_MS, AI_MODEL_CALL_CAP_MS, AI_MODEL_CALL_FLOOR_MS);
 
   let generated: Awaited<ReturnType<typeof generateRoutine>>;
 

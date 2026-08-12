@@ -26,28 +26,39 @@
  * La génération passe par `api/routine` (seul détenteur de la clé Anthropic),
  * qui enregistre lui-même la routine. La nouvelle est donc simplement placée en
  * tête de la liste — sans rechargement, elle est déjà à jour.
+ *
+ * ## L'attente (V4-C §4.9)
+ *
+ * L'état de la génération ne vit **pas** ici : il est dans un magasin de module
+ * (`./generation.ts`), au-dessus de la vue. C'est ce qui rend l'application
+ * navigable pendant les quinze secondes d'une génération — ouvrir Perfs et
+ * revenir ne perd plus rien, et la séance s'affiche à son retour. La vue ne
+ * fait que trois choses avec ce magasin : lancer, montrer l'attente, et
+ * **relever** le résultat quand il est là (`settle`).
+ *
+ * L'écran d'attente lui-même est un squelette d'étapes datées
+ * (`../coach/GenerationProgress`), pas un texte qui coule : la raison — et le
+ * refus assumé du streaming — est écrite dans `../coach/progress.ts`.
  */
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { DUREE_PRESETS, MAX_FOCUS_LENGTH, type StoredRoutine } from "../../shared/routine-contract";
+import { GenerationProgress } from "../coach/GenerationProgress";
+import { upsertById, useGeneration } from "../coach/generation-store";
+import { ROUTINE_EXPECTATION, ROUTINE_STEPS } from "../coach/progress";
 import { Notice } from "../components/Notice";
 import { QuotaNote } from "../components/QuotaNote";
 import { deleteRoutine, listRoutines, setRoutineDone } from "../data";
 import { formatDuration, normalizeFocus, parseDuration } from "./duration";
+import { routineGeneration } from "./generation";
 import { RoutineCard } from "./RoutineCard";
-import { RoutineApiError, requestRoutine } from "./routine-api";
+import { computeStreak, formatStreak } from "./streak";
 import { latestOfLocalDay } from "./today";
 
 type History =
   | { readonly status: "loading" }
   | { readonly status: "error"; readonly message: string }
   | { readonly status: "ready"; readonly routines: readonly StoredRoutine[] };
-
-/** Un échec de génération : quota atteint et panne ne se disent pas pareil. */
-interface Failure {
-  readonly message: string;
-  readonly quota: boolean;
-}
 
 /** La durée choisie : un preset, ou la saisie libre. */
 type DureeChoice =
@@ -56,22 +67,13 @@ type DureeChoice =
 
 const DEFAULT_MINUTES = 45;
 
-function failureOf(cause: unknown): Failure {
-  if (cause instanceof RoutineApiError) {
-    return { message: cause.message, quota: cause.quotaReached };
-  }
-  return {
-    message: cause instanceof Error ? cause.message : "La génération a échoué.",
-    quota: false,
-  };
-}
-
 export function RoutinePanel() {
   const [choice, setChoice] = useState<DureeChoice>({ kind: "preset", minutes: DEFAULT_MINUTES });
   const [libre, setLibre] = useState("");
   const [focus, setFocus] = useState("");
-  const [generating, setGenerating] = useState(false);
-  const [failure, setFailure] = useState<Failure | null>(null);
+  /** La génération en cours, où qu'on soit passé entre-temps (`./generation`). */
+  const generation = useGeneration(routineGeneration);
+  const generating = generation.status === "running";
   /**
    * Ce que la dernière réponse de `/api/routine` a dit du restant : `undefined`
    * tant qu'il n'y en a pas eu, `null` quand elle n'a rien compté (SPEC §5 ter).
@@ -113,6 +115,38 @@ export function RoutinePanel() {
     void load();
   }, [load]);
 
+  /**
+   * On relève ce que le magasin a fini de produire, puis on lui rend la place.
+   *
+   * C'est ici — et pas dans `submit` — parce que la génération a pu se terminer
+   * pendant que cette vue était démontée : au retour, c'est le premier rendu qui
+   * découvre le résultat. `upsertById` est ce qui rend l'opération sûre dans les
+   * deux cas, puisque le rechargement de la liste a très bien pu ramener la
+   * routine avant qu'on la relève.
+   *
+   * L'échec, lui, n'est **pas** relevé : il reste dans le magasin, c'est lui qui
+   * porte la demande à rejouer. Seul le quota qu'il annonce est repris.
+   */
+  useEffect(() => {
+    if (generation.status === "failed") {
+      if (generation.failure.remaining !== null) setRemaining(generation.failure.remaining);
+      return;
+    }
+    if (generation.status !== "done") return;
+
+    const { routine, remaining: left } = generation.result;
+
+    setHistory((current) =>
+      current.status === "ready"
+        ? { status: "ready", routines: upsertById(current.routines, routine) }
+        : { status: "ready", routines: [routine] },
+    );
+    setFreshId(routine.id);
+    setExpandedId(routine.id);
+    setRemaining(left);
+    routineGeneration.settle();
+  }, [generation]);
+
   const parsed =
     choice.kind === "preset"
       ? { ok: true as const, minutes: choice.minutes }
@@ -123,37 +157,15 @@ export function RoutinePanel() {
   const showDurationError = durationError !== null && libre.trim() !== "";
   const canSubmit = parsed.ok && !generating;
 
-  async function submit(event: FormEvent): Promise<void> {
+  function submit(event: FormEvent): void {
     event.preventDefault();
     if (!parsed.ok || generating) return;
 
-    setGenerating(true);
-    setFailure(null);
     setRowError(null);
-    try {
-      const { routine, remaining: left } = await requestRoutine(
-        parsed.minutes,
-        normalizeFocus(focus),
-      );
-
-      setHistory((current) =>
-        current.status === "ready"
-          ? { status: "ready", routines: [routine, ...current.routines] }
-          : { status: "ready", routines: [routine] },
-      );
-      setFreshId(routine.id);
-      setExpandedId(routine.id);
-      setRemaining(left);
-    } catch (cause) {
-      const next = failureOf(cause);
-
-      setFailure(next);
-      if (cause instanceof RoutineApiError && cause.remaining !== null) {
-        setRemaining(cause.remaining);
-      }
-    } finally {
-      setGenerating(false);
-    }
+    // La demande part au magasin, qui la mènera à son terme même si cette vue
+    // disparaît entre-temps. Elle est retenue telle quelle : c'est elle que
+    // « Réessayer » rejouera, sans re-saisie.
+    routineGeneration.start({ minutes: parsed.minutes, focus: normalizeFocus(focus) });
   }
 
   async function toggleDone(routine: StoredRoutine): Promise<void> {
@@ -202,6 +214,10 @@ export function RoutinePanel() {
   const routines = history.status === "ready" ? history.routines : [];
   const today = latestOfLocalDay(routines);
   const past = routines.filter((routine) => routine.id !== today?.id);
+  // La régularité se lit dans la liste déjà chargée : aucune requête de plus.
+  // `formatStreak` rend `null` quand il n'y a rien à annoncer — c'est lui qui
+  // décide du silence, pas cette vue (cf. `./streak.ts`).
+  const streak = formatStreak(computeStreak(routines));
   // Le formulaire n'attend pas la lecture de la liste : l'afficher puis le
   // remplacer par la carte du jour ferait sauter la zone sous l'utilisateur.
   const showForm = history.status !== "loading" && (today === null || formOpen);
@@ -236,12 +252,50 @@ export function RoutinePanel() {
           Dis combien de temps tu as : la séance part des sous-catégories basses de ton dernier
           bench et des axes de tes derniers debriefs.
         </p>
+        {/* La régularité, en une ligne et sans médaille : elle n'apparaît que
+            lorsqu'il y a quelque chose à constater (V4-C §4.6). */}
+        {streak === null ? null : (
+          <p className="mt-2 font-mono text-[11px] tabular-nums text-steel-400">{streak}</p>
+        )}
       </div>
 
       {rowError !== null ? (
         <Notice tone="error" title="Action impossible.">
           {rowError}
         </Notice>
+      ) : null}
+
+      {/* L'attente et l'échec vivent **hors du formulaire** : la génération leur
+          survit, et le formulaire peut très bien être replié (routine du jour
+          déjà là) quand on revient d'un autre écran. */}
+      {generation.status === "running" ? (
+        <GenerationProgress
+          title="La séance se construit…"
+          steps={ROUTINE_STEPS}
+          expectation={ROUTINE_EXPECTATION}
+          startedAt={generation.startedAt}
+        />
+      ) : null}
+
+      {generation.status === "failed" ? (
+        generation.failure.quota ? (
+          <Notice tone="empty" title="Quota du jour atteint.">
+            {generation.failure.message}
+          </Notice>
+        ) : (
+          <Notice
+            tone="error"
+            title="La routine n'a pas pu être générée."
+            onRetry={() => routineGeneration.retry()}
+          >
+            <p>{generation.failure.message}</p>
+            <p className="mt-1">
+              « Réessayer » relance la même demande — {formatDuration(generation.request.minutes)}
+              {generation.request.focus === null ? "" : `, focus « ${generation.request.focus} »`} —
+              sans rien resaisir.
+            </p>
+          </Notice>
+        )
       ) : null}
 
       {history.status === "loading" ? (
@@ -261,7 +315,7 @@ export function RoutinePanel() {
       )}
 
       {showForm ? (
-        <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-4">
+        <form onSubmit={submit} className="flex flex-col gap-4">
           <fieldset className="flex flex-col gap-2" disabled={generating}>
             <legend className="mb-2 text-xs font-medium text-steel-200">Temps disponible</legend>
             <div className="flex flex-wrap gap-2">
@@ -354,25 +408,10 @@ export function RoutinePanel() {
             <QuotaNote kind="routine" remaining={remaining} className="ml-auto text-xs" />
           </div>
 
-          {generating ? (
-            <Notice tone="loading" title="La séance se construit…">
-              La génération prend quelques secondes. Ne recharge pas la page.
-            </Notice>
-          ) : null}
+          {/* L'attente et l'échec sont affichés en tête de zone, hors de ce
+              formulaire : ils survivent à sa fermeture comme au démontage. */}
 
-          {failure !== null ? (
-            failure.quota ? (
-              <Notice tone="empty" title="Quota du jour atteint.">
-                {failure.message}
-              </Notice>
-            ) : (
-              <Notice tone="error" title="La routine n'a pas pu être générée.">
-                {failure.message}
-              </Notice>
-            )
-          ) : null}
-
-          {history.status === "ready" && routines.length === 0 ? (
+          {history.status === "ready" && routines.length === 0 && !generating ? (
             <Notice tone="empty" title="Aucune routine pour l'instant.">
               Choisis un temps disponible ci-dessus : la première séance apparaîtra ici.
             </Notice>
