@@ -74,7 +74,49 @@ rapport reflète toujours l'état réel au moment de sa dernière ligne.
   d'après l'historique du produit ; je n'ai PAS pu tester un import réel
   (compte KovaaK's requis). À trancher avec un import réel avant de toucher.
 
-## Vagues 2 à 5 : voir sections suivantes (ajoutées au fil de l'exécution).
+## Vague 2 — Navigation 3 sections : FAITE (commits `87fc2f3`)
+
+- Accueil / Perfs (segments Saisie·Historique portés par l'URL) / Coach
+  (routine du jour + fil) ; profil par l'icône du header ; bloc Valorant sur
+  l'Accueil seulement si compte Riot lié, détail de match sur
+  `#/accueil?match=` ; barre mobile 3 cibles ≥ 44 px.
+- Redirections testées une par une depuis les 5 anciennes URLs (TDD), zéro
+  lien orphelin (grep), Recharts toujours hors du bundle initial (vérifié sur
+  le build). Revue adversariale : APPROVE. Tableau complet des interactions
+  dans le rapport de l'agent ; deux chemins à 3 clics assumés (D10).
+- Vérification visuelle : redirections et écrans publics validés ; la passe
+  authentifiée a été interrompue deux fois (incident D12 puis limite de
+  session) — relancée, résultat attendu.
+
+## Vague 3 — Crédibilité : EN COURS (13 h)
+
+- **3.1 Français IA** : cause racine identifiée et documentée (D11) — la prod
+  sert `deepseek/deepseek-v4-flash-0731` via OpenRouter. Mesure réelle sur ce
+  chemin : routine 7/20 sans faute, fil 16/20 ; analyse sur pièces : la vraie
+  faute est le motif « citation en position sujet » (« [HS% 25.1] est »),
+  le reste = faux positifs du détecteur (impératifs, imparfait, phrases
+  nominales). Détecteur recalibré (0 faux positif sur les deux campagnes,
+  fautes réelles conservées) ; durcissement ciblé du prompt routine en cours,
+  puis re-mesure ×20. Découverte annexe à traiter : 2/20 routines en JSON
+  invalide et 1/20 en budget de raisonnement — fiabilité de prod, pas du
+  français.
+- **3.6 Templates email FR** : faits (commit `7074f0e`), à appliquer via le
+  README de `supabase/templates/`.
+- **3.2 Statut des barèmes** : fait en Vague 1 (affiché depuis le registre).
+- **3.4 Quotas** et **3.5 Pages légales + consentement** : agents relancés
+  après l'interruption de 12 h (limite de session), en cours.
+- **3.3 Promesses d'import** et **3.7 Métadonnées/OG** : à faire.
+
+## Incidents de la matinée
+
+- **Limite de session à ~11 h** : quatre agents interrompus en vol, travail
+  repris à 13 h sans perte (l'arbre portait l'état intermédiaire du seul
+  agent qui écrivait).
+- **D12** : l'authentification du compte de test a cassé (500) après sa
+  création par INSERT — colonnes tokens NULL. Confiné au compte de test,
+  les comptes réels vérifiés sains ; corrigé, login re-testé 200.
+
+## Vagues 4 et 5 : non entamées à ce stade.
 
 ## Templates email (Vague 3.6, fait en avance car sans conflit)
 `supabase/templates/` : 5 templates FR aux couleurs AimForge (contrastes

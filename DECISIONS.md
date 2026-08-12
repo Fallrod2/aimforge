@@ -89,6 +89,17 @@ les prompts, et si le taux ne tombe pas à zéro sur 20 générations, documente
 le taux résiduel et recommander un changement de modèle plateforme (décision
 de coût qui appartient à Alex) plutôt que de le changer en douce.
 
+## D12 — Incident : compte de test QA et colonnes NULL de GoTrue (résolu)
+Pour vérifier visuellement les écrans authentifiés, un compte de test
+(`ui-test@aimforge.local`, isolé par RLS) a été créé par INSERT direct dans
+`auth.users`. GoTrue exige des chaînes vides (pas NULL) dans ses colonnes de
+tokens : le login de CE compte renvoyait 500 « Database error querying schema ».
+Impact confiné à la ligne de test (le login interroge la ligne de l'email
+demandé) ; les trois comptes réels vérifiés sains avant et après. Correctif
+appliqué (coalesce → ''), login re-testé : 200. Le compte de test sera supprimé
+en fin de chantier. Leçon consignée : ne jamais créer d'utilisateur GoTrue par
+INSERT partiel — passer par l'API admin ou renseigner toutes les colonnes texte.
+
 ## D9 — Piège d'outillage : gabarit d'environnement masqué par le sandbox
 Le sandbox de la session refuse la lecture des fichiers d'environnement à la
 racine : git voit alors le gabarit d'exemple comme « supprimé » alors qu'il
